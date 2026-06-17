@@ -41,7 +41,6 @@ dev = [
 
 [project.scripts]
 totalsegmentator-wrapper-mac = "totalsegmentator_wrapper_mac.cli:main"
-totalsegmentator-wrapper-mac-ui = "totalsegmentator_wrapper_mac.ui_tk:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

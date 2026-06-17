@@ -56,7 +56,6 @@ scripts:
 
 ```text
 totalsegmentator-wrapper-mac
-totalsegmentator-wrapper-mac-ui
 ```
 
 Recommended local install during preview packaging:

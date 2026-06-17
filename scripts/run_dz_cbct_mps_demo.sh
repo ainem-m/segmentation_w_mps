@@ -28,4 +28,4 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$ROOT/artifacts/cache}"
 
 echo "Output: $OUTPUT"
 echo "Summary: $OUTPUT/CASE_SUMMARY.md"
-echo "Slicer script: $OUTPUT/slicer/open_in_slicer.py"
+echo "Surface preview: $OUTPUT/surface_preview/index.html"

@@ -2,7 +2,10 @@
 
 ## Architecture summary
 
-Use a thin Mac-facing shell with an embedded or managed Python backend. The backend runs TotalSegmentator outside Slicer using PyTorch MPS. Outputs are saved to a case folder and opened in Slicer via generated Python script.
+Use a thin Mac-facing SwiftUI shell with an embedded or managed Python backend.
+The backend runs TotalSegmentator outside Slicer using PyTorch MPS. Outputs are
+saved to a case folder and reviewed through generated offline HTML surface
+previews plus exportable STL files.
 
 ```text
 NIfTI input
@@ -14,19 +17,16 @@ Python backend
   ├─ TotalSegmentator runner
   ├─ benchmark logger
   ├─ label/output organizer
-  └─ Slicer handoff script generator
+  ├─ output report generator
+  └─ surface preview generator
   ↓
 output folder
   ├─ source volume
   ├─ segmentation outputs
   ├─ STL / mesh outputs if available
   ├─ benchmark.json
-  └─ open_in_slicer.py
-  ↓
-3D Slicer
-  ├─ volume review
-  ├─ segmentation review/correction
-  └─ STL export
+  ├─ README_OUTPUT.md
+  └─ surface_preview/index.html
 ```
 
 ## Main modules
@@ -39,7 +39,8 @@ backend/
   device.py              MPS/CPU availability and smoke tests
   runner_totalseg.py     TotalSegmentator invocation
   benchmark.py           timing and environment logging
-  slicer_export.py       open_in_slicer.py generation
+  output_report.py       mask stats and README_OUTPUT.md generation
+  surface_preview.py     offline HTML/STL preview generation
   outputs.py             case folder layout
   disclaimers.py         non-clinical notices
 ```
@@ -48,12 +49,13 @@ backend/
 
 Slicer is excellent for review and correction, but inference inside Slicer inherits Slicer’s Python, extension, architecture, and PyTorch constraints. The preview’s differentiation is that it can use a modern, controlled PyTorch/MPS environment outside Slicer.
 
-Slicer is used as:
+The packaged app no longer depends on Slicer for its main review path. The main
+review/export path is:
 
 ```text
-- viewer
-- segmentation editor
-- STL exporter
+- offline HTML surface preview
+- smoothed STL files
+- case summary and mask statistics
 ```
 
 Slicer is not used as:
@@ -125,10 +127,10 @@ case_output/
     dental5_merged.nii.gz           optional future output
   stl/
     *.stl                           optional, task dependent
-  slicer/
-    open_in_slicer.py
-    label_names.json
-    label_colors.json
+  surface_preview/
+    index.html
+    combined/*.stl
+    labels/*.stl
   logs/
     benchmark.json
     environment.json

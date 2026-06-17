@@ -12,12 +12,8 @@ default_task = "craniofacial_structures"
 default_device = "auto"
 precision = "fp32"
 
-[slicer]
-# Optional absolute path. If empty, app should ask user or search common paths.
-path = ""
-
 [features]
 dicom_input = false
-stl_export = false
-slicer_handoff = true
+stl_export = true
+surface_preview = true
 benchmark = true

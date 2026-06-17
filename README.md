@@ -3,7 +3,7 @@
 This is an unofficial Mac wrapper powered by TotalSegmentator. It is not the
 official TotalSegmentator application or project.
 
-目的: **Apple Silicon Macで歯科CBCT由来volumeをMPS推論し、Slicerで確認・修正できる形に戻すMac Preview** まで進める。
+目的: **Apple Silicon Macで歯科CBCT由来volumeをローカル処理し、offline HTML 3Dプレビューで確認できるMac Preview** まで進める。
 
 このpackは、コーディングエージェントに渡すための設計・規律・実装順序・検証条件をまとめたものです。
 
@@ -11,9 +11,9 @@ official TotalSegmentator application or project.
 
 今回のセンセーションは **「Macでも高速segmentationできる」** です。したがって、MVPでは以下を守る。
 
-- **NIfTI入力を主対象にする**。DICOM完全対応はしない。
+- **CT入力を安全に取り込む**。通常CTは自動変換し、危ないDICOMは理由付きで止める。
 - **TotalSegmentator + PyTorch MPS** を先に動かす。
-- **Slicer内推論はしない**。Slicerは確認・修正・STL export用に使う。
+- **Slicer内推論はしない**。通常の確認導線は同梱/生成されるoffline HTML 3Dプレビューにする。
 - **ConvTranspose3D/MPSのsmoke testを最初に通す**。
 - **CPU vs MPSの実測表を出す**。バズの核は数字と動画。
 - **DICOM normalizerはPython preview packageには入れない**。必要なDICOM
@@ -34,7 +34,7 @@ TotalSegmentator Wrapper for Mac.app
 - device: mps / cpu
 - benchmark log
 - output folder
-- Slicerで開くscript生成
+- offline HTML 3D preview / smoothed STL export
 ```
 
 ## ドキュメント一覧
@@ -48,10 +48,8 @@ docs/04_IMPLEMENTATION_PLAN.md      実装ロードマップ
 docs/05_VALIDATION_BENCHMARKS.md    検証・ベンチマーク
 docs/06_PACKAGING_DISTRIBUTION.md   配布・サイズ・依存管理
 docs/07_RISK_REGISTER.md            リスク管理
-docs/08_SLICER_HANDOFF_SPEC.md      Slicer返却仕様
 docs/09_CODING_RULES.md             コーディング規律
 docs/10_DEFERRED_SCOPE.md           後回しにするもの
-docs/11_AGENT_TASK_PROMPTS.md       コーディングエージェント用タスク分解
 docs/12_REFERENCES.md               参照リンク・根拠
 ```
 
@@ -63,8 +61,6 @@ docs/14_TOTALSEGMENTATOR_SMOKE_NOTES.md
 docs/15_DZ_CBCT_SAMPLE_VALIDATION.md
 docs/16_BACKEND_RUNNER_NOTES.md
 docs/17_CPU_AND_ROI_BENCHMARK_NOTES.md
-docs/18_SLICER_HANDOFF_GENERATOR_NOTES.md
-docs/19_TK_UI_PREVIEW_NOTES.md
 docs/20_CASE_SUMMARY_AND_DEMO_NOTES.md
 docs/21_EXPERIMENTAL_TEETH_MPS_WRAPPER_NOTES.md
 docs/22_SURFACE_PREVIEW_NOTES.md
@@ -80,6 +76,7 @@ docs/31_MAIN_APP_UI_AND_GUI_MIGRATION_NOTES.md
 docs/32_SWIFTUI_SHELL_COMPLETION_AUDIT.md
 docs/33_MAC_NOTARIZATION.md
 docs/34_ALPHA_DISTRIBUTION_SUPPORT_CARD.md
+docs/future/SLICER_EXPORT_REINTRODUCTION.md
 native/dicom_normalizer/README.md
 ```
 
@@ -89,7 +86,6 @@ native/dicom_normalizer/README.md
 scripts/smoke_test_mps_convtranspose3d.py
 scripts/smoke_test_totalseg_mps.sh
 scripts/benchmark_cpu_vs_mps.py
-templates/open_in_slicer.py
 templates/benchmark_result.schema.json
 templates/model_manifest.example.json
 templates/app_config.example.toml
@@ -160,8 +156,6 @@ python -m totalsegmentator_wrapper_mac run \
   --teeth-dry-run \
   --totalseg-bin .venv/bin/TotalSegmentator
 
-scripts/launch_tk_ui.sh
-
 scripts/build_mac_wheel.sh
 
 scripts/build_mac_app.sh
@@ -180,15 +174,19 @@ Current gate:
 
 ```text
 - MPS craniofacial_structures on representative CBCT inputs passed.
-- Slicer handoff files are generated, but Slicer visual validation is deferred.
+- Slicer handoff generation has been retired from the active app path; the
+  inspection path is the offline HTML surface preview.
+- Future optional Slicer export should be reintroduced as an explicit export
+  layer; see `docs/future/SLICER_EXPORT_REINTRODUCTION.md`.
 - CPU is treated as effectively too slow for the current preview path; exact CPU
   timing is deferred to a later unattended run.
 - `teeth` remains fast-fail by default. The experimental opt-in subprocess
   wrapper completed three representative MPS runs with no MPS-to-CPU fallback:
   DZ-CBCT 98.48 s / 56 labels, Case02 112.12 s / 54 labels, and STS24 open
   data 85.40 s / 55 labels.
-- A Slicer-free `surface-preview` command now exports smoothed STL files and a
-  fully offline HTML viewer from the experimental teeth full-space labelmap.
+- `surface-preview` exports smoothed STL files and a fully offline HTML viewer
+  from either standard craniofacial masks or the experimental teeth full-space
+  labelmap.
   The three successful teeth cases have full-space NIfTI labelmaps, per-label
   smoothed STL exports, four combined smoothed STLs, and offline `index.html`
   viewers with no external script or CDN references. This is visual
@@ -305,11 +303,10 @@ Current gate:
   under `native/dicom_normalizer/`. It now implements metadata audit,
   `convert-clean` for `original_ct_geometry_ok`, and explicit
   `prepare-rescue` for Secondary Capture axial-looking stacks.
-- The SwiftUI app and legacy Python Tk UI can launch the C++ normalizer through
-  `dicom_normalizer_bridge`. In the packaged SwiftUI app, selecting a CT folder
-  routes the folder to the C++ binary, writes audit/convert logs under App
-  Support, and never starts preview creation until the user explicitly presses
-  `3Dプレビューを作成` after CT intake is ready.
+- The SwiftUI app launches the C++ normalizer through `dicom_normalizer_bridge`.
+  Selecting a CT folder routes the folder to the C++ binary, writes
+  audit/convert logs under App Support, and never starts preview creation until
+  the user explicitly presses `3Dプレビューを作成` after CT intake is ready.
 - The C++ normalizer now has an explicit `prepare-rescue` path for
   secondary-capture axial-looking stacks. It requires a series number and
   human-specified spacing, isolates the selected DICOM files, runs dcm2niix,
@@ -335,7 +332,7 @@ MVP中に以下を始めない。
 - DentalSegmentator純正nnU-Net runner
 - Slicer extension開発
 - Slicer内MPS推論対応
-- 本格viewer/Segment Editor自作
+- 診断用viewer/Segment Editor自作
 - App Store配布
 - 診断/治療計画用途の表現
 ```

@@ -4,19 +4,13 @@ Date: 2026-06-14
 
 ## Summary
 
-The distributed Mac app is moving from Tk to a native SwiftUI shell. SwiftUI is
-now the packaged `.app` frontend for both Setup and the main workflow. The
-Python package remains the processing backend and is invoked through argv-list
+The distributed Mac app has moved to a native SwiftUI shell. SwiftUI is the
+packaged `.app` frontend for both Setup and the main workflow. The Python
+package remains the processing backend and is invoked through argv-list
 subprocess calls.
 
-Tk remains in the source tree as a legacy development fallback:
-
-```bash
-python -m totalsegmentator_wrapper_mac.ui_tk
-totalsegmentator-wrapper-mac-ui
-```
-
-It is no longer the normal DMG launch path.
+The earlier Tk prototype has been removed from the active source tree. GUI
+development and packaging now target the SwiftUI shell only.
 
 ## Current UI Direction
 
@@ -99,7 +93,7 @@ Sampleで流れを体験する
 | SwiftUI shell | Adopt | Best fit for Mac-only distribution, native file panels, trustworthy setup UX, and future notarization. |
 | PySide6 | Do not adopt now | Python-native, but increases Qt runtime/deployment surface and setup weight. |
 | Tauri/Electron | Do not adopt now | Modern UI, but adds JS/Rust or Chromium/Node layers around an already separate Python backend. |
-| Tk maintained | Legacy fallback only | Useful for source checkout debugging, but too plain for the target user experience. |
+| Tk maintained | Removed | The prototype helped validate the workflow, but maintaining two GUI paths now adds test and packaging risk. |
 
 ## Packaging Notes
 
@@ -128,7 +122,6 @@ Contents/Resources/setup_manifest.json
 
 ```text
 ui_frontend: swiftui
-legacy_tk_ui: true
 ```
 
 ## Backend Boundary

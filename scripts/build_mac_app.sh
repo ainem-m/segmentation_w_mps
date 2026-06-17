@@ -233,10 +233,9 @@ if [[ -d "${APP_DIR}" ]]; then
   chmod -R u+rwX "${APP_DIR}" || true
 fi
 rm -rf "${APP_DIR}"
-mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/launcher" "${RESOURCES_DIR}/sample1"
+mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/sample1"
 
 build_swiftui_frontend
-cp "${ROOT}/templates/mac_app_launcher.py" "${RESOURCES_DIR}/launcher/mac_app_launcher.py"
 cp "${WHEEL_PATH}" "${RESOURCES_DIR}/wheels/"
 cp "${CONSTRAINTS_PATH}" "${RESOURCES_DIR}/constraints/"
 cp "${NORMALIZER_PATH}" "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
@@ -303,7 +302,6 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
   "version": "${APP_VERSION}",
   "app_version": "${APP_VERSION}",
   "ui_frontend": "swiftui",
-  "legacy_tk_ui": true,
   "build_id": "${BUILD_ID}",
   "architecture": "arm64",
   "dependency_set_id": "${DEPENDENCY_SET_ID}",

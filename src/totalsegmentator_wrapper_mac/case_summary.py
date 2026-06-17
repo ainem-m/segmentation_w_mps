@@ -26,7 +26,7 @@ def load_case_summary(case_dir: Path) -> dict[str, Any]:
             "environment": str(case_dir / "logs" / "environment.json"),
             "run_log": str(case_dir / "logs" / "run.log"),
             "mask_stats": str(case_dir / "logs" / "mask_stats.json"),
-            "slicer_script": str(case_dir / "slicer" / "open_in_slicer.py"),
+            "surface_preview": str(case_dir / "surface_preview" / "index.html"),
             "readme": str(case_dir / "README_OUTPUT.md"),
         },
     }

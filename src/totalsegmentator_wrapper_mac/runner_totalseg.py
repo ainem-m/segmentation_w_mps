@@ -15,8 +15,8 @@ from typing import Any
 
 from totalsegmentator_wrapper_mac.benchmark import environment_metadata, input_metadata, write_json
 from totalsegmentator_wrapper_mac.device import DeviceCheck, resolve_device
+from totalsegmentator_wrapper_mac.output_report import generate_output_report
 from totalsegmentator_wrapper_mac.outputs import CaseOutput, copy_source_if_requested, prepare_case_output
-from totalsegmentator_wrapper_mac.slicer_export import generate_slicer_handoff
 from totalsegmentator_wrapper_mac.teeth_roi import create_teeth_roi_for_case, reembed_labelmap_to_full_space
 
 
@@ -117,7 +117,7 @@ def run_totalsegmentator(
 
     case = prepare_case_output(output_root)
     copied_source = copy_source_if_requested(input_path, case, copy_input)
-    source_for_slicer = copied_source or input_path
+    source_for_summary = copied_source or input_path
 
     device_check = resolve_device(requested_device, skip_device_check=skip_device_check)
     if device_check.status != "pass" or not device_check.actual_device:
@@ -144,9 +144,9 @@ def run_totalsegmentator(
             encoding="utf-8",
         )
         _write_metadata(case, input_path, task, result, device_check, robust_crop=robust_crop)
-        generate_slicer_handoff(
+        generate_output_report(
             case=case,
-            source_volume_path=source_for_slicer,
+            source_volume_path=source_for_summary,
             task=task,
             run_result=result,
         )
@@ -156,7 +156,7 @@ def run_totalsegmentator(
         return _run_experimental_teeth(
             case=case,
             input_path=input_path,
-            source_for_slicer=source_for_slicer,
+            source_for_summary=source_for_summary,
             requested_device=requested_device,
             device_check=device_check,
             totalseg_bin=totalseg_bin,
@@ -211,9 +211,9 @@ def run_totalsegmentator(
         stderr_tail=stderr[-4000:],
     )
     _write_metadata(case, input_path, task, result, device_check, robust_crop=robust_crop)
-    generate_slicer_handoff(
+    generate_output_report(
         case=case,
-        source_volume_path=source_for_slicer,
+        source_volume_path=source_for_summary,
         task=task,
         run_result=result,
     )
@@ -254,7 +254,7 @@ def _run_experimental_teeth(
     *,
     case: CaseOutput,
     input_path: Path,
-    source_for_slicer: Path,
+    source_for_summary: Path,
     requested_device: str,
     device_check: DeviceCheck,
     totalseg_bin: str,
@@ -438,9 +438,9 @@ def _run_experimental_teeth(
         extra["experimental_teeth"]["error"] = repr(exc)
 
     _write_metadata(case, input_path, "teeth", result, device_check, extra=extra)
-    generate_slicer_handoff(
+    generate_output_report(
         case=case,
-        source_volume_path=source_for_slicer,
+        source_volume_path=source_for_summary,
         task="teeth",
         run_result=result,
     )

@@ -26,7 +26,7 @@ DICOM import is likely a major practical hurdle, but it is not the core of this 
 Core preview claim:
 
 ```text
-Apple Silicon/MPS can run dental-relevant segmentation locally and return results to Slicer.
+Apple Silicon/MPS can run dental-relevant segmentation locally and show results in an offline 3D preview.
 ```
 
 DICOM normalizer claim:
@@ -81,7 +81,7 @@ Slicer extension development returns to the environment problem this preview avo
 The preview should:
 
 ```text
-run outside Slicer → open results in Slicer
+run outside Slicer → open results in the app/browser preview
 ```
 
 not:
@@ -97,7 +97,7 @@ A feature may enter MVP only if it directly supports one of:
 ```text
 - proving MPS inference
 - measuring speed
-- opening output in Slicer
+- opening output in offline 3D preview
 - making a launch video
 ```
 

@@ -51,7 +51,7 @@ totalsegmentator_wrapper_mac.dicom_normalizer_bridge
     3. build/dicom_normalizer/totalsegmentator-wrapper-dicom-normalizer
     4. PATH
 
-Tk UI:
+SwiftUI app:
   Browse DICOM selects a folder
   Run on a folder launches C++ audit instead of TotalSegmentator
   DICOM Audit button launches the same audit explicitly

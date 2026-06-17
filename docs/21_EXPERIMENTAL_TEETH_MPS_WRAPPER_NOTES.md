@@ -63,13 +63,13 @@ ConvTranspose3D gate, requires TotalSegmentator 2.14.0, and calls
     child benchmark, patch metadata, MPS gate metadata, and validation metadata
   - parent records `child_status: timeout`, return code 124, log path, child
     benchmark path, and last parsed progress when the child is killed
-- Slicer handoff:
-  - recursively loads labelmaps under `segmentations/`
-  - prefers `teeth_multilabel_fullspace.nii.gz` over ROI output when both exist
-- Tk UI:
-  - adds an `Experimental teeth` checkbox
-  - checkbox default is off
-  - command builder adds `--experimental-teeth` only when enabled
+- Output report:
+  - records mask statistics under `logs/mask_stats.json`
+  - writes `README_OUTPUT.md` with non-clinical notice and surface preview guidance
+- SwiftUI app:
+  - exposes individual-teeth mode as an explicit beta run option
+  - default remains the standard arch/jaw preview
+  - command builder adds `--experimental-teeth` only for the beta mode
 
 ## Dry Validation Results
 
@@ -297,7 +297,7 @@ surface_preview/index.html exists
 Remaining caveats:
 
 ```text
-Slicer visual validation remains optional and deferred.
+Offline HTML surface preview is the primary visual inspection route.
 STS24 open data is unlabeled, so it is workflow proof rather than accuracy proof.
 Clinical, diagnostic, and treatment-planning claims remain out of scope.
 ```

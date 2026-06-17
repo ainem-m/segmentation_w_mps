@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build a **Mac Preview** proving that dental CBCT-derived volumes can be segmented locally on Apple Silicon using **PyTorch MPS + TotalSegmentator**, then handed back to **3D Slicer** for review, correction, and STL export.
+Build a **Mac Preview** proving that dental CBCT-derived volumes can be segmented locally on Apple Silicon using **PyTorch MPS + TotalSegmentator**, then reviewed through an offline HTML 3D surface preview and exportable STL files.
 
 The goal is not to build a complete clinical dental automation product. The goal is to produce a credible, demonstrable, benchmarked preview that can become a high-impact X.com post and a foundation for later productization.
 
@@ -11,8 +11,11 @@ The goal is not to build a complete clinical dental automation product. The goal
 Previous public interest came from “free OSS dental CBCT segmentation.” That angle has already been used. The new angle is:
 
 ```text
-Slicer extensions have historically been awkward or slow on Mac GPU.
-With a modern PyTorch that supports the required MPS operators, we can run segmentation outside Slicer on Apple Silicon/MPS, then return results to Slicer.
+Mac users have historically had a harder path to practical local segmentation
+because many workflows assume CUDA, Slicer extensions, or complex setup.
+With a modern PyTorch that supports the required MPS operators, we can run
+segmentation locally on Apple Silicon/MPS and show the result in a lightweight
+offline preview.
 ```
 
 Therefore, **the first product is a Mac/MPS proof, not a DICOM product**. DICOM
@@ -24,7 +27,7 @@ folded into the Python preview package by accident.
 1. **Run inference outside Slicer.**
    - Do not modify SlicerTotalSegmentator.
    - Do not depend on Slicer Python for inference.
-   - Slicer is only a downstream viewer/editor/export tool.
+   - The packaged app's review path is the offline HTML surface preview.
 
 2. **Start with NIfTI input.**
    - DICOM folder support may be best-effort only.
@@ -67,8 +70,8 @@ The preview is done when all of the following are true on one Apple Silicon Mac:
 [ ] TotalSegmentator `craniofacial_structures` runs with --device mps on a sample NIfTI.
 [ ] TotalSegmentator `teeth` is attempted with --device mps and result documented.
 [ ] CPU vs MPS benchmark is recorded in a machine-readable log.
-[ ] Output segmentation can be loaded in Slicer by generated open_in_slicer.py.
-[ ] Segment names and colors are human-readable enough for demo.
+[ ] Output segmentation can be opened in the offline HTML 3D preview.
+[ ] Preview layer names and colors are human-readable enough for demo.
 [ ] A README explains non-clinical scope and exact environment.
 [ ] A demo video can be recorded from the working flow.
 ```
@@ -80,7 +83,7 @@ The technical success metric is not “supports every DICOM.”
 The success metric is:
 
 ```text
-A viewer immediately understands that Apple Silicon Mac can now run dental-relevant segmentation locally at practical speed, with Slicer handoff.
+A viewer immediately understands that Apple Silicon Mac can now run dental-relevant segmentation locally at practical speed, with a simple offline 3D preview.
 ```
 
 ## Implementation discipline
@@ -88,7 +91,7 @@ A viewer immediately understands that Apple Silicon Mac can now run dental-relev
 When uncertain, choose the path that produces a benchmarked demo faster.
 
 ```text
-Prefer: NIfTI + TotalSegmentator + MPS + Slicer script
+Prefer: CT input + TotalSegmentator + MPS + offline 3D preview
 Avoid: DICOM perfect import + GUI polish + model zoo + native packaging
 ```
 

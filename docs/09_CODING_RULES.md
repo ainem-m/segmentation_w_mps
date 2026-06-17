@@ -10,7 +10,7 @@ Priority order:
 1. MPS smoke test
 2. TotalSegmentator MPS run
 3. benchmark log
-4. Slicer handoff
+4. output report + surface preview
 5. minimal UI
 ```
 
@@ -113,13 +113,14 @@ check_python()
 check_torch()
 check_mps()
 check_totalsegmentator()
-check_slicer_path()
+check_dicom_normalizer()
+check_dcm2niix()
 ```
 
 Future CLI command:
 
 ```bash
-dentalseg doctor
+totalsegmentator-wrapper-mac doctor
 ```
 
 ## File formats
@@ -128,7 +129,7 @@ MVP:
 
 ```text
 Input: NIfTI
-Output: TotalSegmentator raw outputs + Slicer script
+Output: TotalSegmentator raw outputs + case report + offline HTML surface preview
 ```
 
 Avoid DICOM-specific logic in MVP.
@@ -140,7 +141,7 @@ Keep modules independent:
 ```text
 device.py      no TotalSegmentator dependency
 runner.py      no UI dependency
-slicer.py      no torch dependency
+output_report.py no torch dependency
 benchmark.py   no UI dependency
 ```
 
@@ -178,7 +179,7 @@ phase0-skeleton
 phase1-mps-smoke-test
 phase2-totalseg-runner
 phase3-benchmark-logs
-phase4-slicer-handoff
+phase4-surface-preview
 phase5-mac-preview-ui
 ```
 

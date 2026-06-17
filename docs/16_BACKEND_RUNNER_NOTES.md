@@ -15,8 +15,9 @@ python -m totalsegmentator_wrapper_mac benchmark --input sample.nii.gz --output 
 python -m totalsegmentator_wrapper_mac summary --case out --output out/CASE_SUMMARY.md
 ```
 
-The runner now generates Slicer handoff files, but it does not launch Slicer.
-Slicer visual validation is deferred by project decision.
+The runner now writes benchmark logs, mask statistics, and a short
+`README_OUTPUT.md`. Slicer handoff generation was removed after the app moved to
+the built-in offline HTML surface preview path.
 
 ## Implemented Behavior
 
@@ -34,14 +35,12 @@ runner_totalseg.py
 - elapsed_seconds capture
 - output layout creation
 - child process group cleanup on interruption
-- Slicer handoff generation after run completion
+- output report generation after run completion
 - task=teeth fast-fails with a clear known-upstream-bug message
 
-slicer_export.py
-- open_in_slicer.py generation
-- label_names.json / label_colors.json generation for existing masks
+output_report.py
 - logs/mask_stats.json generation with nonzero voxel counts when masks are readable
-- README_OUTPUT.md generation with non-clinical notice
+- README_OUTPUT.md generation with non-clinical notice and surface preview guidance
 
 case_summary.py
 - Markdown/text summary generation from benchmark.json and mask_stats.json
@@ -63,9 +62,6 @@ Output layout for `run`:
 out/
   input/source.nii.gz              optional, skipped with --no-copy-input
   segmentations/raw_totalseg/
-  slicer/open_in_slicer.py
-  slicer/label_names.json
-  slicer/label_colors.json
   logs/environment.json
   logs/benchmark.json
   logs/mask_stats.json
@@ -144,7 +140,7 @@ Both passed.
   Defer exact CPU timing until there is time for an unattended long run.
 - TotalSegmentator CPU also needs outside-sandbox execution because nnUNet multiprocessing.Manager()
   needs local socket binding.
-- Slicer handoff files are generated, but visual validation in Slicer is deferred.
+- The app now uses offline HTML surface preview for visual inspection.
 - TotalSegmentator 2.14.0 teeth CLI still has the crop_model device propagation bug described in docs/14;
   the runner blocks it early with a clear failed result.
 - `--skip-device-check` exists only to test fake runners without MPS.

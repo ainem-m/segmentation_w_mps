@@ -7,9 +7,9 @@
 [x] Phase 1 MPS ConvTranspose3D FP32 gate passed outside Codex sandbox.
 [x] Phase 2 craniofacial_structures MPS smoke passed on DZ-CBCT with non-empty masks.
 [x] Phase 3 backend runner implemented.
-[x] Phase 4 Slicer handoff files generated; Slicer visual validation deferred.
+[x] Phase 4 output report and offline surface preview path implemented; Slicer handoff retired.
 [~] Phase 5 benchmark command implemented, but CPU is effectively too slow for the current preview path.
-[x] Phase 6 minimal Tk UI wrapper implemented; manual desktop validation still required.
+[x] Phase 6 GUI path migrated to SwiftUI shell; Tk prototype has been removed.
 [ ] Phase 7 demo materials not started.
 ```
 
@@ -121,37 +121,39 @@ out/logs/run.log
 out/segmentations/raw_totalseg/
 ```
 
-## Phase 4: Slicer handoff
+## Phase 4: Output report and preview handoff
 
 Implement:
 
 ```text
-backend/slicer_export.py
+backend/output_report.py
+surface_preview.py
 ```
 
 Generate:
 
 ```text
-out/slicer/open_in_slicer.py
-out/slicer/label_names.json
-out/slicer/label_colors.json
+out/logs/mask_stats.json
+out/README_OUTPUT.md
+out/surface_preview/index.html
 ```
 
 Acceptance:
 
 ```text
-Slicer --python-script out/slicer/open_in_slicer.py
+python -m totalsegmentator_wrapper_mac surface-preview --case out
 ```
 
 Must load:
 
 ```text
-- source NIfTI volume
-- segmentation labelmaps if present
-- segment display colors/names if possible
+- source geometry in generated summary metadata
+- segmentation masks if present
+- offline 3D preview in the browser
 ```
 
-If conversion to Slicer Segmentation node is not robust in v0.1, load labelmaps and document manual conversion steps.
+Slicer handoff generation was removed from the active app path after the
+browser-based surface preview became the default visual inspection route.
 
 ## Phase 5: CPU vs MPS benchmark command
 
@@ -182,7 +184,7 @@ bench_out/benchmark_summary.json
 
 ## Phase 6: Mac Preview UI
 
-Only after CLI and Slicer handoff work.
+Only after CLI and output report generation work.
 
 Minimum UI options:
 
@@ -204,7 +206,7 @@ UI acceptance:
 [ ] progress/log visible
 [ ] benchmark visible
 [ ] output folder opens
-[ ] Slicer script can be run/opened
+[ ] 3D preview can be opened
 ```
 
 ## Phase 7: Demo materials

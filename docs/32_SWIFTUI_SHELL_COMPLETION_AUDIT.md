@@ -10,15 +10,15 @@ without rereading the whole codebase.
 
 The migration target is the distributed Mac app only. The Python backend,
 TotalSegmentator runner, DICOM normalizer, setup manager, sample assets, and
-surface preview generation remain backend components. Tk remains available for
-source-checkout debugging but is no longer the normal packaged launch path.
+surface preview generation remain backend components. SwiftUI is the only GUI
+path; the earlier Tk prototype has been removed.
 
 ## Plan vs Implementation
 
 | Plan item | Implementation evidence | Status |
 | --- | --- | --- |
 | Replace packaged app main executable with SwiftUI | `scripts/build_mac_app.sh` builds `native/macos/TotalSegmentatorWrapperForMac/*.swift` into `Contents/MacOS/TotalSegmentatorWrapperForMac`; `setup_manifest.json` records `ui_frontend: swiftui`. | Complete |
-| Keep Tk as legacy fallback | `totalsegmentator-wrapper-mac-ui` and `python -m totalsegmentator_wrapper_mac.ui_tk` remain; docs mark Tk as legacy/dev fallback. | Complete |
+| Remove Tk fallback | The packaged app and source GUI path are SwiftUI-only; CLI remains available for backend and automation workflows. | Complete |
 | Build requires full Xcode, not Command Line Tools alone | `build_mac_app.sh` runs full-Xcode preflight and accepts `TOTALSEGMENTATOR_WRAPPER_MAC_XCODE_DEVELOPER_DIR`; module cache is under `dist/swift_module_cache`. | Complete |
 | Setup UI in SwiftUI | `SetupView`, `SetupCoordinator`, and headless setup flow handle setup, progress labels, elapsed time, sample viewer, log tail, and Japanese failure messages. | Complete |
 | Main UI in SwiftUI | `RootView`, `StartChoiceView`, `SampleTutorialView`, `OwnDataView`, `RunProgressView`, and `ResultView` implement the two-choice interview and result flow. | Complete |

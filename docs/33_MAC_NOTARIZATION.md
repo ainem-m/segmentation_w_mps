@@ -45,7 +45,7 @@ passwordは対話promptに入力し、repoやshell historyへ残さない。
 export TOTALSEGMENTATOR_WRAPPER_MAC_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 export TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX=/path/to/dcm2niix
 export TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY="Developer ID Application: Example Inc (TEAMID)"
-export TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER="com.example.dentalseg.preview"
+export TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER="jp.chino.totalsegmentator.wrapper.mac"
 export TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE=totalsegmentator-wrapper-mac-notary
 
 scripts/notarize_mac_dmg.sh

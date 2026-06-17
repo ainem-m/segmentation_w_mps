@@ -34,7 +34,7 @@ Related issue:
 - Notes:
   - The extension currently has `ENABLE_MPS = False`.
   - The code comment says MPS is disabled because some convolution operators were unsupported and caused segmentation failure on Apple Silicon macOS.
-  - This supports the strategy: run inference outside Slicer with a controlled modern PyTorch, then return outputs to Slicer.
+  - This supports the strategy: run inference outside Slicer with a controlled modern PyTorch.
 
 ## SlicerDentalSegmentator
 
@@ -48,7 +48,7 @@ Related issue:
 ## 3D Slicer
 
 - Main site: https://www.slicer.org/
-- Slicer is used here only as viewer/editor/export environment, not inference runtime.
+- Slicer remains useful context and an optional external viewer/editor, but the packaged preview path is the app/browser surface preview.
 
 ## Non-clinical scope
 

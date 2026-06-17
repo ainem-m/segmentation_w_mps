@@ -96,7 +96,7 @@ Record:
 
 MVP does not need formal Dice validation. It needs visual plausibility only.
 
-Check in Slicer:
+Check in the offline HTML 3D preview:
 
 ```text
 [ ] mandible/teeth/skull structures align with CT visually
@@ -126,7 +126,7 @@ Publish with caveats if:
 - craniofacial_structures works but teeth is unstable
 - MPS speedup is modest but visible
 - DICOM direct input fails but NIfTI works
-- Slicer auto-conversion to Segmentation node needs manual step
+- surface preview generation needs a retry after successful segmentation
 ```
 
 ## Benchmark integrity rules

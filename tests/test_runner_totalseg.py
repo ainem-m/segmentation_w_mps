@@ -143,9 +143,7 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue((tmp_path / "case" / "logs" / "environment.json").exists())
             self.assertTrue((tmp_path / "case" / "logs" / "mask_stats.json").exists())
             self.assertTrue((tmp_path / "case" / "logs" / "run.log").exists())
-            self.assertTrue((tmp_path / "case" / "slicer" / "open_in_slicer.py").exists())
-            self.assertTrue((tmp_path / "case" / "slicer" / "label_names.json").exists())
-            self.assertTrue((tmp_path / "case" / "slicer" / "label_colors.json").exists())
+            self.assertFalse((tmp_path / "case" / "slicer").exists())
             self.assertTrue((tmp_path / "case" / "README_OUTPUT.md").exists())
             self.assertTrue(
                 (tmp_path / "case" / "segmentations" / "raw_totalseg" / "mandible.nii.gz").exists()
@@ -153,21 +151,18 @@ class RunnerTests(unittest.TestCase):
             run_log = (tmp_path / "case" / "logs" / "run.log").read_text(encoding="utf-8")
             self.assertIn("-i sample.nii.gz", run_log)
             self.assertNotIn(str(input_path.parent), run_log)
-            label_names = json.loads(
-                (tmp_path / "case" / "slicer" / "label_names.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(label_names["mandible"], "Mandible")
             mask_stats = json.loads(
                 (tmp_path / "case" / "logs" / "mask_stats.json").read_text(encoding="utf-8")
             )
             self.assertEqual(mask_stats["mask_count"], 1)
             self.assertEqual(mask_stats["masks"][0]["name"], "mandible.nii.gz")
-            slicer_script = (tmp_path / "case" / "slicer" / "open_in_slicer.py").read_text(
-                encoding="utf-8"
-            )
-            self.assertIn("slicer.util.loadLabelVolume", slicer_script)
             output_readme = (tmp_path / "case" / "README_OUTPUT.md").read_text(encoding="utf-8")
             self.assertIn("non-clinical research/education preview", output_readme)
+            files_section = output_readme.split("## Files", 1)[1].split("## Segmentation Masks", 1)[0]
+            self.assertNotIn("surface preview: surface_preview/index.html", files_section)
+            self.assertIn("3Dプレビューを再生成", output_readme)
+            self.assertIn("logs/run.log", output_readme)
+            self.assertIn("結果フォルダ", output_readme)
             benchmark = json.loads(
                 (tmp_path / "case" / "logs" / "benchmark.json").read_text(encoding="utf-8")
             )

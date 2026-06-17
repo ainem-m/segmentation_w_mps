@@ -11,7 +11,6 @@ class CaseOutput:
     input_dir: Path
     raw_segmentations_dir: Path
     teeth_experimental_dir: Path
-    slicer_dir: Path
     logs_dir: Path
 
     @property
@@ -21,18 +20,6 @@ class CaseOutput:
     @property
     def run_log_path(self) -> Path:
         return self.logs_dir / "run.log"
-
-    @property
-    def slicer_script_path(self) -> Path:
-        return self.slicer_dir / "open_in_slicer.py"
-
-    @property
-    def label_names_path(self) -> Path:
-        return self.slicer_dir / "label_names.json"
-
-    @property
-    def label_colors_path(self) -> Path:
-        return self.slicer_dir / "label_colors.json"
 
     @property
     def benchmark_path(self) -> Path:
@@ -82,13 +69,11 @@ def prepare_case_output(root: Path) -> CaseOutput:
         input_dir=root / "input",
         raw_segmentations_dir=root / "segmentations" / "raw_totalseg",
         teeth_experimental_dir=root / "segmentations" / "teeth_experimental",
-        slicer_dir=root / "slicer",
         logs_dir=root / "logs",
     )
     case.input_dir.mkdir(parents=True, exist_ok=True)
     case.raw_segmentations_dir.mkdir(parents=True, exist_ok=True)
     case.teeth_experimental_dir.mkdir(parents=True, exist_ok=True)
-    case.slicer_dir.mkdir(parents=True, exist_ok=True)
     case.logs_dir.mkdir(parents=True, exist_ok=True)
     return case
 

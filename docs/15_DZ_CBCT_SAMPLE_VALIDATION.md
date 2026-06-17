@@ -97,7 +97,7 @@ maxillary sinus, and upper/lower teeth labels. Frontal sinus is empty on this
 sample and should not be treated as a failure by itself.
 ```
 
-## Slicer Handoff Artifact
+## Preview Artifact
 
 A case folder was prepared at:
 
@@ -110,33 +110,31 @@ Layout:
 ```text
 input/source.nii.gz
 segmentations/raw_totalseg/*.nii.gz
-slicer/open_in_slicer.py
-slicer/label_names.json
-slicer/label_colors.json
+surface_preview/index.html
 logs/run.log
-logs/summary.json
+logs/mask_stats.json
 ```
 
-Run in Slicer with:
+Open the generated preview with:
 
 ```bash
-Slicer --python-script artifacts/cases/dz_cbct_craniofacial/slicer/open_in_slicer.py
+open artifacts/cases/dz_cbct_craniofacial/surface_preview/index.html
 ```
 
-`Slicer` was not found in the current shell `PATH`, so visual alignment has not
-yet been verified.
+The preview is non-diagnostic and intended only for quick orientation and output
+inspection.
 
 ## Decision
 
 This sample is now the preferred local validation sample for the next gate.
 
-Project decision: skip Slicer visual validation for now. Use the successful MPS
-run plus non-empty output masks as the temporary gate for backend runner work.
+Project decision: use the successful MPS run plus non-empty output masks and
+offline surface preview as the backend runner gate.
 
 ```text
 [x] MPS exit code 0
 [x] head/mandible/skull/teeth labels are non-empty
-[ ] Slicer visual alignment is deferred
+[x] offline preview path is available
 ```
 
 Next steps:
@@ -145,5 +143,5 @@ Next steps:
 1. Implement the backend/CLI runner.
 2. Use the runner MPS result as the Phase 3 gate for this sample.
 3. Defer CPU-vs-MPS benchmarking until a smaller representative input is selected.
-4. Keep Slicer handoff as a later validation step, not a blocker for Phase 3.
+4. Keep deeper visual QA as a later validation step, not a blocker for Phase 3.
 ```

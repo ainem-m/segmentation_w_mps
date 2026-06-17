@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
-import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LAUNCHER_TEMPLATE = ROOT / "templates" / "mac_app_launcher.py"
-ENTRYPOINT_TEMPLATE = ROOT / "templates" / "mac_app_entrypoint.c"
 SWIFT_APP_DIR = ROOT / "native" / "macos" / "TotalSegmentatorWrapperForMac"
 BUILD_SCRIPT = ROOT / "scripts" / "build_mac_app.sh"
 WHEEL_BUILD_SCRIPT = ROOT / "scripts" / "build_mac_wheel.sh"
@@ -19,7 +14,6 @@ NOTARIZE_SCRIPT = ROOT / "scripts" / "notarize_mac_dmg.sh"
 DMG_VERIFY_SCRIPT = ROOT / "scripts" / "verify_zero_env_mac_dmg.sh"
 EVIDENCE_SCRIPT = ROOT / "scripts" / "collect_test_account_install_evidence.sh"
 EVIDENCE_IMPORT_SCRIPT = ROOT / "scripts" / "import_test_account_evidence.sh"
-UI_TK = ROOT / "src" / "totalsegmentator_wrapper_mac" / "ui_tk.py"
 SAMPLE1_ROOT = ROOT / "resources" / "sample1"
 SAMPLE1_VIEWER_HTML = SAMPLE1_ROOT / "surface_preview" / "index.html"
 SAMPLE1_MANIFEST = SAMPLE1_ROOT / "sample_manifest.json"
@@ -27,314 +21,6 @@ SAMPLE1_NOTICES = SAMPLE1_ROOT / "THIRD_PARTY_NOTICES.txt"
 
 
 class MacAppPackagingTests(unittest.TestCase):
-    def test_launcher_builds_argv_commands(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            support = root / "Library" / "Application Support" / "TotalSegmentatorWrapperMac"
-            wheel = root / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
-            constraints = root / "constraints.txt"
-            setup_json = support / "logs" / "setup_result.json"
-            progress_log = support / "logs" / "launcher.log"
-            bundle_manifest = root / "Resources" / "setup_manifest.json"
-            python = support / "env" / "bin" / "python"
-            python312 = root / "python3.12"
-
-            commands = [
-                launcher.build_create_venv_command(python312, support),
-                launcher.build_bootstrap_install_command(python, wheel),
-                launcher.build_setup_command(
-                    python,
-                    wheel,
-                    setup_json,
-                    python312=python312,
-                    constraints=constraints,
-                    allow_network=True,
-                    skip_mps_check=True,
-                    progress_log=progress_log,
-                    bundle_manifest=bundle_manifest,
-                ),
-                launcher.build_ui_command(python),
-            ]
-
-            for command in commands:
-                self.assertIsInstance(command, list)
-                self.assertNotIn("sudo", command)
-                self.assertNotIn("brew", command)
-                self.assertNotIn(";", " ".join(command))
-
-            self.assertIn("--force-reinstall", commands[1])
-            self.assertIn("--no-deps", commands[1])
-            self.assertIn("--allow-network", commands[2])
-            self.assertIn("--skip-mps-check", commands[2])
-            self.assertIn("--python", commands[2])
-            self.assertIn(str(python312), commands[2])
-            self.assertIn("--constraints", commands[2])
-            self.assertIn(str(constraints), commands[2])
-            self.assertIn("--use-existing-env", commands[2])
-            self.assertIn("--progress-log", commands[2])
-            self.assertIn(str(progress_log), commands[2])
-            self.assertIn("--bundle-manifest", commands[2])
-            self.assertIn(str(bundle_manifest), commands[2])
-
-    def test_launcher_setup_window_is_japanese_and_progress_visible(self) -> None:
-        text = LAUNCHER_TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn("TotalSegmentator Wrapper for Mac セットアップ", text)
-        self.assertIn("セットアップ開始", text)
-        self.assertIn("終了", text)
-        self.assertIn("管理者権限は不要です", text)
-        self.assertIn("App Support配下のみ書き込み", text)
-        self.assertIn("DICOM/CT/処理結果は送信しません", text)
-        self.assertIn("初回Setupまたは明示的な依存更新時のみ", text)
-        self.assertIn("setup_context_message", text)
-        self.assertIn("セットアップ開始を押すまで通信しません", text)
-        self.assertIn("ttk.Progressbar", text)
-        self.assertIn('mode="indeterminate"', text)
-        self.assertIn("elapsed_var", text)
-        self.assertIn("root.after(1000, poll_setup_log)", text)
-        self.assertIn("read_new_log_text", text)
-        self.assertIn("logs\" / \"launcher.log", text)
-        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_SETUP_SUPPRESS_STDOUT_JSON", text)
-        self.assertIn("def exec_ui", text)
-        self.assertIn("os.execve", text)
-        self.assertIn("os.dup2", text)
-        self.assertIn("UI exec failed", text)
-        self.assertIn("3Dサンプルを開く", text)
-        self.assertIn("セットアップ中も、Sample 1の3Dプレビュー", text)
-        self.assertIn("def open_demo_viewer", text)
-        self.assertIn('command = ["open", str(demo_html)]', text)
-        self.assertIn("subprocess.Popen(command)", text)
-        self.assertNotIn("shell=True", text)
-
-    def test_launcher_translates_setup_reasons_and_progress_lines(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            log_path = Path(tmp) / "launcher.log"
-
-            self.assertEqual(launcher.setup_reason_to_japanese("needs_network"), "ネットワーク接続が必要です。")
-            self.assertEqual(launcher.setup_reason_to_japanese("mps_unavailable"), "MPS確認に失敗しました。")
-            self.assertEqual(launcher.setup_reason_to_japanese("python312_missing"), "同梱Python 3.12が見つかりません。")
-            self.assertEqual(launcher.setup_reason_to_japanese("runtime_install_failed"), "依存パッケージの導入に失敗しました。")
-            self.assertEqual(launcher.setup_reason_to_japanese("bundle_manifest_invalid"), "アプリ同梱manifestを読めません。")
-            self.assertEqual(launcher.setup_step_to_japanese("install_wheel"), "依存パッケージ取得")
-            self.assertEqual(launcher.setup_step_to_japanese("sync_bundle"), "アプリ更新反映")
-            self.assertIn("数分かかる", launcher.setup_hint_for_step("install_wheel"))
-
-            log_path.write_text(
-                "old\nSETUP_PROGRESS step=doctor status=running message=MPS確認中\n",
-                encoding="utf-8",
-            )
-            new_text, pos = launcher.read_new_log_text(log_path, 0)
-            self.assertIn("SETUP_PROGRESS", new_text)
-            self.assertEqual(pos, log_path.stat().st_size)
-            self.assertEqual(
-                launcher.progress_step_from_log_line("SETUP_PROGRESS step=doctor status=running message=MPS確認中"),
-                "doctor",
-            )
-            self.assertEqual(
-                launcher.display_log_line("SETUP_PROGRESS step=doctor status=running message=MPS確認中"),
-                "MPS確認中",
-            )
-
-    def test_setup_state_success_check_is_conservative(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            state = Path(tmp) / "setup_state.json"
-
-            self.assertFalse(launcher.setup_state_is_successful(state))
-            state.write_text('{"status": "failed"}', encoding="utf-8")
-            self.assertFalse(launcher.setup_state_is_successful(state))
-            state.write_text('{"status": "success"}', encoding="utf-8")
-            self.assertTrue(launcher.setup_state_is_successful(state))
-
-    def test_launcher_bundle_sync_detects_wheel_and_dependency_changes(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            resources = root / "Resources"
-            resources.mkdir()
-            state = root / "setup_state.json"
-            manifest_payload = {
-                "app_version": "0.1.0",
-                "build_id": "build-b",
-                "dependency_set_id": "deps-a",
-                "wheel_sha256": "wheel-b",
-                "constraints_sha256": "constraints-a",
-                "normalizer_sha256": "normalizer-a",
-                "dcm2niix_sha256": "dcm-a",
-                "sample1_manifest_sha256": "sample-a",
-                "update_manifest_url": "",
-            }
-            (resources / "setup_manifest.json").write_text(json.dumps(manifest_payload), encoding="utf-8")
-
-            state.write_text(
-                json.dumps(
-                    {
-                        "status": "success",
-                        "installed_bundle": {
-                            "schema": "totalsegmentator_wrapper_mac.installed_bundle.v1",
-                            "app_version": "0.1.0",
-                            "build_id": "build-a",
-                            "dependency_set_id": "deps-a",
-                            "wheel_sha256": "wheel-a",
-                            "constraints_sha256": "constraints-a",
-                            "normalizer_sha256": "normalizer-a",
-                            "dcm2niix_sha256": "dcm-a",
-                            "sample1_manifest_sha256": "sample-a",
-                            "update_manifest_url": "",
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            self.assertFalse(launcher.setup_state_is_current(state, resources))
-            self.assertEqual(launcher.bundle_sync_status(state, resources)["action"], "resync_wheel")
-
-            manifest_payload["dependency_set_id"] = "deps-b"
-            (resources / "setup_manifest.json").write_text(json.dumps(manifest_payload), encoding="utf-8")
-            self.assertEqual(launcher.bundle_sync_status(state, resources)["action"], "setup_required")
-
-    def test_launcher_bundle_sync_requires_installed_wheel_marker(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            resources = root / "Resources"
-            resources.mkdir()
-            state = root / "setup_state.json"
-            manifest_payload = {
-                "app_version": "0.1.0",
-                "build_id": "build-a",
-                "dependency_set_id": "deps-a",
-                "wheel_sha256": "wheel-a",
-                "constraints_sha256": "constraints-a",
-                "normalizer_sha256": "normalizer-a",
-                "dcm2niix_sha256": "dcm-a",
-                "sample1_manifest_sha256": "sample-a",
-                "update_manifest_url": "",
-            }
-            (resources / "setup_manifest.json").write_text(json.dumps(manifest_payload), encoding="utf-8")
-            state.write_text(
-                json.dumps(
-                    {
-                        "status": "success",
-                        "installed_bundle": {
-                            "schema": "totalsegmentator_wrapper_mac.installed_bundle.v1",
-                            **manifest_payload,
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            self.assertEqual(launcher.bundle_sync_status(state, resources)["action"], "resync_wheel")
-            launcher.installed_wheel_marker_path(root).write_text("wheel-a\n", encoding="utf-8")
-            self.assertTrue(launcher.setup_state_is_current(state, resources))
-            launcher.installed_wheel_marker_path(root).write_text("wheel-old\n", encoding="utf-8")
-            self.assertEqual(launcher.bundle_sync_status(state, resources)["reason"], "wheel_marker_missing_or_stale")
-
-    def test_launcher_resync_command_reinstalls_wheel_without_network_dependencies(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            command = launcher.build_resync_wheel_command(
-                root / "env" / "bin" / "python",
-                root / "totalsegmentator_wrapper_mac.whl",
-            )
-
-            self.assertIn("--force-reinstall", command)
-            self.assertIn("--no-deps", command)
-            self.assertNotIn("-c", command)
-            self.assertNotIn("--allow-network", command)
-
-    def test_launcher_resync_updates_installed_bundle_state(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            support = root / "Library" / "Application Support" / "TotalSegmentatorWrapperMac"
-            resources = root / "Resources"
-            fake_python = support / "env" / "bin" / "python"
-            wheel = root / "totalsegmentator_wrapper_mac.whl"
-            log_path = support / "logs" / "launcher.log"
-            args_log = root / "pip_args.txt"
-            resources.mkdir(parents=True)
-            fake_python.parent.mkdir(parents=True)
-            wheel.write_bytes(b"fake wheel")
-            fake_python.write_text(f'#!/bin/sh\necho "$@" > "{args_log}"\nexit 0\n', encoding="utf-8")
-            os.chmod(fake_python, 0o755)
-            manifest_payload = {
-                "app_version": "0.1.0",
-                "build_id": "build-b",
-                "dependency_set_id": "deps-a",
-                "wheel_sha256": "wheel-b",
-                "constraints_sha256": "constraints-a",
-                "normalizer_sha256": "normalizer-a",
-                "dcm2niix_sha256": "dcm-a",
-                "sample1_manifest_sha256": "sample-a",
-                "update_manifest_url": "",
-            }
-            (resources / "setup_manifest.json").write_text(json.dumps(manifest_payload), encoding="utf-8")
-            (support / "setup_state.json").parent.mkdir(parents=True, exist_ok=True)
-            (support / "setup_state.json").write_text(
-                json.dumps(
-                    {
-                        "status": "success",
-                        "installed_bundle": {
-                            "schema": "totalsegmentator_wrapper_mac.installed_bundle.v1",
-                            "app_version": "0.1.0",
-                            "build_id": "build-a",
-                            "dependency_set_id": "deps-a",
-                            "wheel_sha256": "wheel-a",
-                            "constraints_sha256": "constraints-a",
-                            "normalizer_sha256": "normalizer-a",
-                            "dcm2niix_sha256": "dcm-a",
-                            "sample1_manifest_sha256": "sample-a",
-                            "update_manifest_url": "",
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            rc = launcher.resync_installed_bundle(
-                support=support,
-                wheel=wheel,
-                resources=resources,
-                log_path=log_path,
-            )
-
-            self.assertEqual(rc, 0)
-            self.assertIn("--force-reinstall --no-deps", args_log.read_text(encoding="utf-8"))
-            state = json.loads((support / "setup_state.json").read_text(encoding="utf-8"))
-            self.assertEqual(state["installed_bundle"], launcher.current_bundle_record(resources))
-            self.assertEqual(state["last_bundle_resync"]["reason"], "wheel_resync")
-            self.assertEqual(
-                launcher.installed_wheel_marker_path(support).read_text(encoding="utf-8").strip(),
-                "wheel-b",
-            )
-
-    def test_launcher_opens_demo_viewer_with_argv_command(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            resources = root / "Resources"
-            demo_html = resources / "sample1" / "surface_preview" / "index.html"
-            log_path = root / "Library" / "Application Support" / "TotalSegmentatorWrapperMac" / "logs" / "launcher.log"
-            demo_html.parent.mkdir(parents=True)
-            demo_html.write_text("<!doctype html><title>demo</title>", encoding="utf-8")
-            calls = []
-            original_popen = launcher.subprocess.Popen
-            launcher.subprocess.Popen = lambda command: calls.append(command) or object()
-            try:
-                ok, message = launcher.open_demo_viewer(resources, log_path)
-            finally:
-                launcher.subprocess.Popen = original_popen
-
-            self.assertTrue(ok)
-            self.assertIn("ブラウザで開きました", message)
-            self.assertEqual(calls, [["open", str(demo_html)]])
-            self.assertIn("$ open ", log_path.read_text(encoding="utf-8"))
-
     def test_build_mac_app_script_has_expected_bundle_steps(self) -> None:
         text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
@@ -359,16 +45,17 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("-target arm64-apple-macos13.0", text)
         self.assertIn("CommandBuilder.swift", text)
         self.assertIn("TotalSegmentatorWrapperForMacApp.swift", text)
-        self.assertNotIn('cc "${ROOT}/templates/mac_app_entrypoint.c"', text)
-        self.assertIn('${RESOURCES_DIR}/launcher', text)
-        self.assertIn("launcher/mac_app_launcher.py", text)
+        self.assertNotIn('cc "${ROOT}/templates/mac_app_' + 'entrypoint.c"', text)
+        self.assertNotIn('${RESOURCES_DIR}/launcher', text)
+        self.assertNotIn("launcher/mac_app_" + "launcher.py", text)
+        self.assertNotIn("mac_app_" + "launcher.py", text)
         self.assertIn("resources/sample1", text)
         self.assertIn("sample1/surface_preview/index.html", text)
         self.assertIn("sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz", text)
         self.assertIn("sample1/THIRD_PARTY_NOTICES.txt", text)
         self.assertIn("setup_manifest.json", text)
         self.assertIn('"ui_frontend": "swiftui"', text)
-        self.assertIn('"legacy_tk_ui": true', text)
+        self.assertNotIn("legacy_" + "tk_ui", text)
         self.assertIn("constraints/macos-arm64-py312.txt", text)
         self.assertIn("external_python312_required", text)
         self.assertIn("sys.base_prefix", text)
@@ -641,49 +328,6 @@ class MacAppPackagingTests(unittest.TestCase):
                 self.assertNotIn("segmentation_w_mps", text)
                 self.assertNotIn(".venv", text)
 
-    def test_tk_ui_defaults_to_bundled_sample1_and_app_support_output(self) -> None:
-        text = UI_TK.read_text(encoding="utf-8")
-
-        self.assertIn("def bundled_sample1_input", text)
-        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR", text)
-        self.assertIn("sample1", text)
-        self.assertIn("DZ-CBCT_jawcrop_0p5mm.nii.gz", text)
-        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_APP_SUPPORT", text)
-        self.assertIn('"runs"', text)
-        self.assertIn("Sampleで流れを体験する", text)
-        self.assertIn("自分のCT/NIfTIを開く", text)
-        self.assertIn("Sample 1の3Dプレビューを開く", text)
-        self.assertIn("Sample 1を入力に使う", text)
-        self.assertIn("100秒前後", text)
-        self.assertIn("NIfTIファイルを選ぶ", text)
-        self.assertIn("DICOMフォルダを確認する", text)
-        self.assertIn("詳細ログを表示", text)
-        self.assertIn("実行開始", text)
-        self.assertIn("結果フォルダを開く", text)
-        self.assertIn("3Dプレビューを開く", text)
-        self.assertIn("def _open_sample_viewer", text)
-        self.assertIn("更新を確認", text)
-        self.assertIn("def _check_updates", text)
-        self.assertIn("update_manifest_url", text)
-        self.assertIn("update_allowed_hosts", text)
-        self.assertIn("DICOM/CT/path/logは送信しません", text)
-        self.assertIn("messagebox.askyesno", text)
-        self.assertIn("更新ページをブラウザで開きますか？", text)
-        self.assertIn("配布ファイルSHA256", text)
-
-    def test_mac_app_entrypoint_uses_bundled_python_without_system_python(self) -> None:
-        text = ENTRYPOINT_TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn("_NSGetExecutablePath", text)
-        self.assertIn("python/cpython-3.12/bin/python3.12", text)
-        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR", text)
-        self.assertIn("PYTHONPYCACHEPREFIX", text)
-        self.assertIn('setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin", 1)', text)
-        self.assertIn('setenv("TMPDIR", "/tmp", 1)', text)
-        self.assertIn("execv(python, child_argv)", text)
-        self.assertNotIn("/usr/bin/env python3", text)
-        self.assertNotIn("brew", text)
-
     def test_build_mac_wheel_uses_pep517_frontend(self) -> None:
         text = WHEEL_BUILD_SCRIPT.read_text(encoding="utf-8")
 
@@ -844,93 +488,6 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("bundled_dcm2niix_exists", text)
         self.assertNotIn("sudo", text)
         self.assertNotIn("brew", text)
-
-    def test_launcher_resolves_python312_from_env_or_manifest(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            resources = root / "Resources"
-            resources.mkdir()
-            env_python = root / "python3.12"
-
-            path, source = launcher.resolve_python312(resources, {"TOTALSEGMENTATOR_WRAPPER_MAC_PYTHON_312": str(env_python)})
-            self.assertEqual(path, env_python.resolve())
-            self.assertEqual(source, "env")
-
-            manifest_python = root / "manifest-python3.12"
-            (resources / "setup_manifest.json").write_text(
-                json.dumps({"python_runtime": {"python_executable": str(manifest_python)}}),
-                encoding="utf-8",
-            )
-            path, source = launcher.resolve_python312(resources, {})
-            self.assertEqual(path, manifest_python.resolve())
-            self.assertEqual(source, "manifest")
-
-            (resources / "setup_manifest.json").write_text(
-                json.dumps({"python_runtime": {"python_executable": "python/cpython-3.12/bin/python3.12"}}),
-                encoding="utf-8",
-            )
-            path, source = launcher.resolve_python312(resources, {})
-            self.assertEqual(path, (resources / "python/cpython-3.12/bin/python3.12").resolve())
-            self.assertEqual(source, "manifest")
-
-    def test_launcher_can_resolve_resources_from_environment(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            resources = Path(tmp) / "Resources"
-
-            old_value = launcher.os.environ.get("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR")
-            launcher.os.environ["TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR"] = str(resources)
-            try:
-                self.assertEqual(launcher.bundle_resources_dir(), resources.resolve())
-            finally:
-                if old_value is None:
-                    launcher.os.environ.pop("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR", None)
-                else:
-                    launcher.os.environ["TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_RESOURCES_DIR"] = old_value
-
-    def test_launcher_environment_uses_bundled_normalizer_and_app_support_cache(self) -> None:
-        launcher = _load_launcher()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            resources = root / "Resources"
-            support = root / "Library" / "Application Support" / "TotalSegmentatorWrapperMac"
-            normalizer = resources / "bin" / "totalsegmentator-wrapper-dicom-normalizer"
-            dcm2niix = resources / "bin" / "dcm2niix"
-            normalizer.parent.mkdir(parents=True)
-            normalizer.write_text("# fake", encoding="utf-8")
-            dcm2niix.write_text("# fake", encoding="utf-8")
-            (resources / "python" / "cpython-3.12" / "lib" / "tcl8.6").mkdir(parents=True)
-            (resources / "python" / "cpython-3.12" / "lib" / "tk8.6").mkdir(parents=True)
-
-            env = launcher.build_launch_environment(resources, support)
-
-            self.assertEqual(env["TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER"], str(normalizer))
-            self.assertEqual(env["TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX"], str(dcm2niix))
-            self.assertEqual(
-                env["TCL_LIBRARY"],
-                str(resources / "python" / "cpython-3.12" / "lib" / "tcl8.6"),
-            )
-            self.assertEqual(
-                env["TK_LIBRARY"],
-                str(resources / "python" / "cpython-3.12" / "lib" / "tk8.6"),
-            )
-            self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
-            self.assertEqual(env["PYTHONPYCACHEPREFIX"], str(support / "cache" / "pycache"))
-            self.assertEqual(env["PIP_CACHE_DIR"], str(support / "cache" / "pip"))
-            self.assertEqual(env["PIP_DISABLE_PIP_VERSION_CHECK"], "1")
-            self.assertTrue(env["XDG_CACHE_HOME"].startswith(str(support)))
-            self.assertTrue(env["TOTALSEG_WEIGHTS_PATH"].startswith(str(support)))
-
-
-def _load_launcher():
-    spec = importlib.util.spec_from_file_location("mac_app_launcher_template", LAUNCHER_TEMPLATE)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,13 +11,13 @@ TotalSegmentator Wrapper for Mac
 One-line positioning:
 
 ```text
-Apple Silicon Macで歯科CBCT由来volumeをローカルMPS推論し、Slicerで修正できる形に戻す非臨床プレビュー。
+Apple Silicon Macで歯科CBCT由来volumeをローカル処理し、3Dプレビューで確認できる非臨床プレビュー。
 ```
 
 English version:
 
 ```text
-A non-clinical Apple Silicon Mac preview for local MPS dental-relevant CT segmentation, with Slicer handoff for review and correction.
+A non-clinical Apple Silicon Mac preview for local MPS dental-relevant CT segmentation with an offline 3D surface preview.
 ```
 
 ## Public narrative
@@ -28,7 +28,7 @@ The public story is:
 
 ```text
 去年紹介したDentalSegmentatorはすごかったが、MacではGPUが使いにくく、導入やSlicer更新で詰まる人がいた。
-今回はSlicerの外で最新PyTorch/MPSを使ってTotalSegmentatorを回し、結果をSlicerに戻す別ルートを試した。
+今回はMac appから最新PyTorch/MPSを使ってTotalSegmentatorを回し、結果をoffline 3Dプレビューで確認する別ルートを試した。
 ```
 
 ## Why this is not a repost of the previous buzz
@@ -43,7 +43,7 @@ New angle:
 
 ```text
 Apple Silicon Macで、ローカルGPU/MPSを使って高速化できる。
-Slicer内ではなく、Slicer外で推論し、Slicerに戻す。
+Slicer内ではなく、Mac appから処理し、offline 3Dプレビューで確認する。
 ```
 
 The demo must emphasize:
@@ -53,7 +53,7 @@ The demo must emphasize:
 - MPS
 - local inference
 - speed comparison
-- Slicer handoff
+- offline HTML 3D preview
 ```
 
 ## Audience
@@ -63,7 +63,7 @@ Primary:
 ```text
 - Dental clinicians and technicians who previously saved/shared DentalSegmentator content
 - Mac users who could not use CUDA
-- Slicer-curious dental users
+- Dental users who want a local Mac preview workflow
 - Dental CBCT / CAD automation hobbyists and researchers
 ```
 
@@ -107,7 +107,7 @@ Suggested X.com post:
 ```text
 去年バズったDentalSegmentatorは、MacではGPUが使いにくいのがネックでした。
 
-今回はSlicerの外でTotalSegmentatorをApple Silicon/MPS実行し、歯科CBCT由来volumeをローカルsegmentation → Slicerで確認・修正できる流れを試しています。
+今回はMac appからTotalSegmentatorをApple Silicon/MPS実行し、歯科CBCT由来volumeをローカルsegmentation → 3Dプレビューで確認できる流れを試しています。
 
 CPU vs MPSの実測も取りました。
 非臨床・研究/教育用です。
@@ -119,7 +119,7 @@ Video flow:
 0–3s: “Apple Silicon Mac / device: mps”
 3–10s: task selection and benchmark timer
 10–25s: segmentation output
-25–40s: Slicer opens volume + segmentation
+25–40s: offline 3D preview opens in browser
 40–50s: label toggles: mandible, teeth, sinus, canal/pharynx if available
 50–60s: benchmark table + non-clinical notice
 ```

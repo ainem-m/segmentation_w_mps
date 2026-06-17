@@ -8,7 +8,7 @@ TotalSegmentator Wrapper for Mac
 
 ## MVP objective
 
-Demonstrate that an Apple Silicon Mac can run dental-relevant segmentation locally using PyTorch MPS and TotalSegmentator, then hand the output to Slicer.
+Demonstrate that an Apple Silicon Mac can run dental-relevant segmentation locally using PyTorch MPS and TotalSegmentator, then show the result in an offline HTML 3D preview.
 
 ## Supported platform
 
@@ -106,13 +106,12 @@ Minimum UI:
 - progress/log view
 - benchmark summary
 - Open output folder button
-- Open in Slicer button
+- Open 3D preview button
 ```
 
 Do not implement:
 
 ```text
-- 3D preview
 - segmentation editor
 - DICOM browser
 - model zoo
@@ -131,7 +130,9 @@ Required:
 - benchmark.json
 - environment.json
 - run.log
-- open_in_slicer.py
+- mask_stats.json
+- README_OUTPUT.md
+- surface_preview/index.html
 ```
 
 Optional:
@@ -188,7 +189,7 @@ No patient identifiers.
 The demo is successful if it can produce:
 
 ```text
-- visible segmentation in Slicer
+- visible segmentation in offline HTML 3D preview
 - device=mps proof
 - CPU vs MPS elapsed time comparison
 - short video showing the workflow

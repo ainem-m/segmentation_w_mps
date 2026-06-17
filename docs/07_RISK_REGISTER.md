@@ -91,14 +91,14 @@ Mitigation:
 - Start with arm64 only.
 ```
 
-## Risk 7: Slicer handoff fails
+## Risk 7: Surface preview fails
 
 Mitigation:
 
 ```text
-- Generate simple open_in_slicer.py.
-- If automatic Segmentation node conversion fails, load labelmaps and document manual conversion.
-- Keep source volume and segmentation in simple formats.
+- Keep raw NIfTI masks and logs even if mesh generation fails.
+- Let the app regenerate only `surface-preview --case <output>` without rerunning inference.
+- Keep STL exports and HTML viewer fully offline.
 ```
 
 ## Risk 8: Public benchmark is weak
@@ -128,6 +128,6 @@ Mitigation:
 Mitigation:
 
 ```text
-- All new feature requests go to Deferred Scope unless required for MPS benchmark or Slicer handoff.
+- All new feature requests go to Deferred Scope unless required for MPS benchmark, CT intake, or surface preview.
 - No DICOM normalizer, ONNX, or DentalSegmentator exact mode before Mac Preview proof.
 ```
