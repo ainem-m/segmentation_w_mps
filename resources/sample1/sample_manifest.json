@@ -1,0 +1,44 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.sample.v1",
+  "sample_id": "sample1_dz_cbct_jawcrop_0p5mm",
+  "display_name": "Sample 1: DZ-CBCT jawcrop 0.5mm",
+  "clinical_use": false,
+  "purpose": "Bundled non-clinical preview sample for first-run UI and local workflow testing.",
+  "default_input": "input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+  "surface_preview": "surface_preview/index.html",
+  "precomputed_teeth_labelmap": "teeth_result/teeth_multilabel_fullspace.nii.gz",
+  "expected_runtime_note_ja": "Sample 1の3Dプレビュー作成は、モデル取得済みの場合、このMacでおおむね100秒前後かかります。",
+  "expected_runtime_seconds_approx": 100,
+  "notices": "THIRD_PARTY_NOTICES.txt",
+  "source": {
+    "dataset": "3D Slicer SampleData CBCT-MR Head",
+    "sample_data_name": "CBCTMRHead",
+    "source_file": "DZ-CBCT.nrrd",
+    "source_sha256": "4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db",
+    "source_url": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db",
+    "license_note": "3D Slicer SampleData source states CBCT-MR Head was donated for unrestricted use."
+  },
+  "derived_files": {
+    "input/DZ-CBCT_jawcrop_0p5mm.nii.gz": {
+      "sha256": "2b369ff1a61dbf23fe4fdad8d95c39654e19dc34efcdc6af600198ef1ec960fc",
+      "description": "Jaw-cropped and resampled 0.5 mm isotropic NIfTI input."
+    },
+    "surface_preview/index.html": {
+      "sha256": "be294c105f5bf16e2cd454c4a419d0f7e33351fb45fa3869002895ee4f59259b",
+      "description": "Fully offline Sample 1 surface preview HTML."
+    },
+    "teeth_result/teeth_multilabel_fullspace.nii.gz": {
+      "sha256": "b6b706ccdf14c6e3a8062fb6053300cf0d567378625786f1bf816db2e9d7f295",
+      "description": "Precomputed experimental teeth MPS full-space labelmap."
+    }
+  },
+  "precomputed_teeth": {
+    "tool": "TotalSegmentator",
+    "tool_version": "2.14.0",
+    "license": "Apache-2.0",
+    "device": "mps",
+    "elapsed_seconds": 98.48210795898922,
+    "non_empty_label_count": 56,
+    "status": "success"
+  }
+}

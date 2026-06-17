@@ -1,0 +1,104 @@
+# 10 Deferred Scope
+
+This document lists features that are important later but explicitly deferred until after the Mac/MPS preview succeeds.
+
+## Deferred until after public preview
+
+```text
+- DICOM normalizer inside the Python preview package
+- ONNX/Core ML inference
+- DentalSegmentator exact nnU-Net backend
+- model zoo
+- Slicer extension
+- VTK preview
+- full GUI polish
+- batch processing
+- mesh smoothing/decimation
+- DICOM SEG export
+- PACS/DICOMweb
+- App Store distribution
+```
+
+## Why DICOM normalizer is deferred from the Python preview
+
+DICOM import is likely a major practical hurdle, but it is not the core of this preview.
+
+Core preview claim:
+
+```text
+Apple Silicon/MPS can run dental-relevant segmentation locally and return results to Slicer.
+```
+
+DICOM normalizer claim:
+
+```text
+This tool can robustly handle messy dental DICOM exports.
+```
+
+These are different projects. Mixing them delays the MPS story.
+
+Rule-based rescue of secondary-capture screen-save exports remains outside the
+Python preview package. Case-specific rescue procedures may be documented for
+engineering reference, and the separate C++ DICOM normalizer project now owns
+the path toward clean conversion and rescue pseudo-volume building.
+
+## C++ status
+
+C++ DICOM handling is now justified by the failed/rescue DICOM cases and has
+started as a separate Mac-oriented binary under `native/dicom_normalizer/`.
+It must stay decoupled from the Python MPS preview until the binary has stable
+audit, clean conversion, and rescue provenance behavior.
+
+C++ still introduces:
+
+```text
+- build matrix
+- codesigning complexity
+- dependency management
+- crash/security surface
+- packaging complexity
+```
+
+Do not fold the C++ normalizer into the Python package distribution until those
+costs are explicitly handled.
+
+## Why ONNX/Core ML is deferred
+
+ONNX/Core ML could reduce dependency size and improve native distribution, but nnU-Net-style pipelines include preprocessing, sliding-window inference, resampling, and postprocessing. Converting only the neural network is not enough.
+
+Initial inference should use PyTorch/TotalSegmentator directly.
+
+## Why DentalSegmentator exact mode is deferred
+
+DentalSegmentator is contextually important because prior audience interest came from it. However, the new public angle is Mac/MPS speed. TotalSegmentator already provides a supported MPS route and dental-relevant tasks.
+
+DentalSegmentator exact mode can be Phase 2 if people request it.
+
+## Why Slicer extension is deferred
+
+Slicer extension development returns to the environment problem this preview avoids.
+
+The preview should:
+
+```text
+run outside Slicer → open results in Slicer
+```
+
+not:
+
+```text
+run inside Slicer
+```
+
+## Feature admission rule
+
+A feature may enter MVP only if it directly supports one of:
+
+```text
+- proving MPS inference
+- measuring speed
+- opening output in Slicer
+- making a launch video
+```
+
+Otherwise, defer.

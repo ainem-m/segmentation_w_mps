@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "engines": [
+    {
+      "id": "totalsegmentator",
+      "display_name": "TotalSegmentator",
+      "license": "Apache-2.0 for openly available tasks; verify per task",
+      "backend": "python-pytorch",
+      "tasks": [
+        {
+          "id": "craniofacial_structures",
+          "display_name": "Craniofacial structures",
+          "priority": 1,
+          "mvp": true
+        },
+        {
+          "id": "teeth",
+          "display_name": "Teeth detailed",
+          "priority": 2,
+          "mvp": true
+        },
+        {
+          "id": "head_glands_cavities",
+          "display_name": "Head glands and cavities",
+          "priority": 3,
+          "mvp": false
+        }
+      ]
+    }
+  ]
+}

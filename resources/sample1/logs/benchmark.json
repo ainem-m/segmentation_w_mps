@@ -1,0 +1,959 @@
+{
+  "app_version": "0.1.0-preview",
+  "environment": {
+    "platform": {
+      "system": "Darwin",
+      "release": "25.5.0",
+      "platform": "macOS-26.5-arm64-arm-64bit",
+      "machine": "arm64"
+    },
+    "python": {
+      "version": "3.12.8 (main, Jan 14 2025, 23:36:58) [Clang 19.1.6 ]",
+      "executable": "python3.12"
+    },
+    "torch": {
+      "version": "2.12.0",
+      "mps_built": true,
+      "mps_available": true
+    },
+    "totalsegmentator": {
+      "version": "2.14.0"
+    }
+  },
+  "input": {
+    "basename": "DZ-CBCT_jawcrop_0p5mm.nii.gz",
+    "path_hash": "1231c779a279181492eece259bff2b8d5b5730208c0da531732f860b2db6d2c4",
+    "format": "nifti",
+    "dimensions": [
+      230,
+      220,
+      160
+    ],
+    "spacing": [
+      0.5,
+      0.5,
+      0.5
+    ]
+  },
+  "run": {
+    "task": "teeth",
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": null,
+    "elapsed_seconds": 98.48210795898922,
+    "status": "success",
+    "returncode": 0
+  },
+  "device_check": {
+    "status": "pass",
+    "requested_device": "mps",
+    "actual_device": "mps",
+    "fallback_reason": null,
+    "python": "3.12.8 (main, Jan 14 2025, 23:36:58) [Clang 19.1.6 ]",
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "torch_version": "2.12.0",
+    "mps_built": true,
+    "mps_available": true,
+    "convtranspose3d_fp32": "pass",
+    "elapsed_seconds": 0.11545891710557044,
+    "error": null
+  },
+  "experimental_teeth": {
+    "enabled": true,
+    "dry_run": false,
+    "timeout_sec": 900,
+    "crop_margin_mm": 10.0,
+    "force_split": false,
+    "child_benchmark_path": "sample1/precomputed_teeth_case/logs/teeth_child_benchmark.json",
+    "roi_json_path": "sample1/precomputed_teeth_case/logs/teeth_roi.json",
+    "mps_fallback_env_removed": true,
+    "roi": {
+      "source": "sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+      "source_shape": [
+        230,
+        220,
+        160
+      ],
+      "output": "sample1/precomputed_teeth_case/input/teeth_roi.nii.gz",
+      "mask_paths": [
+        {
+          "path": "sample1/precomputed_craniofacial_case/segmentations/raw_totalseg/teeth_upper.nii.gz",
+          "label": "teeth_upper",
+          "nonzero_voxels": 90958
+        },
+        {
+          "path": "sample1/precomputed_craniofacial_case/segmentations/raw_totalseg/teeth_lower.nii.gz",
+          "label": "teeth_lower",
+          "nonzero_voxels": 82779
+        }
+      ],
+      "mask_nonzero_voxels": {
+        "teeth_upper": 90958,
+        "teeth_lower": 82779
+      },
+      "margin_mm": 10.0,
+      "margin_voxels": [
+        20,
+        20,
+        20
+      ],
+      "spacing": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "input_shape": [
+        230,
+        220,
+        160
+      ],
+      "roi_shape": [
+        190,
+        152,
+        132
+      ],
+      "axis_extent_ratios": [
+        0.8260869565217391,
+        0.6909090909090909,
+        0.825
+      ],
+      "voxel_volume_ratio": 0.4708695652173913,
+      "near_whole_volume": false,
+      "near_whole_volume_thresholds": {
+        "voxel_volume_ratio": 0.5,
+        "axis_extent_ratio": 0.9
+      },
+      "bbox_min_ijk": [
+        24,
+        0,
+        12
+      ],
+      "bbox_max_ijk": [
+        214,
+        152,
+        144
+      ],
+      "raw_bbox": {
+        "start": [
+          44,
+          11,
+          32
+        ],
+        "stop": [
+          194,
+          132,
+          124
+        ],
+        "size": [
+          150,
+          121,
+          92
+        ]
+      },
+      "roi_bbox": {
+        "start": [
+          24,
+          0,
+          12
+        ],
+        "stop": [
+          214,
+          152,
+          144
+        ],
+        "size": [
+          190,
+          152,
+          132
+        ],
+        "volume_ratio": 0.4708695652173913,
+        "voxel_volume_ratio": 0.4708695652173913,
+        "axis_extent_ratios": [
+          0.8260869565217391,
+          0.6909090909090909,
+          0.825
+        ],
+        "near_whole_volume": false
+      },
+      "slices": {
+        "x": [
+          24,
+          214
+        ],
+        "y": [
+          0,
+          152
+        ],
+        "z": [
+          12,
+          144
+        ]
+      },
+      "geometry": {
+        "affine": [
+          [
+            -0.4970390796661377,
+            -0.048472024500370026,
+            0.024547860026359558,
+            52.25533443689346
+          ],
+          [
+            0.045665837824344635,
+            -0.49508553743362427,
+            -0.052961528301239014,
+            118.26161974668503
+          ],
+          [
+            0.02944088727235794,
+            -0.05040590465068817,
+            0.4965807795524597,
+            -33.91071659326553
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "qform_code": 1,
+        "sform_code": 1
+      },
+      "status": "success",
+      "craniofacial_case_dir": "sample1/source_repo/artifacts/cli_smoke/dz_cbct_jawcrop_0p5mm_craniofacial_mps"
+    },
+    "child_elapsed_seconds": 98.0752185001038,
+    "elapsed_sec": 98.0752185001038,
+    "child_benchmark": {
+      "argv": [
+        "totalsegmentator_wrapper_mac/teeth_mps_child.py",
+        "--input",
+        "sample1/precomputed_teeth_case/input/teeth_roi.nii.gz",
+        "--output",
+        "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+        "--benchmark-json",
+        "sample1/precomputed_teeth_case/logs/teeth_child_benchmark.json",
+        "--require-totalseg-version",
+        "2.14.0",
+        "--ml",
+        "--verbose",
+        "--nr-thr-resamp",
+        "1",
+        "--nr-thr-saving",
+        "1"
+      ],
+      "device_requested": "mps",
+      "error": null,
+      "finished_at_utc": "2026-06-11T04:34:17.931929+00:00",
+      "input": {
+        "dtype": "int16",
+        "path": "sample1/precomputed_teeth_case/input/teeth_roi.nii.gz",
+        "shape": [
+          190,
+          152,
+          132
+        ],
+        "size_bytes": 5178670,
+        "spacing": [
+          0.4999999701976776,
+          0.4999999701976776,
+          0.5
+        ]
+      },
+      "mps_gate": {
+        "convtranspose3d_fp32": "passed",
+        "mps_available": true,
+        "output_dtype": "torch.float32",
+        "output_shape": [
+          1,
+          2,
+          16,
+          16,
+          16
+        ]
+      },
+      "mps_memory": {
+        "current_allocated_memory": 0,
+        "driver_allocated_memory": 2048770048
+      },
+      "output": {
+        "ml": true,
+        "requested": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+        "totalsegmentator_output_arg": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz"
+      },
+      "patch": {
+        "original_convert_device_to_string_mps_error": null,
+        "original_convert_device_to_string_mps_result": null,
+        "patch_applied": true,
+        "post_patch_string_mps": "mps",
+        "post_patch_torch_device_mps": "mps"
+      },
+      "platform": {
+        "machine": "arm64",
+        "platform": "macOS-26.5-arm64-arm-64bit",
+        "processor": "arm",
+        "python": "3.12.8 (main, Jan 14 2025, 23:36:58) [Clang 19.1.6 ]"
+      },
+      "precision_policy": "fp32_only_no_autocast_requested",
+      "started_at_utc": "2026-06-11T04:32:42.755867+00:00",
+      "status": "success",
+      "task": "teeth",
+      "timing": {
+        "inference_elapsed_sec": 94.285,
+        "total_elapsed_sec": 95.168
+      },
+      "torch": {
+        "mps_available": true,
+        "mps_built": true,
+        "mps_fallback_env": null,
+        "version": "2.12.0"
+      },
+      "totalsegmentator": {
+        "version": "2.14.0"
+      },
+      "validation": {
+        "exists": true,
+        "non_empty_label_count": 56,
+        "non_empty_labels": [
+          {
+            "label": 1,
+            "name": "lower_jawbone",
+            "voxels": 306614
+          },
+          {
+            "label": 2,
+            "name": "upper_jawbone",
+            "voxels": 157343
+          },
+          {
+            "label": 3,
+            "name": "left_inferior_alveolar_canal",
+            "voxels": 3051
+          },
+          {
+            "label": 4,
+            "name": "right_inferior_alveolar_canal",
+            "voxels": 3236
+          },
+          {
+            "label": 5,
+            "name": "left_maxillary_sinus",
+            "voxels": 35292
+          },
+          {
+            "label": 6,
+            "name": "right_maxillary_sinus",
+            "voxels": 39462
+          },
+          {
+            "label": 7,
+            "name": "pharynx",
+            "voxels": 25970
+          },
+          {
+            "label": 9,
+            "name": "crown",
+            "voxels": 5448
+          },
+          {
+            "label": 11,
+            "name": "upper_right_central_incisor_fdi11",
+            "voxels": 4238
+          },
+          {
+            "label": 12,
+            "name": "upper_right_lateral_incisor_fdi12",
+            "voxels": 3101
+          },
+          {
+            "label": 13,
+            "name": "upper_right_canine_fdi13",
+            "voxels": 4942
+          },
+          {
+            "label": 14,
+            "name": "upper_right_first_premolar_fdi14",
+            "voxels": 3559
+          },
+          {
+            "label": 15,
+            "name": "upper_right_second_premolar_fdi15",
+            "voxels": 3657
+          },
+          {
+            "label": 16,
+            "name": "upper_right_first_molar_fdi16",
+            "voxels": 7144
+          },
+          {
+            "label": 17,
+            "name": "upper_right_second_molar_fdi17",
+            "voxels": 6071
+          },
+          {
+            "label": 19,
+            "name": "upper_left_central_incisor_fdi21",
+            "voxels": 4386
+          },
+          {
+            "label": 20,
+            "name": "upper_left_lateral_incisor_fdi22",
+            "voxels": 3266
+          },
+          {
+            "label": 21,
+            "name": "upper_left_canine_fdi23",
+            "voxels": 4934
+          },
+          {
+            "label": 22,
+            "name": "upper_left_first_premolar_fdi24",
+            "voxels": 3609
+          },
+          {
+            "label": 23,
+            "name": "upper_left_second_premolar_fdi25",
+            "voxels": 3873
+          },
+          {
+            "label": 24,
+            "name": "upper_left_first_molar_fdi26",
+            "voxels": 6938
+          },
+          {
+            "label": 25,
+            "name": "upper_left_second_molar_fdi27",
+            "voxels": 5546
+          },
+          {
+            "label": 27,
+            "name": "lower_left_central_incisor_fdi31",
+            "voxels": 2114
+          },
+          {
+            "label": 28,
+            "name": "lower_left_lateral_incisor_fdi32",
+            "voxels": 2392
+          },
+          {
+            "label": 29,
+            "name": "lower_left_canine_fdi33",
+            "voxels": 4705
+          },
+          {
+            "label": 30,
+            "name": "lower_left_first_premolar_fdi34",
+            "voxels": 2927
+          },
+          {
+            "label": 31,
+            "name": "lower_left_second_premolar_fdi35",
+            "voxels": 3400
+          },
+          {
+            "label": 32,
+            "name": "lower_left_first_molar_fdi36",
+            "voxels": 7314
+          },
+          {
+            "label": 33,
+            "name": "lower_left_second_molar_fdi37",
+            "voxels": 2014
+          },
+          {
+            "label": 34,
+            "name": "lower_left_third_molar_fdi38",
+            "voxels": 6442
+          },
+          {
+            "label": 35,
+            "name": "lower_right_central_incisor_fdi41",
+            "voxels": 2166
+          },
+          {
+            "label": 36,
+            "name": "lower_right_lateral_incisor_fdi42",
+            "voxels": 2390
+          },
+          {
+            "label": 37,
+            "name": "lower_right_canine_fdi43",
+            "voxels": 4881
+          },
+          {
+            "label": 38,
+            "name": "lower_right_first_premolar_fdi44",
+            "voxels": 2877
+          },
+          {
+            "label": 39,
+            "name": "lower_right_second_premolar_fdi45",
+            "voxels": 3419
+          },
+          {
+            "label": 41,
+            "name": "lower_right_second_molar_fdi47",
+            "voxels": 7719
+          },
+          {
+            "label": 42,
+            "name": "lower_right_third_molar_fdi48",
+            "voxels": 7009
+          },
+          {
+            "label": 51,
+            "name": "upper_right_first_molar_pulp_fdi116",
+            "voxels": 267
+          },
+          {
+            "label": 52,
+            "name": "upper_right_second_molar_pulp_fdi117",
+            "voxels": 250
+          },
+          {
+            "label": 59,
+            "name": "upper_left_first_molar_pulp_fdi126",
+            "voxels": 297
+          },
+          {
+            "label": 60,
+            "name": "upper_left_second_molar_pulp_fdi127",
+            "voxels": 253
+          },
+          {
+            "label": 62,
+            "name": "lower_left_central_incisor_pulp_fdi131",
+            "voxels": 89
+          },
+          {
+            "label": 63,
+            "name": "lower_left_lateral_incisor_pulp_fdi132",
+            "voxels": 114
+          },
+          {
+            "label": 64,
+            "name": "lower_left_canine_pulp_fdi133",
+            "voxels": 226
+          },
+          {
+            "label": 65,
+            "name": "lower_left_first_premolar_pulp_fdi134",
+            "voxels": 111
+          },
+          {
+            "label": 66,
+            "name": "lower_left_second_premolar_pulp_fdi135",
+            "voxels": 146
+          },
+          {
+            "label": 67,
+            "name": "lower_left_first_molar_pulp_fdi136",
+            "voxels": 330
+          },
+          {
+            "label": 68,
+            "name": "lower_left_second_molar_pulp_fdi137",
+            "voxels": 8
+          },
+          {
+            "label": 69,
+            "name": "lower_left_third_molar_pulp_fdi138",
+            "voxels": 198
+          },
+          {
+            "label": 70,
+            "name": "lower_right_central_incisor_pulp_fdi141",
+            "voxels": 92
+          },
+          {
+            "label": 71,
+            "name": "lower_right_lateral_incisor_pulp_fdi142",
+            "voxels": 106
+          },
+          {
+            "label": 72,
+            "name": "lower_right_canine_pulp_fdi143",
+            "voxels": 268
+          },
+          {
+            "label": 73,
+            "name": "lower_right_first_premolar_pulp_fdi144",
+            "voxels": 124
+          },
+          {
+            "label": 74,
+            "name": "lower_right_second_premolar_pulp_fdi145",
+            "voxels": 164
+          },
+          {
+            "label": 76,
+            "name": "lower_right_second_molar_pulp_fdi147",
+            "voxels": 341
+          },
+          {
+            "label": 77,
+            "name": "lower_right_third_molar_pulp_fdi148",
+            "voxels": 274
+          }
+        ],
+        "path": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+        "shape": [
+          190,
+          152,
+          132
+        ],
+        "spacing": [
+          0.4999999701976776,
+          0.4999999701976776,
+          0.5
+        ]
+      }
+    },
+    "child_benchmark_json_path": "sample1/precomputed_teeth_case/logs/teeth_child_benchmark.json",
+    "log_path": "sample1/precomputed_teeth_case/logs/run.log",
+    "patch": {
+      "original_convert_device_to_string_mps_error": null,
+      "original_convert_device_to_string_mps_result": null,
+      "patch_applied": true,
+      "post_patch_string_mps": "mps",
+      "post_patch_torch_device_mps": "mps"
+    },
+    "mps_gate": {
+      "convtranspose3d_fp32": "passed",
+      "mps_available": true,
+      "output_dtype": "torch.float32",
+      "output_shape": [
+        1,
+        2,
+        16,
+        16,
+        16
+      ]
+    },
+    "validation": {
+      "exists": true,
+      "non_empty_label_count": 56,
+      "non_empty_labels": [
+        {
+          "label": 1,
+          "name": "lower_jawbone",
+          "voxels": 306614
+        },
+        {
+          "label": 2,
+          "name": "upper_jawbone",
+          "voxels": 157343
+        },
+        {
+          "label": 3,
+          "name": "left_inferior_alveolar_canal",
+          "voxels": 3051
+        },
+        {
+          "label": 4,
+          "name": "right_inferior_alveolar_canal",
+          "voxels": 3236
+        },
+        {
+          "label": 5,
+          "name": "left_maxillary_sinus",
+          "voxels": 35292
+        },
+        {
+          "label": 6,
+          "name": "right_maxillary_sinus",
+          "voxels": 39462
+        },
+        {
+          "label": 7,
+          "name": "pharynx",
+          "voxels": 25970
+        },
+        {
+          "label": 9,
+          "name": "crown",
+          "voxels": 5448
+        },
+        {
+          "label": 11,
+          "name": "upper_right_central_incisor_fdi11",
+          "voxels": 4238
+        },
+        {
+          "label": 12,
+          "name": "upper_right_lateral_incisor_fdi12",
+          "voxels": 3101
+        },
+        {
+          "label": 13,
+          "name": "upper_right_canine_fdi13",
+          "voxels": 4942
+        },
+        {
+          "label": 14,
+          "name": "upper_right_first_premolar_fdi14",
+          "voxels": 3559
+        },
+        {
+          "label": 15,
+          "name": "upper_right_second_premolar_fdi15",
+          "voxels": 3657
+        },
+        {
+          "label": 16,
+          "name": "upper_right_first_molar_fdi16",
+          "voxels": 7144
+        },
+        {
+          "label": 17,
+          "name": "upper_right_second_molar_fdi17",
+          "voxels": 6071
+        },
+        {
+          "label": 19,
+          "name": "upper_left_central_incisor_fdi21",
+          "voxels": 4386
+        },
+        {
+          "label": 20,
+          "name": "upper_left_lateral_incisor_fdi22",
+          "voxels": 3266
+        },
+        {
+          "label": 21,
+          "name": "upper_left_canine_fdi23",
+          "voxels": 4934
+        },
+        {
+          "label": 22,
+          "name": "upper_left_first_premolar_fdi24",
+          "voxels": 3609
+        },
+        {
+          "label": 23,
+          "name": "upper_left_second_premolar_fdi25",
+          "voxels": 3873
+        },
+        {
+          "label": 24,
+          "name": "upper_left_first_molar_fdi26",
+          "voxels": 6938
+        },
+        {
+          "label": 25,
+          "name": "upper_left_second_molar_fdi27",
+          "voxels": 5546
+        },
+        {
+          "label": 27,
+          "name": "lower_left_central_incisor_fdi31",
+          "voxels": 2114
+        },
+        {
+          "label": 28,
+          "name": "lower_left_lateral_incisor_fdi32",
+          "voxels": 2392
+        },
+        {
+          "label": 29,
+          "name": "lower_left_canine_fdi33",
+          "voxels": 4705
+        },
+        {
+          "label": 30,
+          "name": "lower_left_first_premolar_fdi34",
+          "voxels": 2927
+        },
+        {
+          "label": 31,
+          "name": "lower_left_second_premolar_fdi35",
+          "voxels": 3400
+        },
+        {
+          "label": 32,
+          "name": "lower_left_first_molar_fdi36",
+          "voxels": 7314
+        },
+        {
+          "label": 33,
+          "name": "lower_left_second_molar_fdi37",
+          "voxels": 2014
+        },
+        {
+          "label": 34,
+          "name": "lower_left_third_molar_fdi38",
+          "voxels": 6442
+        },
+        {
+          "label": 35,
+          "name": "lower_right_central_incisor_fdi41",
+          "voxels": 2166
+        },
+        {
+          "label": 36,
+          "name": "lower_right_lateral_incisor_fdi42",
+          "voxels": 2390
+        },
+        {
+          "label": 37,
+          "name": "lower_right_canine_fdi43",
+          "voxels": 4881
+        },
+        {
+          "label": 38,
+          "name": "lower_right_first_premolar_fdi44",
+          "voxels": 2877
+        },
+        {
+          "label": 39,
+          "name": "lower_right_second_premolar_fdi45",
+          "voxels": 3419
+        },
+        {
+          "label": 41,
+          "name": "lower_right_second_molar_fdi47",
+          "voxels": 7719
+        },
+        {
+          "label": 42,
+          "name": "lower_right_third_molar_fdi48",
+          "voxels": 7009
+        },
+        {
+          "label": 51,
+          "name": "upper_right_first_molar_pulp_fdi116",
+          "voxels": 267
+        },
+        {
+          "label": 52,
+          "name": "upper_right_second_molar_pulp_fdi117",
+          "voxels": 250
+        },
+        {
+          "label": 59,
+          "name": "upper_left_first_molar_pulp_fdi126",
+          "voxels": 297
+        },
+        {
+          "label": 60,
+          "name": "upper_left_second_molar_pulp_fdi127",
+          "voxels": 253
+        },
+        {
+          "label": 62,
+          "name": "lower_left_central_incisor_pulp_fdi131",
+          "voxels": 89
+        },
+        {
+          "label": 63,
+          "name": "lower_left_lateral_incisor_pulp_fdi132",
+          "voxels": 114
+        },
+        {
+          "label": 64,
+          "name": "lower_left_canine_pulp_fdi133",
+          "voxels": 226
+        },
+        {
+          "label": 65,
+          "name": "lower_left_first_premolar_pulp_fdi134",
+          "voxels": 111
+        },
+        {
+          "label": 66,
+          "name": "lower_left_second_premolar_pulp_fdi135",
+          "voxels": 146
+        },
+        {
+          "label": 67,
+          "name": "lower_left_first_molar_pulp_fdi136",
+          "voxels": 330
+        },
+        {
+          "label": 68,
+          "name": "lower_left_second_molar_pulp_fdi137",
+          "voxels": 8
+        },
+        {
+          "label": 69,
+          "name": "lower_left_third_molar_pulp_fdi138",
+          "voxels": 198
+        },
+        {
+          "label": 70,
+          "name": "lower_right_central_incisor_pulp_fdi141",
+          "voxels": 92
+        },
+        {
+          "label": 71,
+          "name": "lower_right_lateral_incisor_pulp_fdi142",
+          "voxels": 106
+        },
+        {
+          "label": 72,
+          "name": "lower_right_canine_pulp_fdi143",
+          "voxels": 268
+        },
+        {
+          "label": 73,
+          "name": "lower_right_first_premolar_pulp_fdi144",
+          "voxels": 124
+        },
+        {
+          "label": 74,
+          "name": "lower_right_second_premolar_pulp_fdi145",
+          "voxels": 164
+        },
+        {
+          "label": 76,
+          "name": "lower_right_second_molar_pulp_fdi147",
+          "voxels": 341
+        },
+        {
+          "label": 77,
+          "name": "lower_right_third_molar_pulp_fdi148",
+          "voxels": 274
+        }
+      ],
+      "path": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+      "shape": [
+        190,
+        152,
+        132
+      ],
+      "spacing": [
+        0.4999999701976776,
+        0.4999999701976776,
+        0.5
+      ]
+    },
+    "last_progress": {
+      "step": 8,
+      "total": 8,
+      "line": "100%|██████████| 8/8 [00:26<00:00,  3.25s/it]"
+    },
+    "child_status": "success",
+    "child_returncode": 0,
+    "fullspace": {
+      "status": "success",
+      "source": "sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+      "cropped_labelmap": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+      "output": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_fullspace.nii.gz",
+      "shape": [
+        230,
+        220,
+        160
+      ],
+      "source_shape": [
+        230,
+        220,
+        160
+      ],
+      "affine_matches_source": true,
+      "qform_code": 1,
+      "sform_code": 1,
+      "nonzero_voxels": 707107
+    }
+  }
+}

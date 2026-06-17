@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIST_DIR="${ROOT}/dist"
+APP_NAME="TotalSegmentator Wrapper for Mac"
+APP_DIR="${DIST_DIR}/${APP_NAME}.app"
+CONTENTS_DIR="${APP_DIR}/Contents"
+MACOS_DIR="${CONTENTS_DIR}/MacOS"
+RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
+SWIFT_APP_SOURCE_DIR="${ROOT}/native/macos/TotalSegmentatorWrapperForMac"
+SWIFT_MODULE_CACHE_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_SWIFT_MODULE_CACHE_PATH:-${DIST_DIR}/swift_module_cache}"
+PYTHON_RUNTIME_SOURCE="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_PYTHON_RUNTIME_DIR:-${PYTHON_RUNTIME_DIR:-}}"
+PYTHON_RUNTIME_STRATEGY="external_python312_required"
+PYTHON_RUNTIME_EXECUTABLE_JSON="null"
+PYTHON_RUNTIME_BUNDLED_JSON="false"
+PYTHON_RUNTIME_BUNDLE_JSON="null"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.0}"
+BUILD_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_BUILD_ID:-}"
+DEPENDENCY_SET_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_SET_ID:-macos-arm64-py312-torch2.12-totalseg2.14.0-pydicom3}"
+UPDATE_MANIFEST_URL="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_MANIFEST_URL:-}"
+UPDATE_ALLOWED_HOSTS="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_ALLOWED_HOSTS:-}"
+XCODE_DEVELOPER_DIR="${TOTALSEGMENTATOR_WRAPPER_MAC_XCODE_DEVELOPER_DIR:-}"
+DCM2NIIX_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX:-}"
+SIGNING_MODE="${TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE:-ad-hoc}"
+CODESIGN_IDENTITY="${TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY:-}"
+BUNDLE_IDENTIFIER="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER:-jp.chino.totalsegmentator.wrapper.mac}"
+NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-}"
+APP_ENTITLEMENTS="${ROOT}/resources/entitlements/app.entitlements"
+PYTHON_ENTITLEMENTS="${ROOT}/resources/entitlements/python-runtime.entitlements"
+
+json_string() {
+  "${PYTHON_BIN}" -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+json_string_list() {
+  "${PYTHON_BIN}" -c 'import json, sys; print(json.dumps([part.strip() for part in sys.argv[1].split(",") if part.strip()]))' "$1"
+}
+
+sha256_file() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+first_json_line() {
+  "${PYTHON_BIN}" -c 'import json, sys; print(json.dumps(next((line.strip() for line in sys.stdin if line.strip()), "")))'
+}
+
+require_developer_id_signing() {
+  if [[ "${SIGNING_MODE}" != "ad-hoc" && "${SIGNING_MODE}" != "developer-id" ]]; then
+    echo "TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE must be ad-hoc or developer-id; got ${SIGNING_MODE}" >&2
+    exit 2
+  fi
+  if [[ "${SIGNING_MODE}" != "developer-id" ]]; then
+    return
+  fi
+  if [[ -z "${CODESIGN_IDENTITY}" ]]; then
+    echo "TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY is required when TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE=developer-id." >&2
+    exit 2
+  fi
+  if [[ -z "${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER:-}" ]]; then
+    echo "TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER is required when TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE=developer-id." >&2
+    exit 2
+  fi
+  if [[ ! -f "${APP_ENTITLEMENTS}" || ! -f "${PYTHON_ENTITLEMENTS}" ]]; then
+    echo "Developer ID signing entitlements are missing under resources/entitlements." >&2
+    exit 2
+  fi
+  if ! security find-identity -v -p codesigning | grep -F "${CODESIGN_IDENTITY}" >/dev/null 2>&1; then
+    echo "Developer ID codesigning identity not found in keychain: ${CODESIGN_IDENTITY}" >&2
+    exit 2
+  fi
+}
+
+require_full_xcode() {
+  if [[ -z "${XCODE_DEVELOPER_DIR}" && -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+    XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+  fi
+  if [[ -n "${XCODE_DEVELOPER_DIR}" ]]; then
+    export DEVELOPER_DIR="${XCODE_DEVELOPER_DIR}"
+  fi
+  if ! command -v xcodebuild >/dev/null 2>&1; then
+    echo "xcodebuild is required to build the SwiftUI app frontend." >&2
+    exit 2
+  fi
+  if ! xcodebuild -version >/dev/null 2>&1; then
+    echo "Full Xcode is required to build the SwiftUI app frontend. Command Line Tools alone are not enough." >&2
+    echo "Install Xcode and select it before running this build script." >&2
+    exit 2
+  fi
+  local developer_dir
+  developer_dir="$(xcode-select -p 2>/dev/null || true)"
+  if [[ "${developer_dir}" == *CommandLineTools* ]]; then
+    echo "Full Xcode must be selected to build the SwiftUI app frontend; current developer dir is ${developer_dir}." >&2
+    echo "Set TOTALSEGMENTATOR_WRAPPER_MAC_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer or select full Xcode for this shell." >&2
+    exit 2
+  fi
+}
+
+build_swiftui_frontend() {
+  require_full_xcode
+  if [[ ! -d "${SWIFT_APP_SOURCE_DIR}" ]]; then
+    echo "SwiftUI app source directory not found: ${SWIFT_APP_SOURCE_DIR}" >&2
+    exit 2
+  fi
+  local swift_sources=(
+    "${SWIFT_APP_SOURCE_DIR}/CommandBuilder.swift"
+    "${SWIFT_APP_SOURCE_DIR}/ProcessSupport.swift"
+    "${SWIFT_APP_SOURCE_DIR}/AppState.swift"
+    "${SWIFT_APP_SOURCE_DIR}/Views.swift"
+    "${SWIFT_APP_SOURCE_DIR}/TotalSegmentatorWrapperForMacApp.swift"
+  )
+  for source in "${swift_sources[@]}"; do
+    if [[ ! -f "${source}" ]]; then
+      echo "SwiftUI app source missing: ${source}" >&2
+      exit 2
+    fi
+  done
+  local sdk_path
+  sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
+  mkdir -p "${SWIFT_MODULE_CACHE_PATH}"
+  xcrun --sdk macosx swiftc \
+    -O \
+    -parse-as-library \
+    -target arm64-apple-macos13.0 \
+    -sdk "${sdk_path}" \
+    -module-cache-path "${SWIFT_MODULE_CACHE_PATH}" \
+    -Xcc "-fmodules-cache-path=${SWIFT_MODULE_CACHE_PATH}" \
+    -framework SwiftUI \
+    -framework AppKit \
+    -framework Combine \
+    -framework CryptoKit \
+    -o "${MACOS_DIR}/TotalSegmentatorWrapperForMac" \
+    "${swift_sources[@]}"
+  chmod 755 "${MACOS_DIR}/TotalSegmentatorWrapperForMac"
+}
+
+codesign_one() {
+  local entitlements="$1"
+  local target="$2"
+  codesign \
+    --force \
+    --timestamp \
+    --options runtime \
+    --entitlements "${entitlements}" \
+    --sign "${CODESIGN_IDENTITY}" \
+    "${target}" >/dev/null
+}
+
+codesign_developer_id() {
+  find "${APP_DIR}" -type d -exec chmod u+rwx,go+rx {} +
+  find "${APP_DIR}" -type f -exec chmod u+rw {} +
+
+  local sign_targets=(
+    "${MACOS_DIR}/TotalSegmentatorWrapperForMac"
+    "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
+    "${RESOURCES_DIR}/bin/dcm2niix"
+  )
+  if [[ -d "${RESOURCES_DIR}/python/cpython-3.12" ]]; then
+    while IFS= read -r path; do
+      sign_targets+=("${path}")
+    done < <(
+      find "${RESOURCES_DIR}/python/cpython-3.12" -type f \
+        \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) \
+        -print | sort
+    )
+  fi
+
+  local target
+  for target in "${sign_targets[@]}"; do
+    if [[ "${target}" == "${RESOURCES_DIR}/python/cpython-3.12"* ]]; then
+      codesign_one "${PYTHON_ENTITLEMENTS}" "${target}"
+    else
+      codesign_one "${APP_ENTITLEMENTS}" "${target}"
+    fi
+  done
+
+  if [[ -d "${RESOURCES_DIR}/python/cpython-3.12" ]]; then
+    find "${RESOURCES_DIR}/python/cpython-3.12" -type f -exec chmod a-w {} +
+  fi
+  codesign_one "${APP_ENTITLEMENTS}" "${APP_DIR}"
+  codesign --verify --deep --strict --verbose=2 "${APP_DIR}" >/dev/null
+}
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python3)"
+fi
+if [[ -z "${PYTHON_RUNTIME_SOURCE}" ]] && [[ "${TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_EXTERNAL_PYTHON_RUNTIME:-0}" != "1" ]]; then
+  PYTHON_RUNTIME_SOURCE="$("${PYTHON_BIN}" -c 'import sys; print(sys.base_prefix)' 2>/dev/null || true)"
+fi
+if [[ -z "${PYTHON_RUNTIME_SOURCE}" ]] && [[ "${TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_EXTERNAL_PYTHON_RUNTIME:-0}" != "1" ]]; then
+  echo "Could not discover a Python 3.12 runtime to bundle. Set TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_PYTHON_RUNTIME_DIR or TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_EXTERNAL_PYTHON_RUNTIME=1." >&2
+  exit 1
+fi
+
+if [[ -z "${DCM2NIIX_PATH}" ]]; then
+  echo "TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX must point to a dcm2niix executable for packaged DICOM intake." >&2
+  exit 2
+fi
+if [[ ! -x "${DCM2NIIX_PATH}" ]]; then
+  echo "TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX is not executable: ${DCM2NIIX_PATH}" >&2
+  exit 2
+fi
+
+require_full_xcode
+require_developer_id_signing
+"${ROOT}/scripts/build_mac_wheel.sh" >/dev/null
+
+WHEEL_PATH="$(ls -1t "${DIST_DIR}"/totalsegmentator_wrapper_mac-*.whl | head -n 1)"
+NORMALIZER_PATH="${ROOT}/build/dicom_normalizer/totalsegmentator-wrapper-dicom-normalizer"
+CONSTRAINTS_PATH="${ROOT}/constraints/macos-arm64-py312.txt"
+SAMPLE1_MANIFEST_PATH="${ROOT}/resources/sample1/sample_manifest.json"
+WHEEL_SHA256="$(sha256_file "${WHEEL_PATH}")"
+CONSTRAINTS_SHA256="$(sha256_file "${CONSTRAINTS_PATH}")"
+NORMALIZER_SHA256="$(sha256_file "${NORMALIZER_PATH}")"
+SAMPLE1_MANIFEST_SHA256="$(sha256_file "${SAMPLE1_MANIFEST_PATH}")"
+DCM2NIIX_SHA256="$(sha256_file "${DCM2NIIX_PATH}")"
+DCM2NIIX_VERSION_JSON="$("${DCM2NIIX_PATH}" -h 2>&1 | awk 'BEGIN{fallback=""} /version|dcm2niix/{print; found=1; exit} NF && fallback==""{fallback=$0} END{if (!found) print fallback}' | first_json_line)"
+DCM2NIIX_SOURCE_JSON="$(json_string "${DCM2NIIX_PATH}")"
+if [[ -z "${BUILD_ID}" ]]; then
+  BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}"
+fi
+UPDATE_MANIFEST_URL_JSON="$(json_string "${UPDATE_MANIFEST_URL}")"
+UPDATE_ALLOWED_HOSTS_JSON="$(json_string_list "${UPDATE_ALLOWED_HOSTS}")"
+BUNDLE_IDENTIFIER_JSON="$(json_string "${BUNDLE_IDENTIFIER}")"
+NOTARY_PROFILE_JSON="$(json_string "${NOTARY_PROFILE}")"
+NOTARIZED_JSON="false"
+if [[ "${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARIZED:-0}" == "1" ]]; then
+  NOTARIZED_JSON="true"
+fi
+
+if [[ -d "${APP_DIR}" ]]; then
+  chmod -R u+rwX "${APP_DIR}" || true
+fi
+rm -rf "${APP_DIR}"
+mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/launcher" "${RESOURCES_DIR}/sample1"
+
+build_swiftui_frontend
+cp "${ROOT}/templates/mac_app_launcher.py" "${RESOURCES_DIR}/launcher/mac_app_launcher.py"
+cp "${WHEEL_PATH}" "${RESOURCES_DIR}/wheels/"
+cp "${CONSTRAINTS_PATH}" "${RESOURCES_DIR}/constraints/"
+cp "${NORMALIZER_PATH}" "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
+cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"
+rsync -a "${ROOT}/resources/sample1/" "${RESOURCES_DIR}/sample1/"
+chmod 755 "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
+chmod 755 "${RESOURCES_DIR}/bin/dcm2niix"
+
+if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
+  PYTHON_RUNTIME_SOURCE="${PYTHON_RUNTIME_SOURCE%/}"
+  if [[ ! -x "${PYTHON_RUNTIME_SOURCE}/bin/python3.12" ]]; then
+    echo "TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_PYTHON_RUNTIME_DIR must point to a Python 3.12 runtime root containing bin/python3.12" >&2
+    exit 1
+  fi
+  mkdir -p "${RESOURCES_DIR}/python"
+  rsync -a "${PYTHON_RUNTIME_SOURCE}/" "${RESOURCES_DIR}/python/cpython-3.12/"
+  chmod 755 "${RESOURCES_DIR}/python/cpython-3.12/bin/python3.12"
+  PYTHON_RUNTIME_STRATEGY="bundled_python312"
+  PYTHON_RUNTIME_EXECUTABLE_JSON='"python/cpython-3.12/bin/python3.12"'
+  PYTHON_RUNTIME_BUNDLED_JSON="true"
+  PYTHON_RUNTIME_BUNDLE_JSON='"python/cpython-3.12"'
+fi
+
+cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>TotalSegmentator Wrapper for Mac</string>
+  <key>CFBundleExecutable</key>
+  <string>TotalSegmentatorWrapperForMac</string>
+  <key>CFBundleIdentifier</key>
+  <string>${BUNDLE_IDENTIFIER}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>TotalSegmentator Wrapper for Mac</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${APP_VERSION}</string>
+  <key>CFBundleVersion</key>
+  <string>${APP_VERSION}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSArchitecturePriority</key>
+  <array>
+    <string>arm64</string>
+  </array>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
+{
+  "schema": "totalsegmentator_wrapper_mac.mac_app_manifest.v1",
+  "app_name": "TotalSegmentator Wrapper for Mac",
+  "version": "${APP_VERSION}",
+  "app_version": "${APP_VERSION}",
+  "ui_frontend": "swiftui",
+  "legacy_tk_ui": true,
+  "build_id": "${BUILD_ID}",
+  "architecture": "arm64",
+  "dependency_set_id": "${DEPENDENCY_SET_ID}",
+  "bundle_identifier": ${BUNDLE_IDENTIFIER_JSON},
+  "signing_mode": "${SIGNING_MODE}",
+  "notarization_profile_name": ${NOTARY_PROFILE_JSON},
+  "update_manifest_url": ${UPDATE_MANIFEST_URL_JSON},
+  "update_allowed_hosts": ${UPDATE_ALLOWED_HOSTS_JSON},
+  "wheel_sha256": "${WHEEL_SHA256}",
+  "constraints_sha256": "${CONSTRAINTS_SHA256}",
+  "normalizer_sha256": "${NORMALIZER_SHA256}",
+  "dcm2niix_sha256": "${DCM2NIIX_SHA256}",
+  "dcm2niix_version": ${DCM2NIIX_VERSION_JSON},
+  "dcm2niix_source": ${DCM2NIIX_SOURCE_JSON},
+  "sample1_manifest_sha256": "${SAMPLE1_MANIFEST_SHA256}",
+  "python_runtime": {
+    "strategy": "${PYTHON_RUNTIME_STRATEGY}",
+    "env": "TOTALSEGMENTATOR_WRAPPER_MAC_PYTHON_312",
+    "python_executable": ${PYTHON_RUNTIME_EXECUTABLE_JSON},
+    "bundled": ${PYTHON_RUNTIME_BUNDLED_JSON},
+    "bundle_path": ${PYTHON_RUNTIME_BUNDLE_JSON},
+    "required_major": 3,
+    "required_minor": 12
+  },
+  "permission_policy": {
+    "requires_admin": false,
+    "writes_system_locations": false,
+    "uses_homebrew": false,
+    "user_selected_input_only": true,
+    "app_support_directory": "~/Library/Application Support/TotalSegmentatorWrapperMac"
+  },
+  "bundled": {
+    "wheel": "$(basename "${WHEEL_PATH}")",
+    "constraints": "constraints/macos-arm64-py312.txt",
+    "dicom_normalizer": "bin/totalsegmentator-wrapper-dicom-normalizer",
+    "dcm2niix": "bin/dcm2niix",
+    "sample1": {
+      "root": "sample1",
+      "input": "sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+      "surface_preview": "sample1/surface_preview/index.html",
+      "precomputed_teeth_labelmap": "sample1/teeth_result/teeth_multilabel_fullspace.nii.gz",
+      "manifest": "sample1/sample_manifest.json",
+      "notices": "sample1/THIRD_PARTY_NOTICES.txt"
+    }
+  },
+  "notarized": ${NOTARIZED_JSON}
+}
+JSON
+
+cat > "${RESOURCES_DIR}/THIRD_PARTY_NOTICES.txt" <<TXT
+TotalSegmentator Wrapper for Mac third-party notices
+
+TotalSegmentator Wrapper for Mac is an unofficial Mac wrapper powered by TotalSegmentator.
+It is not the official TotalSegmentator application or project.
+
+dcm2niix
+- Bundled executable: Contents/Resources/bin/dcm2niix
+- Source executable used for this build: ${DCM2NIIX_PATH}
+- Version line: $(printf '%s' "${DCM2NIIX_VERSION_JSON}" | "${PYTHON_BIN}" -c 'import json, sys; print(json.load(sys.stdin))')
+- SHA256: ${DCM2NIIX_SHA256}
+- Upstream: https://github.com/rordenlab/dcm2niix
+- License summary from upstream README: the bulk of dcm2niix is covered by the BSD license; some units are public domain or MIT licensed. See the upstream license.txt for full details.
+
+Sample 1 notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
+TotalSegmentator Wrapper for Mac is a non-clinical preview and is not for diagnosis or treatment planning.
+TXT
+
+if command -v xattr >/dev/null 2>&1; then
+  xattr -cr "${APP_DIR}" || true
+fi
+if [[ "${SKIP_CODESIGN:-0}" != "1" ]] && command -v codesign >/dev/null 2>&1; then
+  if [[ "${SIGNING_MODE}" == "developer-id" ]]; then
+    codesign_developer_id
+  else
+    if [[ -d "${RESOURCES_DIR}/python/cpython-3.12" ]]; then
+      find "${RESOURCES_DIR}/python/cpython-3.12" -type d -exec chmod u+rwx,go+rx {} +
+      find "${RESOURCES_DIR}/python/cpython-3.12" -type f -exec chmod a-w {} +
+    fi
+    codesign --force --deep --sign - "${APP_DIR}" >/dev/null
+  fi
+fi
+
+echo "${APP_DIR}"

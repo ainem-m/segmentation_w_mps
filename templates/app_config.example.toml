@@ -1,0 +1,23 @@
+[app]
+name = "TotalSegmentator Wrapper for Mac"
+version = "0.1.0-preview"
+non_clinical_notice = true
+
+[paths]
+app_support_dir = "~/Library/Application Support/TotalSegmentatorWrapperMac"
+
+[backend]
+default_engine = "totalsegmentator"
+default_task = "craniofacial_structures"
+default_device = "auto"
+precision = "fp32"
+
+[slicer]
+# Optional absolute path. If empty, app should ask user or search common paths.
+path = ""
+
+[features]
+dicom_input = false
+stl_export = false
+slicer_handoff = true
+benchmark = true

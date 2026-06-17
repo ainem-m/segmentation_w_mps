@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TotalSegmentator Wrapper for Mac Benchmark Result",
+  "type": "object",
+  "required": ["environment", "input", "task", "cpu", "mps"],
+  "properties": {
+    "environment": {
+      "type": "object",
+      "properties": {
+        "python": {"type": "string"},
+        "platform": {"type": "string"},
+        "machine": {"type": "string"},
+        "torch": {"type": ["string", "null"]},
+        "mps_built": {"type": ["boolean", "null"]},
+        "mps_available": {"type": ["boolean", "null"]}
+      }
+    },
+    "input": {"type": "string"},
+    "task": {"type": "string"},
+    "cpu": {"$ref": "#/$defs/run"},
+    "mps": {"$ref": "#/$defs/run"},
+    "speedup": {"type": ["number", "null"]}
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["command", "returncode", "elapsed_seconds", "status"],
+      "properties": {
+        "command": {"type": "array", "items": {"type": "string"}},
+        "returncode": {"type": "integer"},
+        "elapsed_seconds": {"type": "number"},
+        "status": {"type": "string"},
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    }
+  }
+}

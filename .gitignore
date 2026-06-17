@@ -1,0 +1,10 @@
+.venv/
+.uv-cache/
+.DS_Store
+artifacts/
+runs/
+build/
+dist/
+resources/demo_surface_preview/
+__pycache__/
+*.py[cod]

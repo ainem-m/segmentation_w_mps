@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "totalsegmentator-wrapper-mac"
+version = "0.1.0"
+description = "Non-clinical Apple Silicon/MPS preview runner for dental-relevant segmentation."
+requires-python = ">=3.11"
+readme = "README.md"
+license = "LicenseRef-Proprietary"
+authors = [
+  { name = "TotalSegmentator Wrapper for Mac contributors" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: MacOS X",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+  "nibabel>=5.2",
+  "numpy>=1.26,<3",
+  "scikit-image>=0.22",
+]
+
+[project.optional-dependencies]
+dicom = [
+  "pydicom>=3,<4",
+]
+mps = [
+  "torch>=2.3",
+  "totalsegmentator==2.14.0",
+]
+dev = [
+  "build>=1.2",
+]
+
+[project.scripts]
+totalsegmentator-wrapper-mac = "totalsegmentator_wrapper_mac.cli:main"
+totalsegmentator-wrapper-mac-ui = "totalsegmentator_wrapper_mac.ui_tk:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+totalsegmentator_wrapper_mac = ["bin/totalsegmentator-wrapper-dicom-normalizer"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
