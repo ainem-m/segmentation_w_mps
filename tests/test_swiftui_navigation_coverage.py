@@ -396,6 +396,19 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("runner.resetTerminationRequest()", start_run)
         self.assertIn("stoppedBeforeSummary", start_run)
 
+    def test_setup_rebuilds_venv_when_bundle_python_changes(self) -> None:
+        process_support = (SWIFT_APP_DIR / "ProcessSupport.swift").read_text(encoding="utf-8")
+        setup_status = _function_body(process_support, "setupStatus")
+        run_setup = _function_body(process_support, "runSetup")
+        venv_check = _function_body(process_support, "venvPythonMatchesBundle")
+
+        self.assertIn("venvPythonMatchesBundle(paths: paths, python312: python312)", setup_status)
+        self.assertIn("venv_python_changed", setup_status)
+        self.assertIn("専用Python環境を作り直しています", run_setup)
+        self.assertIn("removeItem(at: paths.support.appendingPathComponent(\"env\"", run_setup)
+        self.assertIn("pyvenv.cfg", venv_check)
+        self.assertIn("executable = ", venv_check)
+
     def test_update_check_clears_stale_pending_download_url(self) -> None:
         check_updates = self.app_state
         self.assertIn("updateCheckRunning", check_updates)

@@ -156,6 +156,11 @@ struct SetupCoordinator {
         guard let state = readJSON(paths.stateJSON), state["status"] as? String == "success" else {
             return SetupStatus(state: readJSON(paths.stateJSON), action: "setup_required", reason: "setup_missing")
         }
+        if let python312 = CommandBuilder.resolvePython312(paths: paths),
+           FileManager.default.fileExists(atPath: paths.venvPython.path),
+           !venvPythonMatchesBundle(paths: paths, python312: python312) {
+            return SetupStatus(state: state, action: "setup_required", reason: "venv_python_changed")
+        }
         let current = currentBundleRecord(paths: paths)
         guard let installed = state["installed_bundle"] as? [String: Any] else {
             return SetupStatus(state: state, action: "resync_wheel", reason: "legacy_setup_state")
@@ -210,6 +215,20 @@ struct SetupCoordinator {
             writeSwiftFailureState(paths: paths, reason: "python_version_unsupported", allowNetwork: allowNetwork)
             onProgress(.setupException, "Python 3.12の確認に失敗しました。")
             return pythonRC
+        }
+
+        if FileManager.default.fileExists(atPath: paths.venvPython.path),
+           !venvPythonMatchesBundle(paths: paths, python312: python312) {
+            onProgress(.createVenv, "専用Python環境を作り直しています。")
+            writeProgress(paths.launcherLog, step: .createVenv, status: "running", message: "専用Python環境のPython参照を更新しています。")
+            do {
+                try FileManager.default.removeItem(at: paths.support.appendingPathComponent("env", isDirectory: true))
+            } catch {
+                writeSwiftFailureState(paths: paths, reason: "runtime_refresh_failed", allowNetwork: allowNetwork)
+                onProgress(.setupException, "専用Python環境の更新に失敗しました。")
+                appendLog("Failed to remove stale venv: \(error)\n", to: paths.launcherLog)
+                return 2
+            }
         }
 
         if !FileManager.default.fileExists(atPath: paths.venvPython.path) {
@@ -377,6 +396,27 @@ func installedWheelMarkerMatches(paths: AppPaths, current: [String: Any]) -> Boo
         return false
     }
     return text.trimmingCharacters(in: .whitespacesAndNewlines) == expected
+}
+
+func venvPythonMatchesBundle(paths: AppPaths, python312: URL) -> Bool {
+    let expected = python312.resolvingSymlinksInPath().standardizedFileURL.path
+    let actual = paths.venvPython.resolvingSymlinksInPath().standardizedFileURL.path
+    guard actual == expected else {
+        return false
+    }
+    let pyvenv = paths.support
+        .appendingPathComponent("env", isDirectory: true)
+        .appendingPathComponent("pyvenv.cfg")
+    guard let text = try? String(contentsOf: pyvenv, encoding: .utf8) else {
+        return true
+    }
+    let prefix = "executable = "
+    guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix(prefix) }) else {
+        return true
+    }
+    let configured = String(line.dropFirst(prefix.count))
+    let configuredPath = URL(fileURLWithPath: configured).resolvingSymlinksInPath().standardizedFileURL.path
+    return configuredPath == expected
 }
 
 func dictionariesEqual(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
