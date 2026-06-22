@@ -12,3 +12,9 @@
 
 /index.html
   Cache-Control: public, max-age=300
+
+/download
+  Cache-Control: no-cache
+
+/release-notes
+  Cache-Control: no-cache

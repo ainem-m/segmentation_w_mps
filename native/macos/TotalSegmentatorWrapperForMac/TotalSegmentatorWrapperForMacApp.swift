@@ -41,5 +41,5 @@ struct TotalSegmentatorWrapperForMacApp: App {
 func currentAppVersion() -> String {
     let paths = AppPaths.current()
     let manifest = readJSON(paths.manifest) ?? [:]
-    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.0"
+    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.1"
 }

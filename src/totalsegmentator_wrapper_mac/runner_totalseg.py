@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from totalsegmentator_wrapper_mac.benchmark import environment_metadata, input_metadata, write_json
+from totalsegmentator_wrapper_mac import __version__
 from totalsegmentator_wrapper_mac.device import DeviceCheck, resolve_device
 from totalsegmentator_wrapper_mac.output_report import generate_output_report
 from totalsegmentator_wrapper_mac.outputs import CaseOutput, copy_source_if_requested, prepare_case_output
@@ -230,7 +231,7 @@ def _write_failed_device_check(
     env = environment_metadata()
     write_json(case.environment_path, env)
     benchmark = {
-        "app_version": "0.1.0-preview",
+        "app_version": f"{__version__}-preview",
         "environment": env,
         "input": input_metadata(input_path),
         "run": {
@@ -729,7 +730,7 @@ def _write_metadata(
     env = environment_metadata()
     write_json(case.environment_path, env)
     benchmark = {
-        "app_version": "0.1.0-preview",
+        "app_version": f"{__version__}-preview",
         "environment": env,
         "input": input_metadata(input_path),
         "run": {

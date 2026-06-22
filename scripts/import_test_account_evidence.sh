@@ -35,6 +35,8 @@ allow_zero_env = sys.argv[3] == "1"
 current_home = Path.home().resolve()
 
 payload = json.loads(source.read_text(encoding="utf-8"))
+expected_app_version_from_env = os.environ.get("TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION", "").strip()
+expected_app_version = expected_app_version_from_env or str(payload.get("expected_app_version") or "").strip()
 required_checks = [
     "app_codesign_valid",
     "spctl_app_accepted",
@@ -76,6 +78,8 @@ required_checks = [
     "sample1_manifest_non_clinical",
     "setup_state_installed_bundle_current",
 ]
+if expected_app_version:
+    required_checks.append("manifest_app_version_matches_expected")
 checks = {item.get("name"): bool(item.get("passed")) for item in payload.get("checks", []) if isinstance(item, dict)}
 missing = [name for name in required_checks if name not in checks]
 failed = [name for name in required_checks if checks.get(name) is False]
@@ -124,6 +128,7 @@ verdict = {
     "failed_checks": failed,
     "home_failures": home_failures,
     "allow_zero_env_evidence": allow_zero_env,
+    "expected_app_version": expected_app_version or None,
     "development_home": str(current_home),
     "evidence_home": payload.get("home"),
     "evidence_app_path": payload.get("app_path"),

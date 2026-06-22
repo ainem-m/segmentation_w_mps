@@ -16,7 +16,7 @@ PYTHON_RUNTIME_STRATEGY="external_python312_required"
 PYTHON_RUNTIME_EXECUTABLE_JSON="null"
 PYTHON_RUNTIME_BUNDLED_JSON="false"
 PYTHON_RUNTIME_BUNDLE_JSON="null"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.0}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.1}"
 BUILD_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_BUILD_ID:-}"
 DEPENDENCY_SET_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_SET_ID:-macos-arm64-py312-torch2.12-totalseg2.14.0-pydicom3}"
 UPDATE_MANIFEST_URL="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_MANIFEST_URL:-}"
@@ -216,7 +216,7 @@ NORMALIZER_SHA256="$(sha256_file "${NORMALIZER_PATH}")"
 SAMPLE1_MANIFEST_SHA256="$(sha256_file "${SAMPLE1_MANIFEST_PATH}")"
 DCM2NIIX_SHA256="$(sha256_file "${DCM2NIIX_PATH}")"
 DCM2NIIX_VERSION_JSON="$("${DCM2NIIX_PATH}" -h 2>&1 | awk 'BEGIN{fallback=""} /version|dcm2niix/{print; found=1; exit} NF && fallback==""{fallback=$0} END{if (!found) print fallback}' | first_json_line)"
-DCM2NIIX_SOURCE_JSON="$(json_string "${DCM2NIIX_PATH}")"
+DCM2NIIX_SOURCE_JSON="$(json_string "$(basename "${DCM2NIIX_PATH}")")"
 if [[ -z "${BUILD_ID}" ]]; then
   BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}"
 fi
@@ -359,7 +359,7 @@ It is not the official TotalSegmentator application or project.
 
 dcm2niix
 - Bundled executable: Contents/Resources/bin/dcm2niix
-- Source executable used for this build: ${DCM2NIIX_PATH}
+- Build input executable name: $(basename "${DCM2NIIX_PATH}")
 - Version line: $(printf '%s' "${DCM2NIIX_VERSION_JSON}" | "${PYTHON_BIN}" -c 'import json, sys; print(json.load(sys.stdin))')
 - SHA256: ${DCM2NIIX_SHA256}
 - Upstream: https://github.com/rordenlab/dcm2niix

@@ -349,6 +349,7 @@ struct OwnDataView: View {
                     Label("撮影フォルダは、プレビュー作成の前にアプリが確認します", systemImage: "checklist")
                     Label("通常のCTとして取り込める場合は、自動で準備します", systemImage: "arrow.right.doc.on.clipboard")
                     Label("追加確認が必要な形式の場合、理由を表示してここで止めます", systemImage: "exclamationmark.triangle")
+                    Label("このアプリは非臨床プレビュー用です。診断、治療計画、精度評価には使わないでください。", systemImage: "info.circle")
                 }
             }
 

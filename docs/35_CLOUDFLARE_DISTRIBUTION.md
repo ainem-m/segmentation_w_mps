@@ -10,7 +10,7 @@ Cloudflare R2に置く。
 
 理由:
 
-- 現在の `dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg` は
+- 現在の `dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg` は
   `46 MiB`。
 - Cloudflare Pagesは単一assetの上限が `25 MiB`。CloudflareのPages limits
   docsでも、大きいファイルはR2 public bucketやcustom domainを検討するよう
@@ -60,11 +60,12 @@ rate limitや運用機能の制約がある。
 ## 配置するR2 object
 
 ```text
-totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg
-totalsegmentator-wrapper-mac/releases/0.1.0/SHA256SUMS.txt
-totalsegmentator-wrapper-mac/releases/0.1.0/RELEASE_NOTES.txt
-totalsegmentator-wrapper-mac/releases/0.1.0/release.json
+totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg
+totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt
+totalsegmentator-wrapper-mac/releases/0.1.1/RELEASE_NOTES.txt
+totalsegmentator-wrapper-mac/releases/0.1.1/release.json
 totalsegmentator-wrapper-mac/releases/stable/update.json
+totalsegmentator-wrapper-mac/releases/0.1.0/...  # rollback/history
 totalsegmentator-wrapper-mac/releases/alpha/update.json
 ```
 
@@ -82,22 +83,23 @@ release metadataを再生成する。
 
 ```bash
 scripts/prepare_cloudflare_release.py \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --channel stable \
-  --dmg "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg" \
+  --minimum-supported-version 0.1.0 \
+  --dmg "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
   --download-origin https://downloads.lacramy.com \
   --bucket lacramy-downloads \
   --object-prefix totalsegmentator-wrapper-mac \
-  --published-at 2026-06-18T00:00:00Z
+  --published-at 2026-06-22T04:17:49Z
 ```
 
 生成物:
 
 ```text
 cloudflare/r2/releases/stable/update.json
-cloudflare/r2/releases/0.1.0/SHA256SUMS.txt
-cloudflare/r2/releases/0.1.0/RELEASE_NOTES.txt
-cloudflare/r2/releases/0.1.0/release.json
+cloudflare/r2/releases/0.1.1/SHA256SUMS.txt
+cloudflare/r2/releases/0.1.1/RELEASE_NOTES.txt
+cloudflare/r2/releases/0.1.1/release.json
 cloudflare/r2/upload-plan.json
 ```
 
@@ -189,6 +191,7 @@ created:
 uploaded to lacramy-downloads:
   redact/openai-privacy-filter-q4.signed.json
   choioki/beta/2026-06-06-paid-beta-2/*
+  totalsegmentator-wrapper-mac/releases/0.1.1/*
   totalsegmentator-wrapper-mac/releases/0.1.0/*
   totalsegmentator-wrapper-mac/releases/stable/update.json
   totalsegmentator-wrapper-mac/releases/alpha/update.json
@@ -208,9 +211,10 @@ custom domain:
   min_tls_version: 1.2
 
 verified through Cloudflare edge:
-  totalsegmentator-wrapper-mac/releases/stable/update.json -> 200
+  totalsegmentator-wrapper-mac/releases/stable/update.json -> 200, latest_version=0.1.1
   totalsegmentator-wrapper-mac/releases/alpha/update.json -> 200
-  totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg -> 200
+  totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg -> 200
+  app.lacramy.com/download -> 302 to the 0.1.1 public2 DMG
   choioki/beta/2026-06-06-paid-beta-2/SHA256SUMS.txt -> 200
 
 DNS note:
@@ -251,23 +255,23 @@ cutover後は、Choioki/Redact既存URLとTotalSegmentator Wrapper URLをすぐ�
 BUCKET=lacramy-downloads
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg" \
-  --file "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
+  --file "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.0/SHA256SUMS.txt" \
-  --file "cloudflare/r2/releases/0.1.0/SHA256SUMS.txt" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt" \
+  --file "cloudflare/r2/releases/0.1.1/SHA256SUMS.txt" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.0/RELEASE_NOTES.txt" \
-  --file "cloudflare/r2/releases/0.1.0/RELEASE_NOTES.txt" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/RELEASE_NOTES.txt" \
+  --file "cloudflare/r2/releases/0.1.1/RELEASE_NOTES.txt" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.0/release.json" \
-  --file "cloudflare/r2/releases/0.1.0/release.json" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/release.json" \
+  --file "cloudflare/r2/releases/0.1.1/release.json" \
   --remote
 
 npx wrangler r2 object put \
@@ -285,7 +289,7 @@ downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json
 downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/alpha/update.json
   bypass cache or low TTL
 
-downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/*
+downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/*
   long TTL
 ```
 
@@ -304,7 +308,7 @@ R2 object:
 
 ```bash
 curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json | python3 -m json.tool
-curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/SHA256SUMS.txt
+curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt
 ```
 
 Updater互換:
@@ -320,16 +324,16 @@ DMG checksum:
 
 ```bash
 curl -L \
-  -o /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.0-20260622stable2-arm64.dmg \
-  "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator%20Wrapper%20for%20Mac-0.1.0-20260622stable2-arm64.dmg"
+  -o /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.1-20260622public2-arm64.dmg \
+  "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator%20Wrapper%20for%20Mac-0.1.1-20260622public2-arm64.dmg"
 
-shasum -a 256 /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.0-20260622stable2-arm64.dmg
+shasum -a 256 /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.1-20260622public2-arm64.dmg
 ```
 
 期待SHA256:
 
 ```text
-6f5cf39dabd96f17035b9ffb9b3dffb23248b91d60b3c524858e4327883eada1
+8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e
 ```
 
 Pages:

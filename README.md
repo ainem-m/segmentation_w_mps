@@ -27,7 +27,7 @@ Mac Preview v0.1:
 
 ```text
 TotalSegmentator Wrapper for Mac.app
-- Apple Silicon Mac / macOS 14+ / arm64 only
+- Apple Silicon Mac / macOS 13+ / arm64 only
 - unofficial Mac wrapper powered by TotalSegmentator
 - NIfTI input
 - TotalSegmentator task: craniofacial_structures, teeth
@@ -111,7 +111,7 @@ python -m totalsegmentator_wrapper_mac doctor
 
 python -m totalsegmentator_wrapper_mac setup \
   --python /path/to/python3.12 \
-  --wheel dist/totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl \
+  --wheel dist/totalsegmentator_wrapper_mac-0.1.1-cp312-cp312-macosx_11_0_arm64.whl \
   --constraints constraints/macos-arm64-py312.txt \
   --json /tmp/totalsegmentator-wrapper-mac_setup.json \
   --dry-run \

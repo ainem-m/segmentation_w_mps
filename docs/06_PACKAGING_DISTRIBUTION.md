@@ -78,7 +78,7 @@ The current thin-app alpha wheel is intentionally Python 3.12 / macOS arm64
 specific, for example:
 
 ```text
-totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl
+totalsegmentator_wrapper_mac-0.1.1-cp312-cp312-macosx_11_0_arm64.whl
 ```
 
 This matches the app launcher’s Python 3.12 gate and avoids pretending the
@@ -117,8 +117,9 @@ Setup window and the main workflow, while invoking the existing Python backend
 through argv-list subprocess calls. It is intentionally not a shell-script
 entrypoint.
 
-The initial `.app` is ad-hoc signed only. Notarization remains a later release
-milestone.
+Local development `.app` builds are ad-hoc signed by default. Public release
+builds use Developer ID signing and notarized DMGs through
+`scripts/notarize_mac_dmg.sh`.
 
 Recommended DMG build for test-account installation:
 
@@ -129,7 +130,7 @@ scripts/build_mac_dmg.sh
 This creates:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.1.1-arm64.dmg
 ```
 
 The DMG contains the app, an `/Applications` symlink, and a short README. Users
@@ -388,9 +389,9 @@ Do not redistribute weights unless license and storage implications are confirme
 For public Mac Preview:
 
 ```text
-- sign app if possible
-- notarize before broad distribution if feasible
-- if not signed, document Gatekeeper workaround clearly
+- sign the app with Developer ID and hardened runtime
+- notarize the DMG before distribution
+- validate the stapled DMG and mounted app with Gatekeeper
 ```
 
 Avoid App Store for MVP.
@@ -418,7 +419,7 @@ Do not write into Slicer directories.
 The preview should show its own version and backend versions:
 
 ```text
-TotalSegmentator Wrapper for Mac: 0.1.0
+TotalSegmentator Wrapper for Mac: 0.1.1
 Python: x.y.z
 Torch: x.y.z
 TotalSegmentator: x.y.z

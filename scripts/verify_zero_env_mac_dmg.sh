@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg}"
+DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.1.1-arm64.dmg}"
+EXPECTED_APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION:-0.1.1}"
 
 if [[ ! -f "${DMG_PATH}" ]]; then
   echo "DMG not found: ${DMG_PATH}" >&2
@@ -93,6 +94,7 @@ fi
 HOME="${TEST_HOME}" \
   TOTALSEGMENTATOR_WRAPPER_MAC_SHARED_EVIDENCE_DIR="${TEST_HOME}/SharedEvidence" \
   TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH="${DMG_PATH}" \
+  TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION="${EXPECTED_APP_VERSION}" \
   "${ROOT}/scripts/collect_test_account_install_evidence.sh" "${APP_PATH}" >/dev/null
 
 if [[ ! -f "${TEST_HOME}/SharedEvidence/test_account_install_evidence.json" ]]; then

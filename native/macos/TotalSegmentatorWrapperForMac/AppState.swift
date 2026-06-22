@@ -286,6 +286,7 @@ final class AppState: ObservableObject {
             screen = .setup
             setupMessage = "同梱アプリ更新を専用環境へ反映します。"
             setupError = ""
+            startSetup()
         } else {
             screen = .setup
             setupMessage = "初回セットアップが必要です。セットアップ開始を押すまで通信しません。"
@@ -1079,7 +1080,7 @@ final class AppState: ObservableObject {
             updateMessage = "更新確認URLは設定されていません。"
             return
         }
-        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.0"
+        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.1"
         let allowedHosts = (manifest["update_allowed_hosts"] as? [String]) ?? []
         let updateJSON = paths.logs.appendingPathComponent("update_check.json")
         updateCheckRunning = true

@@ -23,6 +23,7 @@ VENV_PYTHON="${SUPPORT_DIR}/env/bin/python"
 SHARED_EVIDENCE_DIR="${TOTALSEGMENTATOR_WRAPPER_MAC_SHARED_EVIDENCE_DIR:-/Users/Shared/TotalSegmentatorWrapperMac}"
 SHARED_EVIDENCE_JSON="${SHARED_EVIDENCE_DIR}/test_account_install_evidence.json"
 DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-}"
+EXPECTED_APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION:-}"
 
 if [[ ! -d "${APP_PATH}" ]]; then
   echo "App bundle が見つかりません: ${APP_PATH}" >&2
@@ -41,7 +42,7 @@ fi
 mkdir -p "${SUPPORT_DIR}/logs"
 
 set +e
-"${VENV_PYTHON}" - "${APP_PATH}" "${SUPPORT_DIR}" "${STATE_JSON}" "${EVIDENCE_JSON}" "${SHARED_EVIDENCE_JSON}" "${DMG_PATH}" <<'PY'
+"${VENV_PYTHON}" - "${APP_PATH}" "${SUPPORT_DIR}" "${STATE_JSON}" "${EVIDENCE_JSON}" "${SHARED_EVIDENCE_JSON}" "${DMG_PATH}" "${EXPECTED_APP_VERSION}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -58,6 +59,7 @@ state_json = Path(sys.argv[3]).expanduser().resolve()
 evidence_json = Path(sys.argv[4]).expanduser().resolve()
 shared_evidence_json = Path(sys.argv[5]).expanduser().resolve()
 dmg_path_arg = sys.argv[6]
+expected_app_version = sys.argv[7].strip()
 home = Path.home().resolve()
 resources = app_path / "Contents" / "Resources"
 manifest_path = resources / "setup_manifest.json"
@@ -198,6 +200,13 @@ for manifest_field in (
     "update_allowed_hosts",
   ):
     check(f"manifest_has_{manifest_field}", manifest_field in manifest, manifest.get(manifest_field))
+actual_app_version = manifest.get("app_version") or manifest.get("version")
+if expected_app_version:
+    check(
+        "manifest_app_version_matches_expected",
+        actual_app_version == expected_app_version,
+        {"expected": expected_app_version, "actual": actual_app_version},
+    )
 check("bundled_dcm2niix_exists", bundled_dcm2niix.exists() and os.access(bundled_dcm2niix, os.X_OK), str(bundled_dcm2niix))
 check("sample1_input_exists", sample1_input.exists(), str(sample1_input))
 check("sample1_surface_preview_exists", sample1_viewer.exists(), str(sample1_viewer))
@@ -233,6 +242,7 @@ evidence = {
     "state_json": str(state_json),
     "manifest_path": str(manifest_path),
     "shared_copy_path": str(shared_evidence_json),
+    "expected_app_version": expected_app_version or None,
     "checks": checks,
 }
 evidence_json.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -24,7 +24,7 @@
       "description": "Jaw-cropped and resampled 0.5 mm isotropic NIfTI input."
     },
     "surface_preview/index.html": {
-      "sha256": "be294c105f5bf16e2cd454c4a419d0f7e33351fb45fa3869002895ee4f59259b",
+      "sha256": "bbab4a5cdcb3a9bf1eea5924e1a664fd6524d81eacca26a49cb581ccb2618fa4",
       "description": "Fully offline Sample 1 surface preview HTML."
     },
     "teeth_result/teeth_multilabel_fullspace.nii.gz": {

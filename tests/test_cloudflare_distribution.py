@@ -22,9 +22,9 @@ class CloudflareDistributionTests(unittest.TestCase):
 
         self.assertIn('href="/download"', index)
         self.assertIn("sample1-preview.png", index)
-        self.assertIn("6f5cf39dabd96f17035b9ffb9b3dffb23248b91d60b3c524858e4327883eada1", index)
-        self.assertIn("downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/", redirects)
-        self.assertIn("TotalSegmentator%20Wrapper%20for%20Mac-0.1.0-20260622stable2-arm64.dmg", redirects)
+        self.assertIn("8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e", index)
+        self.assertIn("downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/", redirects)
+        self.assertIn("TotalSegmentator%20Wrapper%20for%20Mac-0.1.1-20260622public2-arm64.dmg", redirects)
         self.assertNotIn("downloads.lacramy.com", index)
         self.assertNotIn('href="https://', index)
         self.assertIn("X-Content-Type-Options: nosniff", headers)
@@ -46,11 +46,11 @@ class CloudflareDistributionTests(unittest.TestCase):
 
         self.assertEqual(manifest["schema"], "totalsegmentator_wrapper_mac.update_manifest.v1")
         self.assertEqual(manifest["channel"], "stable")
-        self.assertEqual(manifest["latest_version"], "0.1.0")
+        self.assertEqual(manifest["latest_version"], "0.1.1")
         self.assertTrue(manifest["download_url"].startswith("https://downloads.lacramy.com/"))
-        self.assertIn("/totalsegmentator-wrapper-mac/releases/0.1.0/", manifest["download_url"])
-        self.assertIn("TotalSegmentator%20Wrapper%20for%20Mac-0.1.0-20260622stable2-arm64.dmg", manifest["download_url"])
-        self.assertEqual(manifest["sha256"], "6f5cf39dabd96f17035b9ffb9b3dffb23248b91d60b3c524858e4327883eada1")
+        self.assertIn("/totalsegmentator-wrapper-mac/releases/0.1.1/", manifest["download_url"])
+        self.assertIn("TotalSegmentator%20Wrapper%20for%20Mac-0.1.1-20260622public2-arm64.dmg", manifest["download_url"])
+        self.assertEqual(manifest["sha256"], "8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e")
 
     def test_prepare_cloudflare_release_generates_expected_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -81,7 +81,7 @@ class CloudflareDistributionTests(unittest.TestCase):
                 text=True,
             )
 
-            update = json.loads((r2_root / "releases" / "alpha" / "update.json").read_text(encoding="utf-8"))
+            update = json.loads((r2_root / "releases" / "stable" / "update.json").read_text(encoding="utf-8"))
             release = json.loads((r2_root / "releases" / "9.9.9" / "release.json").read_text(encoding="utf-8"))
             upload_plan = json.loads((r2_root / "upload-plan.json").read_text(encoding="utf-8"))
 

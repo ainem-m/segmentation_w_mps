@@ -1,6 +1,6 @@
 # 34 Alpha Distribution Support Card
 
-TotalSegmentator Wrapper for Mac `0.1.0` の外部紹介・返事待ち中に使う配布カードと
+TotalSegmentator Wrapper for Mac `0.1.1` の外部紹介・返事待ち中に使う配布カードと
 問い合わせ対応表。新機能追加ではなく、配布体験と失敗時対応を安定させるための
 運用メモ。
 
@@ -8,18 +8,18 @@ TotalSegmentator Wrapper for Mac `0.1.0` の外部紹介・返事待ち中に使
 
 | Item | Value |
 | --- | --- |
-| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg` |
-| SHA256 | `4d796a76964cd345affb1c1ce394aba868dc7afd2f936eb2b8f2fd0eb6e48f9c` |
-| Version | `0.1.0` |
+| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg` |
+| SHA256 | `8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e` |
+| Version | `0.1.1` |
 | Bundle ID | `jp.chino.totalsegmentator.wrapper.mac` |
 | Signing | Developer ID / hardened runtime |
 | Notarization | Apple notarized / stapled DMG |
 | Cloudflare Pages | `cloudflare/pages/` |
-| R2 update manifest | `https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/alpha/update.json` |
+| R2 update manifest | `https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json` |
 | 対応環境 | Apple Silicon Mac, macOS 13以降を想定 |
 | 同梱Sample | Sample 1 CT input, precomputed 3D HTML preview |
 | 初回Setup | App Support配下に専用runtimeを作成 |
-| 初回Setup所要時間 | zero-env検証では依存導入が約183秒。環境・通信状況により数分 |
+| 初回Setup所要時間 | zero-env検証では依存導入が約398秒。環境・通信状況により数分 |
 | 通信 | 初回Setup/初回プレビュー作成時に依存・model weight取得で通信する場合あり |
 | 送信しないもの | DICOM, CT, 処理結果, ローカルpath, ログ, ユーザー識別子 |
 | Sample 1処理時間 | model取得済み/MPS利用時におおむね100秒前後 |
@@ -86,16 +86,16 @@ DMGはDeveloper ID署名・notarized済みです。DICOM/CT/処理結果は送�
 配布前に1回だけ確認する。
 
 ```bash
-xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg"
+xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg"
 spctl --assess --type open --context context:primary-signature --verbose=4 \
-  "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg"
+  "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg"
 ```
 
 DMGをmountしてappも確認する。
 
 ```bash
 MOUNT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/totalsegmentator-wrapper-mac-release-check.XXXXXX")"
-hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
+hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
 spctl --assess --type execute --verbose=4 "$MOUNT_ROOT/TotalSegmentator Wrapper for Mac.app"
 hdiutil detach "$MOUNT_ROOT"
 ```
@@ -115,7 +115,6 @@ hdiutil detach "$MOUNT_ROOT"
 - `spctl` mounted app: `accepted`, `source=Notarized Developer ID`
 - `scripts/verify_zero_env_mac_dmg.sh`: pass
 - zero-env setup: `status=success`, `actual_device=mps`, DICOM normalizer `app_bundle`
-- zero-env dependency install: 約183秒
-- `compileall`: pass
-- `unittest`: `128 passed`
-- `ctest`: `1 passed`
+- zero-env dependency install: 約398秒
+- `unittest`: `108 tests OK`
+- Swift compile check: pass

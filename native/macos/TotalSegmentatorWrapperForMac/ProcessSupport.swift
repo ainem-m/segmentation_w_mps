@@ -163,7 +163,7 @@ struct SetupCoordinator {
         }
         let current = currentBundleRecord(paths: paths)
         guard let installed = state["installed_bundle"] as? [String: Any] else {
-            return SetupStatus(state: state, action: "resync_wheel", reason: "legacy_setup_state")
+            return SetupStatus(state: state, action: "setup_required", reason: "legacy_setup_state")
         }
         if dictionariesEqual(installed, current), installedWheelMarkerMatches(paths: paths, current: current) {
             return SetupStatus(state: state, action: "current", reason: "current")

@@ -59,8 +59,8 @@ codesign verify: valid
 
 ## Residual Risks
 
-- Notarization and Developer ID signing are still a later milestone. Current
-  alpha packaging remains ad-hoc signed.
+- Developer ID signing and notarization are now part of the release packaging
+  path. Ad-hoc signing remains only for local development builds.
 - Manual desktop interaction is still needed for final UX judgment: file picker,
   Sample 1 viewer button, stop button, and result preview button.
 - A full MPS segmentation run through the SwiftUI window should be performed
