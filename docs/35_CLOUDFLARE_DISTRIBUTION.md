@@ -196,8 +196,10 @@ uploaded to lacramy-downloads:
 Pages:
   https://totalsegmentator-wrapper-mac.pages.dev/ -> 200
   https://totalsegmentator-wrapper-mac.pages.dev/download -> stable DMG 302
-  app.lacramy.com is added to the Pages project but remains pending:
-    verification_error: CNAME record not set
+  app.lacramy.com is connected to the Pages project:
+    status: active
+  https://app.lacramy.com/ -> 200
+  https://app.lacramy.com/download -> stable DMG 302
 
 custom domain:
   downloads.lacramy.com is connected to lacramy-downloads
@@ -213,7 +215,8 @@ verified through Cloudflare edge:
 
 DNS note:
   1.1.1.1 resolves downloads.lacramy.com to Cloudflare edge IPs.
-  The local default resolver may lag immediately after cutover.
+  1.1.1.1 resolves app.lacramy.com to Cloudflare edge IPs.
+  The local default resolver may lag immediately after domain cutover.
 ```
 
 既知objectのコピーは以下で行う。これは現在の公開URL
@@ -334,12 +337,14 @@ Pages:
 ```bash
 curl -I https://totalsegmentator-wrapper-mac.pages.dev/
 curl -I https://totalsegmentator-wrapper-mac.pages.dev/download
+curl -I https://app.lacramy.com/
+curl -I https://app.lacramy.com/download
 ```
 
 `app.lacramy.com` を使う場合は、Pages custom domainを追加したうえで
 `app.lacramy.com` のCNAMEを `totalsegmentator-wrapper-mac.pages.dev` へ向ける。
-2026-06-22時点ではPages側のdomain追加は済んでいるが、DNS API権限がなく
-CNAME recordは未作成。
+2026-06-22時点ではPages custom domainは `active`、DNSはCloudflare proxied CNAME
+で接続済み。
 
 ## 運用上の注意
 
