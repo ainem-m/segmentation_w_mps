@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TotalSegmentator Wrapper for Mac public alpha</title>
+  <meta
+    name="description"
+    content="TotalSegmentator Wrapper for Mac public alpha distribution page for Apple Silicon Macs."
+  >
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #13272b;
+      --muted: #53666a;
+      --surface: #f7faf8;
+      --panel: #ffffff;
+      --line: #c9d7d3;
+      --teal: #1f7a73;
+      --teal-dark: #173f46;
+      --amber: #8a540f;
+      --blue: #315e8a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--surface);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+    }
+
+    .topbar {
+      background: var(--teal-dark);
+      color: #f8fbfa;
+    }
+
+    .topbar-inner,
+    .main,
+    .band-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+
+    .topbar-inner {
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .status {
+      margin: 0;
+      color: #cfe4e2;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .main {
+      padding-top: 44px;
+      padding-bottom: 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 430px;
+      gap: 36px;
+      align-items: start;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 42px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 680px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 28px 0;
+    }
+
+    .button {
+      min-height: 48px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border-radius: 8px;
+      padding: 0 18px;
+      border: 1px solid var(--teal);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .button.primary {
+      background: var(--teal);
+      color: #ffffff;
+    }
+
+    .button.secondary {
+      background: #ffffff;
+      color: var(--teal-dark);
+    }
+
+    .release-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 20px;
+    }
+
+    .release-panel h2,
+    .band h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr);
+      gap: 10px 14px;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .meta dt {
+      color: var(--muted);
+    }
+
+    .meta dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .preview {
+      width: 100%;
+      margin: 4px 0 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: block;
+    }
+
+    .note {
+      margin: 18px 0 0;
+      color: var(--amber);
+      font-size: 14px;
+    }
+
+    .band {
+      border-top: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .band-inner {
+      padding-top: 36px;
+      padding-bottom: 40px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .section p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .section strong {
+      color: var(--ink);
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 22px 28px 34px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .band-inner {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 34px;
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+        padding-top: 16px;
+        padding-bottom: 16px;
+      }
+
+      .status {
+        white-space: normal;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .topbar-inner,
+      .main,
+      .band-inner {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+
+      h1 {
+        font-size: 29px;
+      }
+
+      .lead {
+        font-size: 16px;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .button {
+        width: 100%;
+      }
+
+      .meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <p class="brand">TotalSegmentator Wrapper for Mac</p>
+      <p class="status">Public alpha 0.1.0 / Apple Silicon / macOS 13+</p>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="hero" aria-labelledby="title">
+      <div>
+        <h1 id="title">TotalSegmentator Wrapper for Mac</h1>
+        <p class="lead">
+          Apple Silicon Mac 上で、ローカルの CT/CBCT から非臨床 3D preview を作成する
+          public alpha 配布版です。Developer ID 署名と Apple notarization 済みの DMG を配布します。
+        </p>
+        <div class="actions" aria-label="Download links">
+          <a class="button primary" href="/download">
+            DMGをダウンロード
+          </a>
+          <a class="button secondary" href="/release-notes">
+            リリースノート
+          </a>
+        </div>
+        <p class="note">
+          診断、治療計画、精度評価には使わないでください。初回 Setup や model weight 取得で通信する場合があります。
+        </p>
+      </div>
+
+      <aside class="release-panel" aria-labelledby="release-title">
+        <img
+          class="preview"
+          src="/assets/sample1-preview.png"
+          alt="同梱 Sample 1 の非臨床プレビュー画像"
+          width="1200"
+          height="760"
+        >
+        <h2 id="release-title">Release 0.1.0</h2>
+        <dl class="meta">
+          <dt>File</dt>
+          <dd>TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg</dd>
+          <dt>Size</dt>
+          <dd>46 MiB</dd>
+          <dt>SHA256</dt>
+          <dd>6f5cf39dabd96f17035b9ffb9b3dffb23248b91d60b3c524858e4327883eada1</dd>
+          <dt>Signing</dt>
+          <dd>Developer ID / notarized</dd>
+        </dl>
+      </aside>
+    </section>
+  </main>
+
+  <section class="band" aria-label="Distribution notes">
+    <div class="band-inner">
+      <div class="section">
+        <h2>送信しないもの</h2>
+        <p><strong>DICOM、CT、処理結果、ローカル path、ログ、ユーザー識別子</strong>は更新確認やプレビュー作成で送信しません。</p>
+      </div>
+      <div class="section">
+        <h2>初回 Setup</h2>
+        <p>専用 runtime はユーザーの App Support 配下に作成されます。sudo、Homebrew、システム領域への書き込みは使いません。</p>
+      </div>
+      <div class="section">
+        <h2>問い合わせ</h2>
+        <p>起動や Setup に失敗した場合は、DMG 内のログ回収コマンドで得たファイルを確認してから共有してください。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    TotalSegmentator Wrapper for Mac is an unofficial, non-clinical preview wrapper powered by TotalSegmentator.
+  </footer>
+</body>
+</html>

@@ -51,6 +51,7 @@ docs/07_RISK_REGISTER.md            リスク管理
 docs/09_CODING_RULES.md             コーディング規律
 docs/10_DEFERRED_SCOPE.md           後回しにするもの
 docs/12_REFERENCES.md               参照リンク・根拠
+docs/35_CLOUDFLARE_DISTRIBUTION.md  Cloudflare Pages/R2配布
 ```
 
 Current implementation notes:
@@ -76,6 +77,7 @@ docs/31_MAIN_APP_UI_AND_GUI_MIGRATION_NOTES.md
 docs/32_SWIFTUI_SHELL_COMPLETION_AUDIT.md
 docs/33_MAC_NOTARIZATION.md
 docs/34_ALPHA_DISTRIBUTION_SUPPORT_CARD.md
+docs/35_CLOUDFLARE_DISTRIBUTION.md
 docs/future/SLICER_EXPORT_REINTRODUCTION.md
 native/dicom_normalizer/README.md
 ```
@@ -86,6 +88,7 @@ native/dicom_normalizer/README.md
 scripts/smoke_test_mps_convtranspose3d.py
 scripts/smoke_test_totalseg_mps.sh
 scripts/benchmark_cpu_vs_mps.py
+scripts/prepare_cloudflare_release.py
 templates/benchmark_result.schema.json
 templates/model_manifest.example.json
 templates/app_config.example.toml

@@ -1,5 +1,6 @@
 .venv/
 .uv-cache/
+.wrangler/
 .DS_Store
 artifacts/
 runs/

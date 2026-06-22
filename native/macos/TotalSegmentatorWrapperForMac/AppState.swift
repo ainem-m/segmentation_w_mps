@@ -1761,6 +1761,9 @@ set -euo pipefail
 DMG=\(dmgPath)
 APP=\(appPath)
 MOUNT=\(mountPath)
+APP_PARENT="$(/usr/bin/dirname "$APP")"
+BACKUP="$APP_PARENT/.TotalSegmentator Wrapper for Mac.app.update-backup.$$"
+RESTORE_BACKUP=0
 mkdir -p "$MOUNT"
 sleep 2
 hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
@@ -1774,7 +1777,20 @@ if [[ ! -d "$NEW_APP" ]]; then
   exit 3
 fi
 /usr/sbin/spctl --assess --type execute --verbose=2 "$NEW_APP"
-/usr/bin/ditto "$NEW_APP" "$APP"
+if [[ -d "$APP" ]]; then
+  /bin/chmod -R u+w "$APP" >/dev/null 2>&1 || true
+  /bin/mv "$APP" "$BACKUP"
+  RESTORE_BACKUP=1
+fi
+if ! /usr/bin/ditto "$NEW_APP" "$APP"; then
+  if [[ "$RESTORE_BACKUP" == "1" && -d "$BACKUP" && ! -d "$APP" ]]; then
+    /bin/mv "$BACKUP" "$APP" || true
+  fi
+  exit 4
+fi
+if [[ -d "$BACKUP" ]]; then
+  /bin/rm -rf "$BACKUP"
+fi
 cleanup
 /usr/bin/open "$APP"
 """

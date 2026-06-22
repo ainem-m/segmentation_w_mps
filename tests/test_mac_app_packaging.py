@@ -110,6 +110,9 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_notarization_script_submits_staples_and_validates_dmg(self) -> None:
         text = NOTARIZE_SCRIPT.read_text(encoding="utf-8")
 
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.0}"', text)
+        self.assertIn('${APP_NAME}-${APP_VERSION}-arm64.dmg', text)
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER", text)
@@ -129,6 +132,14 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("hdiutil attach", text)
         self.assertNotIn("AuthKey_", text)
         self.assertNotIn("--password", text)
+
+    def test_dmg_build_script_uses_configured_app_version_for_filename(self) -> None:
+        text = DMG_BUILD_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.0}"', text)
+        self.assertIn('${APP_NAME}-${APP_VERSION}-arm64.dmg', text)
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
+        self.assertNotIn('${APP_NAME}-0.1.0-arm64.dmg"', text)
 
     def test_swiftui_frontend_sources_cover_setup_main_and_safe_commands(self) -> None:
         texts = {
@@ -207,6 +218,9 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("writeUpdateInstallerScript", texts["AppState.swift"])
         self.assertIn("spctl --assess --type execute", texts["AppState.swift"])
         self.assertIn("/usr/bin/ditto", texts["AppState.swift"])
+        self.assertIn("update-backup", texts["AppState.swift"])
+        self.assertIn("/bin/chmod -R u+w", texts["AppState.swift"])
+        self.assertIn("/bin/mv \"$APP\" \"$BACKUP\"", texts["AppState.swift"])
         self.assertIn("更新をインストール", texts["Views.swift"])
         self.assertIn("enum InputSource", texts["AppState.swift"])
         self.assertIn("canStartSampleRun", texts["AppState.swift"])

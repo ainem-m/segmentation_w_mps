@@ -8,12 +8,14 @@ TotalSegmentator Wrapper for Mac `0.1.0` の外部紹介・返事待ち中に使
 
 | Item | Value |
 | --- | --- |
-| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg` |
-| SHA256 | `425f44773a648d693a771ca918c7f6696a952e3e1d11ca7560cbeea06d5bbeff` |
+| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg` |
+| SHA256 | `4d796a76964cd345affb1c1ce394aba868dc7afd2f936eb2b8f2fd0eb6e48f9c` |
 | Version | `0.1.0` |
 | Bundle ID | `jp.chino.totalsegmentator.wrapper.mac` |
 | Signing | Developer ID / hardened runtime |
 | Notarization | Apple notarized / stapled DMG |
+| Cloudflare Pages | `cloudflare/pages/` |
+| R2 update manifest | `https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/alpha/update.json` |
 | 対応環境 | Apple Silicon Mac, macOS 13以降を想定 |
 | 同梱Sample | Sample 1 CT input, precomputed 3D HTML preview |
 | 初回Setup | App Support配下に専用runtimeを作成 |
@@ -84,16 +86,16 @@ DMGはDeveloper ID署名・notarized済みです。DICOM/CT/処理結果は送�
 配布前に1回だけ確認する。
 
 ```bash
-xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg"
+xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg"
 spctl --assess --type open --context context:primary-signature --verbose=4 \
-  "dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg"
+  "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg"
 ```
 
 DMGをmountしてappも確認する。
 
 ```bash
 MOUNT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/totalsegmentator-wrapper-mac-release-check.XXXXXX")"
-hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.0-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
+hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622b-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
 spctl --assess --type execute --verbose=4 "$MOUNT_ROOT/TotalSegmentator Wrapper for Mac.app"
 hdiutil detach "$MOUNT_ROOT"
 ```

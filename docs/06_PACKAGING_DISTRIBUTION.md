@@ -263,6 +263,12 @@ as the manifest unless explicitly allowlisted in the local app manifest via
 DICOM/CT paths, logs, processing output, or user identifiers. Startup and Setup
 do not contact the update endpoint.
 
+Cloudflare distribution prep uses Pages for the public download/support page
+and R2 for the DMG plus update manifest. The DMG is larger than the Cloudflare
+Pages single-asset limit, and the updater should keep the manifest and DMG on
+the same R2 custom domain to avoid extra update host allowlisting. See
+`docs/35_CLOUDFLARE_DISTRIBUTION.md`.
+
 Headless validation can use:
 
 ```bash

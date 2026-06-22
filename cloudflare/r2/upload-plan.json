@@ -1,0 +1,38 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.cloudflare_upload_plan.v1",
+  "bucket": "lacramy-downloads",
+  "download_origin": "https://downloads.lacramy.com",
+  "object_prefix": "totalsegmentator-wrapper-mac",
+  "objects": [
+    {
+      "source": "dist/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg",
+      "key": "totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator Wrapper for Mac-0.1.0-20260622stable2-arm64.dmg",
+      "content_type": "application/x-apple-diskimage",
+      "cache_control": "public, max-age=31536000, immutable"
+    },
+    {
+      "source": "cloudflare/r2/releases/0.1.0/SHA256SUMS.txt",
+      "key": "totalsegmentator-wrapper-mac/releases/0.1.0/SHA256SUMS.txt",
+      "content_type": "text/plain; charset=utf-8",
+      "cache_control": "public, max-age=31536000, immutable"
+    },
+    {
+      "source": "cloudflare/r2/releases/0.1.0/RELEASE_NOTES.txt",
+      "key": "totalsegmentator-wrapper-mac/releases/0.1.0/RELEASE_NOTES.txt",
+      "content_type": "text/plain; charset=utf-8",
+      "cache_control": "public, max-age=31536000, immutable"
+    },
+    {
+      "source": "cloudflare/r2/releases/0.1.0/release.json",
+      "key": "totalsegmentator-wrapper-mac/releases/0.1.0/release.json",
+      "content_type": "application/json; charset=utf-8",
+      "cache_control": "public, max-age=31536000, immutable"
+    },
+    {
+      "source": "cloudflare/r2/releases/stable/update.json",
+      "key": "totalsegmentator-wrapper-mac/releases/stable/update.json",
+      "content_type": "application/json; charset=utf-8",
+      "cache_control": "no-cache"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ from totalsegmentator_wrapper_mac import __version__
 
 
 UPDATE_SCHEMA = "totalsegmentator_wrapper_mac.update_manifest.v1"
+SUPPORTED_UPDATE_CHANNELS = {"alpha", "stable"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,8 @@ def check_for_update(
     try:
         _require_https_url(manifest_url, field="manifest_url")
         request = urllib.request.Request(manifest_url, method="GET")
+        request.add_header("Accept", "application/json")
+        request.add_header("User-Agent", f"TotalSegmentatorWrapperMac/{_user_agent_version(current_version)}")
         with urllib.request.urlopen(request, timeout=timeout_sec) as response:  # noqa: S310
             body = response.read(1024 * 1024)
         manifest = json.loads(body.decode("utf-8"))
@@ -115,6 +118,11 @@ def update_request_metadata() -> dict[str, str]:
     }
 
 
+def _user_agent_version(version: str) -> str:
+    value = "".join(char for char in version if char.isalnum() or char in ".-_")
+    return value or __version__
+
+
 def compare_versions(left: str, right: str) -> int:
     left_parts = _version_parts(left)
     right_parts = _version_parts(right)
@@ -146,7 +154,7 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
         raise ValueError("update manifest must be a JSON object")
     if manifest.get("schema") != UPDATE_SCHEMA:
         raise ValueError("unsupported update manifest schema")
-    if manifest.get("channel") != "alpha":
+    if manifest.get("channel") not in SUPPORTED_UPDATE_CHANNELS:
         raise ValueError("unsupported update channel")
     for field in ("latest_version", "minimum_supported_version", "download_url", "sha256", "published_at"):
         if not manifest.get(field):

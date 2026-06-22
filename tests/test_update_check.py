@@ -40,9 +40,32 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertEqual(result.sha256, "abc123")
         request = urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "https://example.invalid/update.json")
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(request.get_header("User-agent"), "TotalSegmentatorWrapperMac/0.1.0")
         self.assertNotIn("dicom", request.full_url.lower())
         self.assertNotIn("ct", request.full_url.lower())
         self.assertNotIn("path", request.full_url.lower())
+
+    def test_accepts_stable_update_channel(self) -> None:
+        manifest = {
+            "schema": "totalsegmentator_wrapper_mac.update_manifest.v1",
+            "latest_version": "0.2.0",
+            "minimum_supported_version": "0.1.0",
+            "channel": "stable",
+            "download_url": "https://example.invalid/download.dmg",
+            "release_notes_url": "https://example.invalid/notes",
+            "sha256": "abc123",
+            "published_at": "2026-06-14T00:00:00Z",
+        }
+
+        with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(manifest)):
+            result = check_for_update(
+                manifest_url="https://example.invalid/update.json",
+                current_version="0.1.0",
+            )
+
+        self.assertEqual(result.status, "update_available")
+        self.assertTrue(result.update_available)
 
     def test_detects_critical_update(self) -> None:
         manifest = {

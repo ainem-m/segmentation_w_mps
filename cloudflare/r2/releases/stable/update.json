@@ -1,0 +1,10 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.update_manifest.v1",
+  "channel": "stable",
+  "latest_version": "0.1.0",
+  "minimum_supported_version": "0.1.0",
+  "download_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/TotalSegmentator%20Wrapper%20for%20Mac-0.1.0-20260622stable2-arm64.dmg",
+  "release_notes_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.0/RELEASE_NOTES.txt",
+  "sha256": "6f5cf39dabd96f17035b9ffb9b3dffb23248b91d60b3c524858e4327883eada1",
+  "published_at": "2026-06-22T00:59:56Z"
+}
