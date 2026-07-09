@@ -298,6 +298,7 @@ struct CommandBuilder {
         output: URL,
         mode: RunMode,
         device: String,
+        higherOrderResampling: Bool,
         paths: AppPaths
     ) -> [String] {
         var command = [
@@ -324,6 +325,9 @@ struct CommandBuilder {
             command.append("--teeth-robust-craniofacial-preflight")
         } else {
             command.append("--robust-crop")
+        }
+        if higherOrderResampling {
+            command.append("--higher-order-resampling")
         }
         return command
     }

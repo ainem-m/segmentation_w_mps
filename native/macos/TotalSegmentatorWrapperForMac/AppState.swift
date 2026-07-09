@@ -140,6 +140,7 @@ final class AppState: ObservableObject {
     @Published var outputRootURL: URL?
     @Published var runMode: RunMode = .archPreview
     @Published var device = "mps"
+    @Published var higherOrderResampling = false
     @Published var statusText = "待機中"
     @Published var progressText = "まだ実行していません。"
     @Published var runHeartbeatText = ""
@@ -775,6 +776,7 @@ final class AppState: ObservableObject {
             output: output,
             mode: runMode,
             device: device,
+            higherOrderResampling: higherOrderResampling,
             paths: paths
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)

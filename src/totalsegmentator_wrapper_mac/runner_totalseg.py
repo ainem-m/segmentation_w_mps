@@ -99,6 +99,7 @@ def run_totalsegmentator(
     copy_input: bool = True,
     skip_device_check: bool = False,
     robust_crop: bool = False,
+    higher_order_resampling: bool = False,
     experimental_teeth: bool = False,
     teeth_dry_run: bool = False,
     teeth_timeout_sec: int = 3600,
@@ -122,7 +123,14 @@ def run_totalsegmentator(
 
     device_check = resolve_device(requested_device, skip_device_check=skip_device_check)
     if device_check.status != "pass" or not device_check.actual_device:
-        _write_failed_device_check(case, input_path, task, device_check, robust_crop=robust_crop)
+        _write_failed_device_check(
+            case,
+            input_path,
+            task,
+            device_check,
+            robust_crop=robust_crop,
+            higher_order_resampling=higher_order_resampling,
+        )
         raise RuntimeError(
             f"MPS smoke test failed for requested device {requested_device}: {device_check.error}"
         )
@@ -144,7 +152,15 @@ def run_totalsegmentator(
             "TASK BLOCKED\n" + TEETH_UNSUPPORTED_REASON + "\n",
             encoding="utf-8",
         )
-        _write_metadata(case, input_path, task, result, device_check, robust_crop=robust_crop)
+        _write_metadata(
+            case,
+            input_path,
+            task,
+            result,
+            device_check,
+            robust_crop=robust_crop,
+            higher_order_resampling=higher_order_resampling,
+        )
         generate_output_report(
             case=case,
             source_volume_path=source_for_summary,
@@ -169,6 +185,7 @@ def run_totalsegmentator(
             teeth_craniofacial_case=teeth_craniofacial_case,
             teeth_force_split=teeth_force_split,
             teeth_robust_craniofacial_preflight=teeth_robust_craniofacial_preflight,
+            higher_order_resampling=higher_order_resampling,
             skip_device_check=skip_device_check,
         )
 
@@ -186,6 +203,8 @@ def run_totalsegmentator(
     ]
     if robust_crop:
         command.append("--robust_crop")
+    if higher_order_resampling:
+        command.append("--higher_order_resampling")
     env = os.environ.copy()
     if totalseg_home is not None:
         env["TOTALSEG_HOME_DIR"] = str(totalseg_home)
@@ -211,7 +230,15 @@ def run_totalsegmentator(
         stdout_tail=stdout[-4000:],
         stderr_tail=stderr[-4000:],
     )
-    _write_metadata(case, input_path, task, result, device_check, robust_crop=robust_crop)
+    _write_metadata(
+        case,
+        input_path,
+        task,
+        result,
+        device_check,
+        robust_crop=robust_crop,
+        higher_order_resampling=higher_order_resampling,
+    )
     generate_output_report(
         case=case,
         source_volume_path=source_for_summary,
@@ -227,6 +254,7 @@ def _write_failed_device_check(
     task: str,
     device_check: DeviceCheck,
     robust_crop: bool = False,
+    higher_order_resampling: bool = False,
 ) -> None:
     env = environment_metadata()
     write_json(case.environment_path, env)
@@ -242,6 +270,7 @@ def _write_failed_device_check(
             "status": "failed",
             "error": device_check.error,
             "robust_crop": robust_crop,
+            "higher_order_resampling": higher_order_resampling,
         },
         "device_check": device_check.to_dict(),
     }
@@ -267,6 +296,7 @@ def _run_experimental_teeth(
     teeth_craniofacial_case: Path | None,
     teeth_force_split: bool,
     teeth_robust_craniofacial_preflight: bool,
+    higher_order_resampling: bool,
     skip_device_check: bool,
 ) -> TotalSegRunResult:
     start = time.perf_counter()
@@ -292,6 +322,7 @@ def _run_experimental_teeth(
             "timeout_sec": teeth_timeout_sec,
             "crop_margin_mm": teeth_crop_margin_mm,
             "force_split": teeth_force_split,
+            "higher_order_resampling": higher_order_resampling,
             "robust_craniofacial_preflight": False,
             "robust_craniofacial_preflight_requested": teeth_robust_craniofacial_preflight,
             "craniofacial_preflight": preflight_info,
@@ -328,6 +359,7 @@ def _run_experimental_teeth(
                     copy_input=False,
                     skip_device_check=skip_device_check,
                     robust_crop=teeth_robust_craniofacial_preflight,
+                    higher_order_resampling=higher_order_resampling,
                 )
                 if preflight.status != "success":
                     preflight_info["status"] = "failed"
@@ -353,6 +385,7 @@ def _run_experimental_teeth(
             benchmark_path=case.teeth_child_benchmark_path,
             dry_run=teeth_dry_run,
             force_split=teeth_force_split,
+            higher_order_resampling=higher_order_resampling,
         )
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
@@ -438,7 +471,15 @@ def _run_experimental_teeth(
             _append_run_log_warning(case.run_log_path, str(preflight_info["warning"]))
         extra["experimental_teeth"]["error"] = repr(exc)
 
-    _write_metadata(case, input_path, "teeth", result, device_check, extra=extra)
+    _write_metadata(
+        case,
+        input_path,
+        "teeth",
+        result,
+        device_check,
+        higher_order_resampling=higher_order_resampling,
+        extra=extra,
+    )
     generate_output_report(
         case=case,
         source_volume_path=source_for_summary,
@@ -455,6 +496,7 @@ def _teeth_child_command(
     benchmark_path: Path,
     dry_run: bool,
     force_split: bool,
+    higher_order_resampling: bool,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -480,6 +522,8 @@ def _teeth_child_command(
         command.append("--dry-run")
     if force_split:
         command.append("--force-split")
+    if higher_order_resampling:
+        command.append("--higher-order-resampling")
     return command
 
 
@@ -725,6 +769,7 @@ def _write_metadata(
     result: TotalSegRunResult,
     device_check: DeviceCheck,
     robust_crop: bool = False,
+    higher_order_resampling: bool = False,
     extra: dict[str, Any] | None = None,
 ) -> None:
     env = environment_metadata()
@@ -742,6 +787,7 @@ def _write_metadata(
             "status": result.status,
             "returncode": result.returncode,
             "robust_crop": robust_crop,
+            "higher_order_resampling": higher_order_resampling,
         },
         "device_check": device_check.to_dict(),
     }

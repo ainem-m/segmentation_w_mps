@@ -445,6 +445,19 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("sha256Hex", check_updates)
         self.assertIn("writeUpdateInstallerScript", check_updates)
 
+    def test_higher_order_resampling_is_selectable_and_passed_to_run_command(self) -> None:
+        settings = _struct_body(self.views, "RunSettingsView")
+        self.assertIn("$state.higherOrderResampling", settings)
+        self.assertIn("境界を滑らかにする（高次補間）", settings)
+
+        start_run = _function_body(self.app_state, "startRun")
+        self.assertIn("higherOrderResampling: higherOrderResampling", start_run)
+
+        run_command = _function_body(self.command_builder, "runCommand")
+        self.assertIn("higherOrderResampling: Bool", self.command_builder)
+        self.assertIn("if higherOrderResampling", run_command)
+        self.assertIn("--higher-order-resampling", run_command)
+
     def test_log_drawer_refreshes_current_case_log_when_opened(self) -> None:
         refresh_log = _function_body(self.app_state, "refreshLog")
         self.assertIn("let target = url ?? currentLogURL", refresh_log)

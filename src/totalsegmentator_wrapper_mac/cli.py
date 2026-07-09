@@ -130,6 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pass TotalSegmentator --robust_crop for craniofacial preflight cases.",
     )
+    run.add_argument(
+        "--higher-order-resampling",
+        action="store_true",
+        help="Pass TotalSegmentator --higher_order_resampling for smoother segmentation resampling.",
+    )
     run.add_argument("--experimental-teeth", action="store_true")
     run.add_argument("--teeth-dry-run", action="store_true")
     run.add_argument("--teeth-timeout-sec", type=int, default=3600)
@@ -154,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--totalseg-bin", default="TotalSegmentator")
     benchmark.add_argument("--totalseg-home", type=Path, default=None)
     benchmark.add_argument("--totalseg-weights", type=Path, default=None)
+    benchmark.add_argument(
+        "--higher-order-resampling",
+        action="store_true",
+        help="Pass TotalSegmentator --higher_order_resampling for both CPU and MPS runs.",
+    )
     benchmark.add_argument("--skip-device-check", action="store_true")
 
     summary = subparsers.add_parser("summary", help="Summarize a completed case output folder.")
@@ -344,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             copy_input=not args.no_copy_input,
             skip_device_check=args.skip_device_check,
             robust_crop=args.robust_crop,
+            higher_order_resampling=args.higher_order_resampling,
             experimental_teeth=args.experimental_teeth,
             teeth_dry_run=args.teeth_dry_run,
             teeth_timeout_sec=args.teeth_timeout_sec,
@@ -424,6 +435,7 @@ def _benchmark(args: argparse.Namespace) -> int:
         totalseg_weights=args.totalseg_weights,
         copy_input=True,
         skip_device_check=args.skip_device_check,
+        higher_order_resampling=args.higher_order_resampling,
     )
     mps = run_totalsegmentator(
         input_path=args.input,
@@ -435,6 +447,7 @@ def _benchmark(args: argparse.Namespace) -> int:
         totalseg_weights=args.totalseg_weights,
         copy_input=True,
         skip_device_check=args.skip_device_check,
+        higher_order_resampling=args.higher_order_resampling,
     )
     speedup = None
     if cpu.status == "success" and mps.status == "success" and mps.elapsed_seconds > 0:

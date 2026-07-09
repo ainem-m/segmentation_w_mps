@@ -167,6 +167,7 @@ class RunnerTests(unittest.TestCase):
                 (tmp_path / "case" / "logs" / "benchmark.json").read_text(encoding="utf-8")
             )
             self.assertFalse(benchmark["run"]["robust_crop"])
+            self.assertFalse(benchmark["run"]["higher_order_resampling"])
 
     def test_run_totalsegmentator_with_robust_crop_passes_totalseg_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -213,6 +214,54 @@ class RunnerTests(unittest.TestCase):
                 (tmp_path / "case" / "logs" / "benchmark.json").read_text(encoding="utf-8")
             )
             self.assertTrue(benchmark["run"]["robust_crop"])
+            self.assertFalse(benchmark["run"]["higher_order_resampling"])
+
+    def test_run_totalsegmentator_with_higher_order_resampling_passes_totalseg_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "sample.nii.gz"
+            input_path.write_text("fake nifti", encoding="utf-8")
+            fake_bin = tmp_path / "fake_totalseg.py"
+            fake_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "import argparse\n"
+                "from pathlib import Path\n"
+                "parser=argparse.ArgumentParser()\n"
+                "parser.add_argument('-i')\n"
+                "parser.add_argument('-o')\n"
+                "parser.add_argument('-ta')\n"
+                "parser.add_argument('--device')\n"
+                "parser.add_argument('--higher_order_resampling', action='store_true')\n"
+                "args=parser.parse_args()\n"
+                "out=Path(args.o); out.mkdir(parents=True, exist_ok=True)\n"
+                "(out/'mandible.nii.gz').write_text('mask')\n"
+                "(out/'higher_order.txt').write_text(str(args.higher_order_resampling))\n"
+                "print(f'higher_order={args.higher_order_resampling}')\n",
+                encoding="utf-8",
+            )
+            fake_bin.chmod(fake_bin.stat().st_mode | stat.S_IXUSR)
+
+            result = run_totalsegmentator(
+                input_path=input_path,
+                output_root=tmp_path / "case",
+                task="craniofacial_structures",
+                requested_device="mps",
+                totalseg_bin=str(fake_bin),
+                copy_input=False,
+                skip_device_check=True,
+                higher_order_resampling=True,
+            )
+
+            self.assertEqual(result.status, "success")
+            raw_dir = tmp_path / "case" / "segmentations" / "raw_totalseg"
+            self.assertEqual((raw_dir / "higher_order.txt").read_text(encoding="utf-8"), "True")
+            run_log = (tmp_path / "case" / "logs" / "run.log").read_text(encoding="utf-8")
+            self.assertIn("--higher_order_resampling", run_log)
+            benchmark = json.loads(
+                (tmp_path / "case" / "logs" / "benchmark.json").read_text(encoding="utf-8")
+            )
+            self.assertFalse(benchmark["run"]["robust_crop"])
+            self.assertTrue(benchmark["run"]["higher_order_resampling"])
 
     def test_teeth_task_fails_with_clear_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -240,6 +289,7 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(benchmark["run"]["status"], "failed")
             self.assertFalse(benchmark["run"]["robust_crop"])
+            self.assertFalse(benchmark["run"]["higher_order_resampling"])
 
     def test_robust_crop_is_rejected_for_teeth_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

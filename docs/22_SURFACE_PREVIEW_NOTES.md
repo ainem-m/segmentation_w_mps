@@ -136,8 +136,18 @@ preview.warning: small structures may be under-sampled
 when `--preview-step-size` is greater than `4`.
 
 The viewer uses dependency-free inline WebGL when available, with a Canvas 2D
-fallback. Shading is computed from mesh normals in the browser and uses simple
-diffuse plus specular lighting for a glossy surface preview.
+fallback. Shading is computed from mesh normals in the browser. The default
+material preset is `rich`, which keeps the preview lightweight while adding
+wrapped diffuse light, two-layer specular highlights, rim light, warm material
+tint, and small emission/subsurface-style lifts for thin structures. Additional
+presets are available for standard, realistic, neutral, and high-contrast
+preview styling.
+
+The viewer can also host alternate geometry variants for preview experiments.
+When a payload provides `original` and `sdf` variants, the UI exposes an
+`元の形状` / `なめらか補完` switch and changes the displayed mesh buffers
+immediately without rerunning the SDF computation. Standard generated previews
+do not show this control because they only contain one geometry.
 
 Default visible layers:
 

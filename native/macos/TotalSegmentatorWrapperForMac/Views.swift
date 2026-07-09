@@ -419,6 +419,10 @@ struct RunSettingsView: View {
                     Text("サポート情報: 処理実行ファイルはアプリ専用環境内にあります。詳細ログには実行内容が記録されます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Toggle("境界を滑らかにする（高次補間）", isOn: $state.higherOrderResampling)
+                    Text("TotalSegmentatorの高次resamplingを使います。処理時間が増える場合があります。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

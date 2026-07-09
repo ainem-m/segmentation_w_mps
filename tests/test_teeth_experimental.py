@@ -23,6 +23,7 @@ class TeethExperimentalTests(unittest.TestCase):
             benchmark_path=Path("/case/logs/teeth_child_benchmark.json"),
             dry_run=True,
             force_split=True,
+            higher_order_resampling=True,
         )
 
         self.assertIn("totalsegmentator_wrapper_mac.teeth_mps_child", command)
@@ -30,6 +31,7 @@ class TeethExperimentalTests(unittest.TestCase):
         self.assertIn("--benchmark-json", command)
         self.assertIn("--dry-run", command)
         self.assertIn("--force-split", command)
+        self.assertIn("--higher-order-resampling", command)
 
     def test_patch_total_segmentator_device_converter_handles_strings_and_devices(self) -> None:
         ts_api = SimpleNamespace(convert_device_to_string=lambda device: None)
@@ -145,6 +147,7 @@ class TeethExperimentalTests(unittest.TestCase):
 
             def fake_run_command(**kwargs):
                 command = kwargs["command"]
+                self.assertIn("--higher-order-resampling", command)
                 benchmark_path = Path(command[command.index("--benchmark-json") + 1])
                 benchmark_path.parent.mkdir(parents=True, exist_ok=True)
                 benchmark_path.write_text(
@@ -175,6 +178,7 @@ class TeethExperimentalTests(unittest.TestCase):
                     skip_device_check=True,
                     experimental_teeth=True,
                     teeth_dry_run=True,
+                    higher_order_resampling=True,
                 )
 
             self.assertEqual(result.status, "success")
@@ -183,6 +187,8 @@ class TeethExperimentalTests(unittest.TestCase):
             )
             self.assertTrue(benchmark["experimental_teeth"]["enabled"])
             self.assertTrue(benchmark["experimental_teeth"]["dry_run"])
+            self.assertTrue(benchmark["run"]["higher_order_resampling"])
+            self.assertTrue(benchmark["experimental_teeth"]["higher_order_resampling"])
             self.assertTrue(benchmark["experimental_teeth"]["patch"]["patch_applied"])
             preflight = benchmark["experimental_teeth"]["craniofacial_preflight"]
             self.assertEqual(preflight["source"], "none")

@@ -226,6 +226,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"Library/Application Support"', texts["CommandBuilder.swift"])
         self.assertIn('"--totalseg-bin"', texts["CommandBuilder.swift"])
         self.assertIn('"--robust-crop"', texts["CommandBuilder.swift"])
+        self.assertIn('"--higher-order-resampling"', texts["CommandBuilder.swift"])
         self.assertIn('"--teeth-robust-craniofacial-preflight"', texts["CommandBuilder.swift"])
         self.assertIn("dicom-normalizer-audit", texts["CommandBuilder.swift"])
         self.assertIn("dicom-normalizer-convert-clean", texts["CommandBuilder.swift"])
