@@ -379,22 +379,14 @@ struct RunSettingsView: View {
     var body: some View {
         InfoCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("入力")
-                        .font(.headline)
-                        .frame(width: 80, alignment: .leading)
-                    Text(state.inputURL?.lastPathComponent ?? "未選択")
-                        .foregroundStyle(state.inputURL == nil ? .secondary : .primary)
-                    Spacer()
+                Text("実行前確認")
+                    .font(.headline)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(state.runReadinessItems) { item in
+                        RunReadinessRow(item: item)
+                    }
                 }
-                HStack {
-                    Text("保存先")
-                        .font(.headline)
-                        .frame(width: 80, alignment: .leading)
-                    Text(state.outputRootURL?.lastPathComponent ?? "アプリ専用フォルダ / runs")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
+                Divider()
                 Picker("実行内容", selection: $state.runMode) {
                     ForEach(RunMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -404,6 +396,29 @@ struct RunSettingsView: View {
                 Text(state.runMode.description)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Picker("backend", selection: $state.segmentationBackend) {
+                    ForEach(SegmentationBackend.allCases) { backend in
+                        Text(backend.rawValue).tag(backend)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(state.segmentationBackend.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if state.segmentationBackend == .dentalSegmentator {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("nnU-Net版DentalSegmentatorの5ラベルpreviewです。個別歯labelは出しません。", systemImage: "info.circle")
+                        Label("MPSで実行します。CPUやTotalSegmentatorへ自動切替しません。", systemImage: "cpu")
+                        Label(state.dentalSegmentatorModelStatusText, systemImage: state.isDentalSegmentatorModelReady ? "checkmark.circle" : "exclamationmark.triangle")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                if !state.runSettingsWarning.isEmpty {
+                    Label(state.runSettingsWarning, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 DisclosureGroup("詳細設定（通常は変更不要）") {
                     HStack {
                         Text("処理方法")
@@ -420,10 +435,14 @@ struct RunSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Toggle("境界を滑らかにする（高次補間）", isOn: $state.higherOrderResampling)
+                        .disabled(state.segmentationBackend == .dentalSegmentator)
                     Text("TotalSegmentatorの高次resamplingを使います。処理時間が増える場合があります。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Text("設定はこのMacに保存され、次回起動時に復元されます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -456,6 +475,22 @@ struct RunProgressView: View {
                 Text(state.runHeartbeatText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if state.resultKind == .inference {
+                InfoCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("現在の実行")
+                            .font(.headline)
+                        ForEach(state.activeRunContextItems) { item in
+                            RunReadinessRow(item: item)
+                        }
+                    }
+                }
+            }
+            if !state.failureReasonText.isEmpty {
+                Label(state.failureReasonText, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
             }
             if state.stopRequested {
                 Label("停止要求済み。終了処理中です。", systemImage: "hourglass")
@@ -615,6 +650,11 @@ struct ResultView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(state.resultMessage.isEmpty ? state.statusText : state.resultMessage)
                 .font(.title3.weight(.semibold))
+            if !state.failureReasonText.isEmpty {
+                Label(state.failureReasonText, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
             HStack {
                 if !state.dicomCleanCandidates.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
@@ -755,6 +795,17 @@ struct ResultView: View {
                 }
                 Spacer()
             }
+            if !state.resultLocationItems.isEmpty {
+                InfoCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("出力の場所")
+                            .font(.headline)
+                        ForEach(state.resultLocationItems) { item in
+                            RunLocationRow(item: item)
+                        }
+                    }
+                }
+            }
             if !state.summaryText.isEmpty {
                 Text("結果の要約")
                     .font(.headline)
@@ -776,6 +827,85 @@ struct ResultView: View {
                 .frame(minHeight: 160)
             }
         }
+    }
+}
+
+struct RunReadinessRow: View {
+    let item: RunReadinessItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.systemImage)
+                .foregroundStyle(rowColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 74, alignment: .leading)
+                    Text(item.value)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                }
+                if !item.detail.isEmpty {
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var rowColor: Color {
+        switch item.state {
+        case "ok": return .green
+        case "blocked": return .orange
+        default: return .secondary
+        }
+    }
+}
+
+struct RunLocationRow: View {
+    let item: RunLocationItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.exists ? item.systemImage : "exclamationmark.triangle")
+                .foregroundStyle(item.exists ? Color.secondary : Color.orange)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 124, alignment: .leading)
+                    Text(item.exists ? "作成済み" : "未作成")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(statusColor)
+                    Spacer(minLength: 0)
+                }
+                Text(item.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                if !item.detail.isEmpty {
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var statusColor: Color {
+        item.exists ? .secondary : .orange
     }
 }
 

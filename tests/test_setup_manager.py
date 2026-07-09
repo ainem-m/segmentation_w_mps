@@ -7,12 +7,14 @@ from pathlib import Path
 
 from totalsegmentator_wrapper_mac.setup_manager import (
     bundle_install_record,
+    build_dentalseg_weights_command,
     build_installed_doctor_command,
     build_setup_environment,
     build_totalseg_privacy_command,
     build_totalseg_weights_command,
     build_venv_command,
     build_wheel_install_command,
+    dentalsegmentator_model_root,
     default_app_support_dir,
     read_setup_state,
     run_setup,
@@ -59,6 +61,10 @@ class SetupManagerTests(unittest.TestCase):
                 build_installed_doctor_command(root / "env" / "bin" / "python", root / "doctor.json"),
                 build_totalseg_privacy_command(root / "env" / "bin" / "python"),
                 build_totalseg_weights_command(root / "env" / "bin" / "python"),
+                build_dentalseg_weights_command(
+                    root / "env" / "bin" / "python",
+                    root / "models" / "dentalsegmentator",
+                ),
             ]
 
             for command in commands:
@@ -264,6 +270,7 @@ class SetupManagerTests(unittest.TestCase):
 
             self.assertIn("-c", command)
             self.assertIn(str(root / "constraints.txt"), command)
+            self.assertIn(str(root / "app.whl") + "[dicom,mps,dentalseg]", command)
 
     def test_progress_log_records_user_visible_setup_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,6 +303,8 @@ class SetupManagerTests(unittest.TestCase):
             self.assertIn("SETUP_PROGRESS step=configure_totalseg_privacy", log_text)
             self.assertIn("SETUP_PROGRESS step=download_totalseg_weights", log_text)
             self.assertIn("初回実行に必要なモデルを取得しています。数分かかることがあります。", log_text)
+            self.assertIn("SETUP_PROGRESS step=download_dentalseg_weights", log_text)
+            self.assertIn("DentalSegmentatorモデルを取得しています。数分かかることがあります。", log_text)
             self.assertIn("SETUP_PROGRESS step=doctor", log_text)
             self.assertIn("SETUP_PROGRESS step=complete status=success", log_text)
 
@@ -336,6 +345,7 @@ class SetupManagerTests(unittest.TestCase):
             assert privacy_env is not None
             self.assertTrue(privacy_env["TOTALSEG_HOME_DIR"].startswith(str(result.paths.app_support)))
             self.assertTrue(privacy_env["TOTALSEG_WEIGHTS_PATH"].startswith(str(result.paths.app_support)))
+            self.assertTrue(privacy_env["nnUNet_results"].startswith(str(result.paths.app_support)))
 
     def test_setup_preloads_craniofacial_robust_crop_and_teeth_weights(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -365,7 +375,8 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             step_names = [step.name for step in result.steps]
             self.assertLess(step_names.index("configure_totalseg_privacy"), step_names.index("download_totalseg_weights"))
-            self.assertLess(step_names.index("download_totalseg_weights"), step_names.index("doctor"))
+            self.assertLess(step_names.index("download_totalseg_weights"), step_names.index("download_dentalseg_weights"))
+            self.assertLess(step_names.index("download_dentalseg_weights"), step_names.index("doctor"))
             weights_step = next(step for step in result.steps if step.name == "download_totalseg_weights")
             command_text = " ".join(weights_step.command)
             self.assertIn("download_pretrained_weights(115)", command_text)
@@ -374,6 +385,51 @@ class SetupManagerTests(unittest.TestCase):
             weights_env = next(env for cmd, env in commands if cmd == weights_step.command)
             assert weights_env is not None
             self.assertTrue(weights_env["TOTALSEG_WEIGHTS_PATH"].startswith(str(result.paths.app_support)))
+
+            dentalseg_step = next(step for step in result.steps if step.name == "download_dentalseg_weights")
+            dentalseg_command_text = " ".join(dentalseg_step.command)
+            self.assertIn("totalsegmentator_wrapper_mac.dentalsegmentator_setup", dentalseg_command_text)
+            self.assertIn("Dataset112_DentalSegmentator_v100.zip", dentalseg_command_text)
+            self.assertIn("b71cd5230168d28a4f71b078265b76be", dentalseg_command_text)
+            self.assertIn("Dataset112_DentalSegmentator", dentalseg_command_text)
+            dentalseg_env = next(env for cmd, env in commands if cmd == dentalseg_step.command)
+            assert dentalseg_env is not None
+            self.assertTrue(dentalseg_env["nnUNet_raw"].startswith(str(result.paths.app_support)))
+            self.assertTrue(dentalseg_env["nnUNet_preprocessed"].startswith(str(result.paths.app_support)))
+            self.assertTrue(dentalseg_env["nnUNet_results"].startswith(str(result.paths.app_support)))
+            self.assertIn(str(dentalsegmentator_model_root(result.paths)), dentalseg_env["nnUNet_results"])
+
+    def test_dentalseg_weight_failure_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wheel = home / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
+            constraints = home / "constraints.txt"
+            wheel.write_bytes(b"fake")
+            constraints.write_text("# pinned deps\n", encoding="utf-8")
+
+            def failing_dentalseg_runner(command: list[str], cwd: Path | None, env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+                command_text = " ".join(command)
+                if "dentalsegmentator_setup" in command_text:
+                    return subprocess.CompletedProcess(command, 1, "", "fake dentalseg failure")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                allow_network=True,
+                skip_mps_check=True,
+                runner=failing_dentalseg_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "dentalseg_weights_download_failed")
+            dentalseg_step = next(step for step in result.steps if step.name == "download_dentalseg_weights")
+            self.assertEqual(dentalseg_step.status, "failed")
+            self.assertIn("fake dentalseg failure", dentalseg_step.error or "")
 
     def test_setup_records_installed_bundle_from_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -481,6 +537,9 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(env["PYTHONPYCACHEPREFIX"], str(paths.cache_dir / "pycache"))
             self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
             self.assertTrue(env["TOTALSEG_HOME_DIR"].startswith(str(paths.app_support)))
+            self.assertTrue(env["nnUNet_raw"].startswith(str(paths.app_support)))
+            self.assertTrue(env["nnUNet_preprocessed"].startswith(str(paths.app_support)))
+            self.assertTrue(env["nnUNet_results"].startswith(str(paths.app_support)))
             self.assertTrue(env["TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER"].startswith(str(paths.app_support)))
 
 

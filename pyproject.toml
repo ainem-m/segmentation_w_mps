@@ -35,6 +35,9 @@ mps = [
   "torch>=2.3",
   "totalsegmentator==2.14.0",
 ]
+dentalseg = [
+  "nnunetv2>=2.8.1,<2.9",
+]
 dev = [
   "build>=1.2",
 ]

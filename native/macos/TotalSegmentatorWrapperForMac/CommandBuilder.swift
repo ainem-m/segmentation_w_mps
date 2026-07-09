@@ -16,6 +16,7 @@ enum SetupStep: String {
     case installWheel = "install_wheel"
     case configureTotalsegPrivacy = "configure_totalseg_privacy"
     case downloadTotalsegWeights = "download_totalseg_weights"
+    case downloadDentalsegWeights = "download_dentalseg_weights"
     case doctor
     case complete
     case setupException = "setup_exception"
@@ -30,7 +31,8 @@ enum SetupStep: String {
         case .syncBundle: return "アプリ更新反映"
         case .installWheel: return "依存パッケージ取得"
         case .configureTotalsegPrivacy: return "プライバシー設定"
-        case .downloadTotalsegWeights: return "モデル準備"
+        case .downloadTotalsegWeights: return "TotalSegmentatorモデル準備"
+        case .downloadDentalsegWeights: return "DentalSegmentatorモデル準備"
         case .doctor: return "MPS確認"
         case .complete: return "起動準備完了"
         case .setupException: return "エラー"
@@ -57,6 +59,8 @@ enum SetupStep: String {
             return "利用状況データの送信を止めています。"
         case .downloadTotalsegWeights:
             return "初回実行に必要なモデルを取得しています。"
+        case .downloadDentalsegWeights:
+            return "DentalSegmentatorモデルを取得しています。"
         case .doctor:
             return "PyTorch MPSとCT確認用部品を確認しています。"
         case .complete:
@@ -86,6 +90,29 @@ enum RunMode: String, CaseIterable, Identifiable {
             return "歯列と顎骨をまとめて確認する通常プレビューです。"
         case .individualTeeth:
             return "歯を1本ずつ分けます。ベータ機能のため時間がかかります。"
+        }
+    }
+}
+
+enum SegmentationBackend: String, CaseIterable, Identifiable {
+    case totalSegmentator = "TotalSegmentator"
+    case dentalSegmentator = "DentalSegmentator"
+
+    var id: String { rawValue }
+
+    var cliValue: String {
+        switch self {
+        case .totalSegmentator: return "totalsegmentator"
+        case .dentalSegmentator: return "dentalsegmentator"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .totalSegmentator:
+            return "既定のTotalSegmentator backendです。"
+        case .dentalSegmentator:
+            return "nnU-Net版DentalSegmentatorを使う実験的backendです。セットアップ済みのZenodoモデルをMPS指定で使います。"
         }
     }
 }
@@ -184,6 +211,16 @@ struct AppPaths {
     var launcherLog: URL { logs.appendingPathComponent("launcher.log") }
     var venvPython: URL { support.appendingPathComponent("env/bin/python") }
     var totalsegBinary: URL { support.appendingPathComponent("env/bin/TotalSegmentator") }
+    var dentalsegRoot: URL { support.appendingPathComponent("models/dentalsegmentator", isDirectory: true) }
+    var dentalsegRaw: URL { dentalsegRoot.appendingPathComponent("nnUNet_raw", isDirectory: true) }
+    var dentalsegPreprocessed: URL { dentalsegRoot.appendingPathComponent("nnUNet_preprocessed", isDirectory: true) }
+    var dentalsegResults: URL { dentalsegRoot.appendingPathComponent("nnUNet_results", isDirectory: true) }
+    var dentalsegModelMetadata: URL { dentalsegRoot.appendingPathComponent("dentalsegmentator_model.json") }
+    var dentalsegInstalledModel: URL {
+        dentalsegResults
+            .appendingPathComponent("Dataset112_DentalSegmentator_v100", isDirectory: true)
+            .appendingPathComponent("nnUNetTrainer__nnUNetPlans__3d_fullres", isDirectory: true)
+    }
     var manifest: URL { resources.appendingPathComponent("setup_manifest.json") }
     var constraints: URL { resources.appendingPathComponent("constraints/macos-arm64-py312.txt") }
     var normalizer: URL { resources.appendingPathComponent("bin/totalsegmentator-wrapper-dicom-normalizer") }
@@ -241,6 +278,9 @@ struct CommandBuilder {
         env["MPLCONFIGDIR"] = paths.cache.appendingPathComponent("matplotlib", isDirectory: true).path
         env["TOTALSEG_HOME_DIR"] = paths.support.appendingPathComponent("models/totalsegmentator", isDirectory: true).path
         env["TOTALSEG_WEIGHTS_PATH"] = paths.support.appendingPathComponent("models/totalsegmentator/weights", isDirectory: true).path
+        env["nnUNet_raw"] = paths.dentalsegRaw.path
+        env["nnUNet_preprocessed"] = paths.dentalsegPreprocessed.path
+        env["nnUNet_results"] = paths.dentalsegResults.path
         let venvBin = paths.support.appendingPathComponent("env/bin", isDirectory: true).path
         let resourceBin = paths.resources.appendingPathComponent("bin", isDirectory: true).path
         let existingPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -297,10 +337,12 @@ struct CommandBuilder {
         input: URL,
         output: URL,
         mode: RunMode,
+        backend: SegmentationBackend,
         device: String,
         higherOrderResampling: Bool,
         paths: AppPaths
     ) -> [String] {
+        let runDevice = backend == .dentalSegmentator ? "mps" : device
         var command = [
             python.path,
             "-m",
@@ -310,15 +352,27 @@ struct CommandBuilder {
             input.path,
             "--output",
             output.path,
+            "--backend",
+            backend.cliValue,
             "--task",
             mode.task,
             "--device",
-            device,
+            runDevice,
             "--totalseg-bin",
             paths.totalsegBinary.path,
             "--no-copy-input",
         ]
-        if mode == .individualTeeth {
+        if backend == .dentalSegmentator {
+            command.append("--dentalseg-nnunet-raw")
+            command.append(paths.dentalsegRaw.path)
+            command.append("--dentalseg-nnunet-preprocessed")
+            command.append(paths.dentalsegPreprocessed.path)
+            command.append("--dentalseg-nnunet-results")
+            command.append(paths.dentalsegResults.path)
+            command.append("--dentalseg-fold")
+            command.append("0")
+            command.append("--dentalseg-disable-tta")
+        } else if mode == .individualTeeth {
             command.append("--experimental-teeth")
             command.append("--teeth-crop-margin-mm")
             command.append(defaultTeethMarginMM)
@@ -326,7 +380,7 @@ struct CommandBuilder {
         } else {
             command.append("--robust-crop")
         }
-        if higherOrderResampling {
+        if backend == .totalSegmentator && higherOrderResampling {
             command.append("--higher-order-resampling")
         }
         return command
@@ -495,6 +549,7 @@ func setupReasonToJapanese(_ reason: String?) -> String {
     case "normalizer_missing": return "CT確認用部品の確認に失敗しました。"
     case "totalseg_privacy_config_failed": return "プライバシー設定に失敗しました。"
     case "weights_download_failed": return "モデルの取得に失敗しました。"
+    case "dentalseg_weights_download_failed": return "DentalSegmentatorモデルの取得に失敗しました。"
     case "bundle_manifest_invalid": return "アプリ同梱manifestを読めません。"
     case "setup_exception": return "セットアップ中にエラーが発生しました。"
     case .some(let value): return "未対応のエラーです: \(value)"
@@ -510,7 +565,7 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
         return "このMacでMPS確認に失敗しました。Apple Silicon Macか、macOS/PyTorch環境を確認してください。"
     case "python312_missing", "wheel_missing", "constraints_missing", "bundle_manifest_invalid":
         return "アプリをDMGからもう一度コピーしてから起動してください。改善しない場合はログ回収コマンドを実行してください。"
-    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed", "weights_download_failed":
+    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed", "weights_download_failed", "dentalseg_weights_download_failed":
         return "ネットワークを確認して再試行してください。改善しない場合はDMG内のログ回収コマンドを実行してください。"
     case "normalizer_missing":
         return "CT確認用部品が見つかりません。アプリをDMGからもう一度コピーしてください。"

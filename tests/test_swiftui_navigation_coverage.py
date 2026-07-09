@@ -70,6 +70,8 @@ VIEW_REQUIRED_ACTIONS = {
         "停止",
         "停止要求済み",
         "終了処理中",
+        "activeRunContextItems",
+        "現在の実行",
     },
     "CTPreviewView": {
         "acceptPreparedCTPreview",
@@ -102,6 +104,8 @@ VIEW_REQUIRED_ACTIONS = {
         "Slicerで開くファイルを書き出す",
         "詳細ログを表示",
         "最初に戻る",
+        "resultLocationItems",
+        "出力の場所",
     },
 }
 
@@ -374,7 +378,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("CommandBuilder.surfacePreviewCommand", regenerate)
         self.assertIn("CommandBuilder.summaryCommand", regenerate)
         self.assertIn("stoppedBeforeSummary", regenerate)
-        self.assertIn("CT解析は再実行せず", regenerate)
+        self.assertIn("labelmap作成は再実行せず", regenerate)
         self.assertNotIn("CommandBuilder.runCommand", regenerate)
 
         can_regenerate = _computed_property_body(self.app_state, "canRegenerateSurfacePreview")
@@ -449,14 +453,102 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         settings = _struct_body(self.views, "RunSettingsView")
         self.assertIn("$state.higherOrderResampling", settings)
         self.assertIn("境界を滑らかにする（高次補間）", settings)
+        self.assertIn("state.segmentationBackend == .dentalSegmentator", settings)
 
         start_run = _function_body(self.app_state, "startRun")
         self.assertIn("higherOrderResampling: higherOrderResampling", start_run)
 
         run_command = _function_body(self.command_builder, "runCommand")
         self.assertIn("higherOrderResampling: Bool", self.command_builder)
-        self.assertIn("if higherOrderResampling", run_command)
+        self.assertIn("backend == .totalSegmentator && higherOrderResampling", run_command)
         self.assertIn("--higher-order-resampling", run_command)
+
+    def test_dentalsegmentator_backend_is_selectable_and_generates_nnunet_command(self) -> None:
+        settings = _struct_body(self.views, "RunSettingsView")
+        self.assertIn("$state.segmentationBackend", settings)
+        self.assertIn("SegmentationBackend.allCases", settings)
+        self.assertIn("runSettingsWarning", settings)
+        self.assertIn("dentalSegmentatorModelStatusText", settings)
+        self.assertIn("CPUやTotalSegmentatorへ自動切替しません", settings)
+
+        app_state = self.app_state
+        self.assertIn("@Published var segmentationBackend", app_state)
+        self.assertIn("canRunSelectedSettings", app_state)
+        self.assertIn("runPreflightBlockingReason", app_state)
+        self.assertIn("isDentalSegmentatorModelReady", app_state)
+        self.assertIn("dentalsegInstalledModel", app_state)
+        self.assertIn("DentalSegmentator backend", app_state)
+        self.assertIn('device != "mps"', app_state)
+        self.assertIn("このMac previewではMPS専用", app_state)
+        self.assertIn("DentalSegmentatorモデルがまだ準備されていません", app_state)
+        self.assertIn("Zenodo Dataset112_DentalSegmentator_v100", app_state)
+        self.assertNotIn("nnunetv2とZenodoモデルをApp Support配下に準備していない", app_state)
+        start_run = _function_body(app_state, "startRun")
+        self.assertIn("backend: segmentationBackend", start_run)
+        self.assertIn("backendForRun", start_run)
+
+        command_builder = self.command_builder
+        self.assertIn("enum SegmentationBackend", command_builder)
+        self.assertIn("セットアップ済みのZenodoモデル", command_builder)
+        self.assertIn("nnUNet_raw", command_builder)
+        self.assertIn("nnUNet_results", command_builder)
+        run_command = _function_body(command_builder, "runCommand")
+        self.assertIn('let runDevice = backend == .dentalSegmentator ? "mps" : device', run_command)
+        self.assertIn("--backend", run_command)
+        self.assertIn("backend.cliValue", run_command)
+        self.assertIn("--dentalseg-nnunet-results", run_command)
+        self.assertIn("--dentalseg-fold", run_command)
+        self.assertIn("--dentalseg-disable-tta", run_command)
+
+    def test_run_settings_are_persisted_and_restored(self) -> None:
+        app_state = self.app_state
+        self.assertIn("private enum UserSettingKey", app_state)
+        self.assertIn("restoreUserSettings()", app_state)
+        self.assertIn("saveUserSettings()", app_state)
+        self.assertIn("UserDefaults.standard", app_state)
+        self.assertIn("UserSettingKey.segmentationBackend", app_state)
+        self.assertIn("UserSettingKey.outputRootURL", app_state)
+        self.assertIn("defaults.set(segmentationBackend.rawValue", app_state)
+        self.assertIn("defaults.set(outputRootURL.path", app_state)
+
+    def test_run_readiness_and_result_locations_are_visible(self) -> None:
+        settings = _struct_body(self.views, "RunSettingsView")
+        self.assertIn("実行前確認", settings)
+        self.assertIn("state.runReadinessItems", settings)
+        self.assertIn("RunReadinessRow", settings)
+
+        progress = _struct_body(self.views, "RunProgressView")
+        self.assertIn("state.resultKind == .inference", progress)
+        self.assertIn("state.activeRunContextItems", progress)
+        self.assertIn("failureReasonText", progress)
+
+        result = _struct_body(self.views, "ResultView")
+        self.assertIn("state.resultLocationItems", result)
+        self.assertIn("RunLocationRow", result)
+        self.assertIn("failureReasonText", result)
+
+        app_state = self.app_state
+        self.assertIn("struct RunReadinessItem", app_state)
+        self.assertIn("struct RunLocationItem", app_state)
+        self.assertIn("runReadinessItems", app_state)
+        self.assertIn("activeRunContextItems", app_state)
+        self.assertIn("resultLocationItems", app_state)
+        self.assertIn("expectedResultLabelmapURL", app_state)
+        self.assertIn("dentalsegmentator_multilabel.nii.gz", app_state)
+        self.assertIn("surface_preview/index.html", app_state)
+
+    def test_run_failure_reason_is_extracted_from_case_log(self) -> None:
+        start_run = _function_body(self.app_state, "startRun")
+        self.assertIn("runFailureReason(from: logURL)", start_run)
+        self.assertIn("failureReasonText", start_run)
+        self.assertIn("3D preview生成だけ", start_run)
+        self.assertIn("実行コマンドが完了できませんでした", start_run)
+
+        self.assertIn("func runFailureReason", self.app_state)
+        failure_body = _function_body(self.app_state, "runFailureReason")
+        self.assertIn("DENTALSEGMENTATOR FAILED", failure_body)
+        self.assertIn("DEVICE CHECK FAILED", failure_body)
+        self.assertIn("returncode=", failure_body)
 
     def test_log_drawer_refreshes_current_case_log_when_opened(self) -> None:
         refresh_log = _function_body(self.app_state, "refreshLog")

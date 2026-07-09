@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -162,6 +163,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("データ: <code id=\"dataName\"></code>", html)
             self.assertNotIn("inputName", html)
             self.assertIn("形状: <code id=\"geometryModeLabel\"></code>", html)
+            self.assertIn("表面平滑化: <code id=\"smoothingModeLabel\"></code>", html)
             self.assertIn("id=\"geometryControl\"", html)
             self.assertIn("id=\"displayControls\"", html)
             self.assertIn("id=\"geometryOriginal\"", html)
@@ -181,6 +183,8 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("全体に合わせる", html)
             self.assertIn("表面平滑化", html)
             self.assertIn("id=\"smoothingPreset\"", html)
+            self.assertIn("smoothingModeLabel", html)
+            self.assertNotIn("getElementById('smooth')", html)
             self.assertIn("smoothingPresets", html)
             self.assertIn("applySmoothingPreset", html)
             self.assertIn("setSmoothingPreset", html)
@@ -230,6 +234,9 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("usesFrontShellTransparency", html)
             self.assertIn("gl.colorMask(false, false, false, false)", html)
             self.assertIn("gl.blendFuncSeparate", html)
+            defined_ids = set(re.findall(r'id="([^"]+)"', html))
+            referenced_static_ids = set(re.findall(r"getElementById\('([^']+)'\)", html))
+            self.assertLessEqual(referenced_static_ids, defined_ids)
 
     def test_surface_preview_records_custom_preview_step_size_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -303,6 +303,9 @@ func createRuntimeDirectories(paths: AppPaths) {
         paths.cache.appendingPathComponent("pycache", isDirectory: true),
         paths.runs,
         paths.support.appendingPathComponent("models", isDirectory: true),
+        paths.dentalsegRaw,
+        paths.dentalsegPreprocessed,
+        paths.dentalsegResults,
     ] {
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
     }

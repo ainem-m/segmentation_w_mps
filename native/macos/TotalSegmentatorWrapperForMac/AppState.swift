@@ -109,6 +109,32 @@ struct CTPreviewSlice: Identifiable, Equatable {
     }
 }
 
+struct RunReadinessItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let value: String
+    let detail: String
+    let systemImage: String
+    let state: String
+}
+
+struct RunLocationItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let path: String
+    let detail: String
+    let systemImage: String
+    let exists: Bool
+}
+
+private enum UserSettingKey {
+    static let runMode = "\(appSupportName).runMode"
+    static let segmentationBackend = "\(appSupportName).segmentationBackend"
+    static let device = "\(appSupportName).device"
+    static let higherOrderResampling = "\(appSupportName).higherOrderResampling"
+    static let outputRootURL = "\(appSupportName).outputRootURL"
+}
+
 final class AppState: ObservableObject {
     let paths: AppPaths
     private let runner = ProcessRunner()
@@ -137,10 +163,21 @@ final class AppState: ObservableObject {
     @Published var inputURL: URL?
     @Published var inputSource: InputSource = .none
     @Published var outputURL: URL?
-    @Published var outputRootURL: URL?
-    @Published var runMode: RunMode = .archPreview
-    @Published var device = "mps"
-    @Published var higherOrderResampling = false
+    @Published var outputRootURL: URL? {
+        didSet { saveUserSettings() }
+    }
+    @Published var runMode: RunMode = .archPreview {
+        didSet { saveUserSettings() }
+    }
+    @Published var segmentationBackend: SegmentationBackend = .totalSegmentator {
+        didSet { saveUserSettings() }
+    }
+    @Published var device = "mps" {
+        didSet { saveUserSettings() }
+    }
+    @Published var higherOrderResampling = false {
+        didSet { saveUserSettings() }
+    }
     @Published var statusText = "待機中"
     @Published var progressText = "まだ実行していません。"
     @Published var runHeartbeatText = ""
@@ -149,6 +186,10 @@ final class AppState: ObservableObject {
     @Published var isRunning = false
     @Published var stopRequested = false
     @Published var surfacePreviewFailed = false
+    @Published var failureReasonText = ""
+    @Published var activeRunBackend: SegmentationBackend = .totalSegmentator
+    @Published var activeRunMode: RunMode = .archPreview
+    @Published var activeRunDevice = "mps"
     @Published var resultMessage = ""
     @Published var summaryText = ""
     @Published var dicomSummaryText = ""
@@ -183,7 +224,7 @@ final class AppState: ObservableObject {
     }
 
     var canStartSampleRun: Bool {
-        !isRunning && inputSource == .sample && inputURL != nil
+        !isRunning && inputSource == .sample && inputURL != nil && canRunSelectedSettings
     }
 
     var isSampleInputSelected: Bool {
@@ -204,7 +245,239 @@ final class AppState: ObservableObject {
 
     var canStartOwnDataRun: Bool {
         guard !isRunning else { return false }
-        return inputSource == .nifti
+        return inputSource == .nifti && canRunSelectedSettings
+    }
+
+    var effectiveRunDevice: String {
+        segmentationBackend == .dentalSegmentator ? "mps" : device
+    }
+
+    var activeRunTaskText: String {
+        "\(activeRunMode.rawValue) / task=\(activeRunMode.task)"
+    }
+
+    var activeRunDeviceText: String {
+        activeRunBackend == .dentalSegmentator ? "mps（CPUへ自動切替しません）" : activeRunDevice
+    }
+
+    var canRunSelectedSettings: Bool {
+        runPreflightBlockingReason.isEmpty
+    }
+
+    var runSettingsWarning: String {
+        if !runPreflightBlockingReason.isEmpty {
+            return runPreflightBlockingReason
+        }
+        if segmentationBackend == .dentalSegmentator {
+            return "DentalSegmentator backendは実験的opt-inです。nnU-Net版の5ラベルpreviewをMPSで実行し、CPUやTotalSegmentatorへ自動切替しません。"
+        }
+        return ""
+    }
+
+    var runPreflightBlockingReason: String {
+        if segmentationBackend == .dentalSegmentator && runMode == .individualTeeth {
+            return "DentalSegmentatorは歯列・顎骨の5ラベルpreview用です。個別歯ベータはTotalSegmentator backendを選んでください。"
+        }
+        if segmentationBackend == .dentalSegmentator && device != "mps" {
+            return "DentalSegmentator backendはこのMac previewではMPS専用です。処理方法を「推奨 (mps)」にしてください。"
+        }
+        if segmentationBackend == .dentalSegmentator && !isDentalSegmentatorModelReady {
+            return "DentalSegmentatorモデルがまだ準備されていません。セットアップを完了してから実行してください。"
+        }
+        return ""
+    }
+
+    var isDentalSegmentatorModelReady: Bool {
+        FileManager.default.fileExists(atPath: paths.dentalsegInstalledModel.path)
+    }
+
+    var dentalSegmentatorModelStatusText: String {
+        if setupRunning && setupStep == .downloadDentalsegWeights {
+            return "モデル準備中"
+        }
+        if isDentalSegmentatorModelReady {
+            return "モデル準備済み"
+        }
+        return "モデル未準備"
+    }
+
+    var dentalSegmentatorModelDetailText: String {
+        if isDentalSegmentatorModelReady {
+            return paths.dentalsegInstalledModel.path
+        }
+        return "初回セットアップでZenodo Dataset112_DentalSegmentator_v100をApp Supportへ準備します。"
+    }
+
+    var selectedModelStatusText: String {
+        if segmentationBackend == .dentalSegmentator {
+            return dentalSegmentatorModelStatusText
+        }
+        return FileManager.default.fileExists(atPath: paths.totalsegBinary.path) ? "セットアップ済み" : "セットアップ未完了"
+    }
+
+    var selectedModelDetailText: String {
+        if segmentationBackend == .dentalSegmentator {
+            return dentalSegmentatorModelDetailText
+        }
+        return "TotalSegmentatorモデルをApp Support配下から使います。"
+    }
+
+    var selectedOutputRootURL: URL {
+        outputRootURL ?? paths.runs
+    }
+
+    var runReadinessItems: [RunReadinessItem] {
+        let inputSelected = inputURL != nil && (inputSource == .sample || inputSource == .nifti)
+        let modelBlocked = segmentationBackend == .dentalSegmentator && !isDentalSegmentatorModelReady
+        let deviceBlocked = segmentationBackend == .dentalSegmentator && device != "mps"
+        let taskBlocked = segmentationBackend == .dentalSegmentator && runMode == .individualTeeth
+        let deviceValue = deviceBlocked ? "\(device)（MPSに変更してください）" : effectiveRunDevice
+        return [
+            RunReadinessItem(
+                id: "input",
+                title: "入力",
+                value: inputURL?.lastPathComponent ?? "未選択",
+                detail: inputSelected ? (inputURL?.path ?? "") : "SampleまたはCTファイルを選んでください。",
+                systemImage: "doc.viewfinder",
+                state: inputSelected ? "ok" : "blocked"
+            ),
+            RunReadinessItem(
+                id: "backend",
+                title: "Backend",
+                value: segmentationBackend.rawValue,
+                detail: segmentationBackend == .dentalSegmentator ? "明示opt-inの実験的backendです。TotalSegmentatorの代替fallbackではありません。" : "既定のTotalSegmentator backendです。",
+                systemImage: "switch.2",
+                state: "ok"
+            ),
+            RunReadinessItem(
+                id: "task",
+                title: "Task",
+                value: runMode.rawValue,
+                detail: "CLI task: \(runMode.task)",
+                systemImage: taskBlocked ? "exclamationmark.triangle" : "list.bullet.rectangle",
+                state: taskBlocked ? "blocked" : "ok"
+            ),
+            RunReadinessItem(
+                id: "device",
+                title: "Device",
+                value: deviceValue,
+                detail: segmentationBackend == .dentalSegmentator ? "MPS固定。CPUへ自動切替しません。" : "TotalSegmentatorへ渡す処理方法です。",
+                systemImage: deviceBlocked ? "exclamationmark.triangle" : "cpu",
+                state: deviceBlocked ? "blocked" : "ok"
+            ),
+            RunReadinessItem(
+                id: "model",
+                title: "Model",
+                value: selectedModelStatusText,
+                detail: selectedModelDetailText,
+                systemImage: modelBlocked ? "exclamationmark.triangle" : "shippingbox",
+                state: modelBlocked ? "blocked" : "ok"
+            ),
+            RunReadinessItem(
+                id: "output",
+                title: "保存先",
+                value: selectedOutputRootURL.lastPathComponent,
+                detail: selectedOutputRootURL.path,
+                systemImage: "folder",
+                state: "ok"
+            ),
+            RunReadinessItem(
+                id: "log",
+                title: "ログ",
+                value: "実行ごとの logs/run.log",
+                detail: "実行開始後、出力caseフォルダ内に記録します。",
+                systemImage: "terminal",
+                state: "info"
+            ),
+        ]
+    }
+
+    var activeRunContextItems: [RunReadinessItem] {
+        [
+            RunReadinessItem(
+                id: "backend",
+                title: "Backend",
+                value: activeRunBackend.rawValue,
+                detail: activeRunBackend == .dentalSegmentator ? "MPSで実行中。CPUやTotalSegmentatorへ自動切替しません。" : "TotalSegmentator backendで実行中です。",
+                systemImage: "switch.2",
+                state: "ok"
+            ),
+            RunReadinessItem(
+                id: "task",
+                title: "Task",
+                value: activeRunTaskText,
+                detail: "研究・教育目的の非臨床3D previewを作成しています。",
+                systemImage: "list.bullet.rectangle",
+                state: "ok"
+            ),
+            RunReadinessItem(
+                id: "device",
+                title: "Device",
+                value: activeRunDeviceText,
+                detail: "実行コマンドと詳細ログにも記録されます。",
+                systemImage: "cpu",
+                state: "ok"
+            ),
+            RunReadinessItem(
+                id: "output",
+                title: "出力先",
+                value: outputURL?.lastPathComponent ?? "未作成",
+                detail: outputURL?.path ?? "出力caseフォルダを準備しています。",
+                systemImage: "folder",
+                state: "info"
+            ),
+            RunReadinessItem(
+                id: "log",
+                title: "ログ",
+                value: currentLogURL.lastPathComponent,
+                detail: currentLogURL.path,
+                systemImage: "terminal",
+                state: "info"
+            ),
+        ]
+    }
+
+    var resultLocationItems: [RunLocationItem] {
+        guard resultKind == .inference, let outputURL else {
+            return []
+        }
+        let labelmap = expectedResultLabelmapURL(caseDir: outputURL)
+        let preview = outputURL.appendingPathComponent("surface_preview/index.html")
+        let log = outputURL.appendingPathComponent("logs/run.log")
+        return [
+            RunLocationItem(
+                id: "output",
+                title: "結果フォルダ",
+                path: outputURL.path,
+                detail: "case全体の出力先です。",
+                systemImage: "folder",
+                exists: FileManager.default.fileExists(atPath: outputURL.path)
+            ),
+            RunLocationItem(
+                id: "labelmap",
+                title: "3D preview用labelmap",
+                path: labelmap.path,
+                detail: activeRunBackend == .dentalSegmentator ? "DentalSegmentatorの5ラベル出力です。" : "3D preview生成に使うlabelmapです。",
+                systemImage: "square.stack.3d.up",
+                exists: FileManager.default.fileExists(atPath: labelmap.path)
+            ),
+            RunLocationItem(
+                id: "preview",
+                title: "3D preview",
+                path: preview.path,
+                detail: "ブラウザで開くoffline HTML viewerです。",
+                systemImage: "cube.transparent",
+                exists: FileManager.default.fileExists(atPath: preview.path)
+            ),
+            RunLocationItem(
+                id: "log",
+                title: "実行ログ",
+                path: log.path,
+                detail: "backend、device、失敗理由の確認に使います。",
+                systemImage: "terminal",
+                exists: FileManager.default.fileExists(atPath: log.path)
+            ),
+        ]
     }
 
     var canRegenerateSurfacePreview: Bool {
@@ -265,7 +538,10 @@ final class AppState: ObservableObject {
     init(paths: AppPaths = .current()) {
         self.paths = paths
         createRuntimeDirectories(paths: paths)
-        outputRootURL = paths.runs
+        restoreUserSettings()
+        if outputRootURL == nil {
+            outputRootURL = paths.runs
+        }
         if FileManager.default.fileExists(atPath: paths.sampleInput.path) {
             inputURL = paths.sampleInput
             inputSource = .sample
@@ -275,6 +551,44 @@ final class AppState: ObservableObject {
 
     deinit {
         logTimer?.invalidate()
+    }
+
+    private func restoreUserSettings() {
+        let defaults = UserDefaults.standard
+        if let rawMode = defaults.string(forKey: UserSettingKey.runMode),
+           let restoredMode = RunMode(rawValue: rawMode) {
+            runMode = restoredMode
+        }
+        if let rawBackend = defaults.string(forKey: UserSettingKey.segmentationBackend),
+           let restoredBackend = SegmentationBackend(rawValue: rawBackend) {
+            segmentationBackend = restoredBackend
+        }
+        if let restoredDevice = defaults.string(forKey: UserSettingKey.device),
+           ["mps", "cpu", "auto"].contains(restoredDevice) {
+            device = restoredDevice
+        }
+        if defaults.object(forKey: UserSettingKey.higherOrderResampling) != nil {
+            higherOrderResampling = defaults.bool(forKey: UserSettingKey.higherOrderResampling)
+        }
+        if let outputPath = defaults.string(forKey: UserSettingKey.outputRootURL), !outputPath.isEmpty {
+            let restoredOutput = URL(fileURLWithPath: outputPath, isDirectory: true).standardizedFileURL
+            outputRootURL = isDirectory(restoredOutput) ? restoredOutput : paths.runs
+        } else {
+            outputRootURL = paths.runs
+        }
+    }
+
+    private func saveUserSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(runMode.rawValue, forKey: UserSettingKey.runMode)
+        defaults.set(segmentationBackend.rawValue, forKey: UserSettingKey.segmentationBackend)
+        defaults.set(device, forKey: UserSettingKey.device)
+        defaults.set(higherOrderResampling, forKey: UserSettingKey.higherOrderResampling)
+        if let outputRootURL {
+            defaults.set(outputRootURL.path, forKey: UserSettingKey.outputRootURL)
+        } else {
+            defaults.removeObject(forKey: UserSettingKey.outputRootURL)
+        }
     }
 
     func refreshLaunchState() {
@@ -369,6 +683,7 @@ final class AppState: ObservableObject {
         progressText = "Sample 1で3Dプレビューを作成できます。自分のCTには触れません。"
         runHeartbeatText = ""
         runProgressFraction = nil
+        failureReasonText = ""
         screen = .sample
         selectedStep = 1
     }
@@ -409,6 +724,7 @@ final class AppState: ObservableObject {
         dicomSummaryText = ""
         summaryText = ""
         resultMessage = ""
+        failureReasonText = ""
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
         screen = .ownData
@@ -464,6 +780,7 @@ final class AppState: ObservableObject {
         logText = ""
         dicomSummaryText = ""
         summaryText = ""
+        failureReasonText = ""
         resultKind = .dicomAudit
         statusText = "CT確認中"
         progressText = "撮影データの種類を確認しています。プレビュー作成はまだ開始していません。"
@@ -742,6 +1059,11 @@ final class AppState: ObservableObject {
             progressText = "SampleまたはCTを選んでください。"
             return
         }
+        guard canRunSelectedSettings else {
+            statusText = "設定を確認してください。"
+            progressText = runSettingsWarning
+            return
+        }
         guard FileManager.default.fileExists(atPath: paths.venvPython.path) else {
             statusText = "セットアップが必要です。"
             screen = .setup
@@ -755,10 +1077,18 @@ final class AppState: ObservableObject {
         summaryText = ""
         dicomSummaryText = ""
         resultMessage = ""
+        failureReasonText = ""
         resultKind = .inference
         surfacePreviewFailed = false
+        activeRunBackend = segmentationBackend
+        activeRunMode = runMode
+        activeRunDevice = effectiveRunDevice
         statusText = "3Dプレビュー作成中"
-        progressText = runMode == .individualTeeth ? "歯を1本ずつ分けています。" : "歯列と顎骨をまとめて表示する結果を作成しています。"
+        if segmentationBackend == .dentalSegmentator {
+            progressText = "DentalSegmentator backendをMPSで実行し、歯列と顎骨の3D preview用labelmapを作成しています。CPUへ自動切替しません。"
+        } else {
+            progressText = runMode == .individualTeeth ? "歯を1本ずつ分けています。" : "歯列と顎骨をまとめて表示する結果を作成しています。"
+        }
         resetRunProgressTracking()
         runProgressFraction = nil
         isRunning = true
@@ -775,6 +1105,7 @@ final class AppState: ObservableObject {
             input: inputURL,
             output: output,
             mode: runMode,
+            backend: segmentationBackend,
             device: device,
             higherOrderResampling: higherOrderResampling,
             paths: paths
@@ -783,12 +1114,14 @@ final class AppState: ObservableObject {
         let runner = self.runner
         let venvPython = paths.venvPython
         let modeForRun = runMode
+        let backendForRun = segmentationBackend
+        let deviceForRun = effectiveRunDevice
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc = runner.run(command, environment: environment, logURL: logURL)
             var surfacePreviewRC: Int32? = nil
             if rc == 0 && self?.stopRequested != true {
-                let previewLabel = modeForRun == .individualTeeth ? "個別歯" : "歯列・顎骨"
+                let previewLabel = backendForRun == .dentalSegmentator ? "DentalSegmentator" : (modeForRun == .individualTeeth ? "個別歯" : "歯列・顎骨")
                 DispatchQueue.main.async {
                     self?.statusText = "3Dプレビュー作成中"
                     self?.progressText = "ブラウザで開ける\(previewLabel)3Dプレビューを作成しています。"
@@ -817,6 +1150,9 @@ final class AppState: ObservableObject {
                 self?.activeLogURL = nil
                 self?.resultLogURL = logURL
                 self?.runHeartbeatText = ""
+                self?.activeRunBackend = backendForRun
+                self?.activeRunMode = modeForRun
+                self?.activeRunDevice = deviceForRun
                 if rc == 0 && !stopped {
                     self?.runProgressFraction = 1.0
                 }
@@ -827,21 +1163,27 @@ final class AppState: ObservableObject {
                     self?.progressText = "処理を停止しました。入力は変更されていません。"
                     self?.resultMessage = "処理を停止しました。必要ならもう一度実行できます。"
                 } else if rc == 0 && surfacePreviewRC == 0 {
+                    self?.failureReasonText = ""
                     self?.statusText = "完了"
                     self?.progressText = "結果と3Dプレビューを確認できます。"
                     self?.resultMessage = "実行が完了し、3Dプレビューを作成しました。"
                 } else if rc == 0 && surfacePreviewRC != nil {
+                    let reason = runFailureReason(from: logURL)
+                    self?.failureReasonText = reason.isEmpty ? "3D preview生成だけが完了できませんでした。詳細ログを確認してください。" : reason
                     self?.surfacePreviewFailed = true
                     self?.statusText = "完了（3Dプレビュー未作成）"
-                    self?.progressText = "CT解析は完了しました。3Dプレビューだけ作り直せます。"
-                    self?.resultMessage = "処理結果は保存されています。3Dプレビュー生成だけ失敗しました。"
+                    self?.progressText = "3D preview用の出力作成は完了しました。3D previewだけ作り直せます。"
+                    self?.resultMessage = "処理結果は保存されています。3D preview生成だけ失敗しました。"
                 } else if rc == 0 {
+                    self?.failureReasonText = ""
                     self?.statusText = "完了"
                     self?.progressText = "結果を確認できます。"
                     self?.resultMessage = "実行が完了しました。"
                 } else {
+                    let reason = runFailureReason(from: logURL)
+                    self?.failureReasonText = reason.isEmpty ? "実行コマンドが完了できませんでした。詳細ログを確認してください。" : reason
                     self?.statusText = "処理を完了できませんでした"
-                    self?.progressText = "入力は変更されていません。もう一度実行するか、詳細ログを確認してください。"
+                    self?.progressText = self?.failureReasonText ?? "入力は変更されていません。もう一度実行するか、詳細ログを確認してください。"
                     self?.resultMessage = "処理を完了できませんでした。入力は変更されていません。もう一度実行するか、詳細ログを確認してください。"
                 }
                 self?.summaryText = summary
@@ -878,6 +1220,7 @@ final class AppState: ObservableObject {
         dicomSummaryText = ""
         summaryText = ""
         resultMessage = ""
+        failureReasonText = ""
         screen = .ownData
         selectedStep = 1
         statusText = "プレビュー作成準備完了"
@@ -917,6 +1260,7 @@ final class AppState: ObservableObject {
         progressText = "Sampleか自分のCTを選んでください。"
         runHeartbeatText = ""
         runProgressFraction = nil
+        failureReasonText = ""
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
         dicomViewerExportCandidates = []
@@ -936,6 +1280,7 @@ final class AppState: ObservableObject {
         selectedDicomSeriesID = nil
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
+        failureReasonText = ""
         clearPendingCTPreview()
         screen = .sample
         selectedStep = 1
@@ -956,6 +1301,7 @@ final class AppState: ObservableObject {
         selectedDicomSeriesID = nil
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
+        failureReasonText = ""
         clearPendingCTPreview()
         screen = .ownData
         selectedStep = 1
@@ -1019,8 +1365,9 @@ final class AppState: ObservableObject {
         }
         let logURL = outputURL.appendingPathComponent("logs/run.log")
         resultKind = .inference
+        failureReasonText = ""
         statusText = "3Dプレビュー作成中"
-        progressText = "CT解析は再実行せず、3Dプレビューだけ作成しています。"
+        progressText = "labelmap作成は再実行せず、3Dプレビューだけ作成しています。"
         runHeartbeatText = "STLとHTML viewerを生成しています。数十秒かかることがあります。"
         runProgressFraction = nil
         isRunning = true
@@ -1059,11 +1406,14 @@ final class AppState: ObservableObject {
                     self?.resultMessage = "3Dプレビューの再生成を停止しました。"
                 } else if rc == 0 {
                     self?.surfacePreviewFailed = false
+                    self?.failureReasonText = ""
                     self?.statusText = "完了"
                     self?.progressText = "3Dプレビューを確認できます。"
                     self?.resultMessage = "3Dプレビューを再生成しました。"
                 } else {
+                    let reason = runFailureReason(from: logURL)
                     self?.surfacePreviewFailed = true
+                    self?.failureReasonText = reason.isEmpty ? "3D preview生成が完了できませんでした。詳細ログを確認してください。" : reason
                     self?.statusText = "3Dプレビュー未作成"
                     self?.progressText = "3Dプレビュー生成に失敗しました。詳細ログを確認してください。"
                     self?.resultMessage = "3Dプレビュー生成に失敗しました。処理結果は保存されています。"
@@ -1313,6 +1663,25 @@ final class AppState: ObservableObject {
         startLogTimer()
     }
 
+    private func expectedResultLabelmapURL(caseDir: URL) -> URL {
+        if activeRunBackend == .dentalSegmentator {
+            return caseDir
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("dentalsegmentator", isDirectory: true)
+                .appendingPathComponent("dentalsegmentator_multilabel.nii.gz")
+        }
+        if activeRunMode == .individualTeeth {
+            return caseDir
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("teeth_experimental", isDirectory: true)
+                .appendingPathComponent("teeth_multilabel_fullspace.nii.gz")
+        }
+        return caseDir
+            .appendingPathComponent("segmentations", isDirectory: true)
+            .appendingPathComponent("derived", isDirectory: true)
+            .appendingPathComponent("craniofacial_arch_jaw_multilabel.nii.gz")
+    }
+
     private func nextCaseOutput() -> URL {
         defaultRunOutput(root: outputRootURL ?? paths.runs)
     }
@@ -1320,8 +1689,10 @@ final class AppState: ObservableObject {
     private func resetRunProgressTracking() {
         lastRunProgressAt = nil
         lastRunProgressSignature = ""
-        if inputSource == .sample {
-            runHeartbeatText = "サンプル1を解析中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
+        if activeRunBackend == .dentalSegmentator {
+            runHeartbeatText = "DentalSegmentatorをMPSで実行中です。CPUへ自動切替しません。初回や大きなCTでは表示更新まで時間がかかる場合があります。"
+        } else if inputSource == .sample {
+            runHeartbeatText = "サンプル1の3D previewを作成中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
         } else {
             runHeartbeatText = "ログを待っています。モデル準備済みでも初回処理には時間がかかる場合があります。"
         }
@@ -1333,8 +1704,10 @@ final class AppState: ObservableObject {
             return
         }
         guard let lastRunProgressAt else {
-            if inputSource == .sample {
-                runHeartbeatText = "サンプル1を解析中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
+            if activeRunBackend == .dentalSegmentator {
+                runHeartbeatText = "DentalSegmentatorをMPSで実行中です。CPUへ自動切替しません。初回や大きなCTでは表示更新まで時間がかかる場合があります。"
+            } else if inputSource == .sample {
+                runHeartbeatText = "サンプル1の3D previewを作成中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
             } else {
                 runHeartbeatText = "ログを待っています。モデル準備済みでも初回処理には時間がかかる場合があります。"
             }
@@ -1379,6 +1752,42 @@ func readLogTail(_ url: URL, maxBytes: Int = LOG_TAIL_BYTES) -> LogTailSnapshot?
         text = "（ログが大きいため最後の一部だけ表示しています。全文は下のボタンから開けます。）\n\n" + text
     }
     return LogTailSnapshot(text: text, truncated: truncated)
+}
+
+func runFailureReason(from logURL: URL) -> String {
+    guard let snapshot = readLogTail(logURL, maxBytes: LOG_TAIL_BYTES) else {
+        return ""
+    }
+    let lines = snapshot.text
+        .split(whereSeparator: \.isNewline)
+        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard !lines.isEmpty else {
+        return ""
+    }
+    let markers = ["DENTALSEGMENTATOR FAILED", "DEVICE CHECK FAILED", "TASK BLOCKED"]
+    if let markerIndex = lines.lastIndex(where: { line in markers.contains { line.contains($0) } }) {
+        let following = lines.dropFirst(markerIndex + 1).first ?? lines[markerIndex]
+        return compactFailureLine(following)
+    }
+    if let returncode = lines.last(where: { $0.hasPrefix("returncode=") && $0 != "returncode=0" }) {
+        return "\(returncode)。詳細ログを確認してください。"
+    }
+    if let errorLine = lines.reversed().first(where: { line in
+        let lower = line.lowercased()
+        return lower.contains("error") || lower.contains("failed") || lower.contains("exception")
+    }) {
+        return compactFailureLine(errorLine)
+    }
+    return ""
+}
+
+func compactFailureLine(_ text: String) -> String {
+    let normalized = text.replacingOccurrences(of: "\t", with: " ")
+    guard normalized.count > 240 else {
+        return normalized
+    }
+    return String(normalized.prefix(240)) + "..."
 }
 
 func formatDicomSummary(auditJSON: URL) -> String {

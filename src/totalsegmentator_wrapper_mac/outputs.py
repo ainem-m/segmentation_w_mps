@@ -11,6 +11,7 @@ class CaseOutput:
     input_dir: Path
     raw_segmentations_dir: Path
     teeth_experimental_dir: Path
+    dentalsegmentator_dir: Path
     logs_dir: Path
 
     @property
@@ -58,6 +59,18 @@ class CaseOutput:
         return self.teeth_multilabel_fullspace_path
 
     @property
+    def dentalseg_input_dir(self) -> Path:
+        return self.input_dir / "dentalsegmentator_nnunet"
+
+    @property
+    def dentalseg_predictions_dir(self) -> Path:
+        return self.dentalsegmentator_dir / "nnunet_predictions"
+
+    @property
+    def dentalseg_multilabel_path(self) -> Path:
+        return self.dentalsegmentator_dir / "dentalsegmentator_multilabel.nii.gz"
+
+    @property
     def readme_path(self) -> Path:
         return self.root / "README_OUTPUT.md"
 
@@ -69,11 +82,13 @@ def prepare_case_output(root: Path) -> CaseOutput:
         input_dir=root / "input",
         raw_segmentations_dir=root / "segmentations" / "raw_totalseg",
         teeth_experimental_dir=root / "segmentations" / "teeth_experimental",
+        dentalsegmentator_dir=root / "segmentations" / "dentalsegmentator",
         logs_dir=root / "logs",
     )
     case.input_dir.mkdir(parents=True, exist_ok=True)
     case.raw_segmentations_dir.mkdir(parents=True, exist_ok=True)
     case.teeth_experimental_dir.mkdir(parents=True, exist_ok=True)
+    case.dentalsegmentator_dir.mkdir(parents=True, exist_ok=True)
     case.logs_dir.mkdir(parents=True, exist_ok=True)
     return case
 

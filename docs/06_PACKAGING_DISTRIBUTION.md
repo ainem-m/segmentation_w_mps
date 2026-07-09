@@ -61,7 +61,7 @@ totalsegmentator-wrapper-mac
 Recommended local install during preview packaging:
 
 ```bash
-python -m pip install -e '.[dicom,mps]'
+python -m pip install -e '.[dicom,mps,dentalseg]'
 ```
 
 Recommended local wheel build on Mac:

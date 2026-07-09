@@ -16,6 +16,7 @@ from totalsegmentator_wrapper_mac.device import smoke_test_mps_convtranspose3d
 
 
 TASKS = ("craniofacial_structures", "teeth")
+BACKENDS = ("totalsegmentator", "dentalsegmentator")
 DEVICES = ("auto", "mps", "cpu")
 SMOOTH_PRESET_NAMES = ("none", "slicer_like", "medium", "strong")
 
@@ -119,11 +120,33 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="Run TotalSegmentator and write case logs.")
     run.add_argument("--input", required=True, type=Path)
     run.add_argument("--output", required=True, type=Path)
+    run.add_argument("--backend", choices=BACKENDS, default="totalsegmentator")
     run.add_argument("--task", choices=TASKS, default="craniofacial_structures")
     run.add_argument("--device", choices=DEVICES, default="auto")
     run.add_argument("--totalseg-bin", default="TotalSegmentator")
     run.add_argument("--totalseg-home", type=Path, default=None)
     run.add_argument("--totalseg-weights", type=Path, default=None)
+    run.add_argument("--dentalseg-bin", default="nnUNetv2_predict")
+    run.add_argument("--dentalseg-model-dir", type=Path, default=None)
+    run.add_argument("--dentalseg-model-zip", type=Path, default=None)
+    run.add_argument("--dentalseg-nnunet-raw", type=Path, default=None)
+    run.add_argument("--dentalseg-nnunet-preprocessed", type=Path, default=None)
+    run.add_argument("--dentalseg-nnunet-results", type=Path, default=None)
+    run.add_argument("--dentalseg-dataset-id", default="112")
+    run.add_argument("--dentalseg-configuration", default="3d_fullres")
+    run.add_argument("--dentalseg-trainer", default="nnUNetTrainer")
+    run.add_argument("--dentalseg-plans", default="nnUNetPlans")
+    run.add_argument(
+        "--dentalseg-fold",
+        action="append",
+        default=None,
+        help="Fold to use for DentalSegmentator nnU-Net inference. Repeat to ensemble. Defaults to 0.",
+    )
+    run.add_argument("--dentalseg-disable-tta", action="store_true")
+    run.add_argument("--dentalseg-not-on-device", action="store_true")
+    run.add_argument("--dentalseg-npp", type=int, default=1)
+    run.add_argument("--dentalseg-nps", type=int, default=1)
+    run.add_argument("--dentalseg-timeout-sec", type=int, default=7200)
     run.add_argument("--no-copy-input", action="store_true")
     run.add_argument(
         "--robust-crop",
@@ -343,14 +366,37 @@ def main(argv: list[str] | None = None) -> int:
                 "--robust-crop is only supported with --task craniofacial_structures; "
                 "use --teeth-robust-craniofacial-preflight for experimental teeth preflight."
             )
+        if args.backend == "dentalsegmentator" and args.robust_crop:
+            parser.error("--robust-crop is only supported with --backend totalsegmentator.")
+        if args.backend == "dentalsegmentator" and args.higher_order_resampling:
+            parser.error(
+                "--higher-order-resampling is only supported with --backend totalsegmentator."
+            )
         result = run_totalsegmentator(
             input_path=args.input,
             output_root=args.output,
             task=args.task,
             requested_device=args.device,
+            backend=args.backend,
             totalseg_bin=args.totalseg_bin,
             totalseg_home=args.totalseg_home,
             totalseg_weights=args.totalseg_weights,
+            dentalseg_bin=args.dentalseg_bin,
+            dentalseg_model_dir=args.dentalseg_model_dir,
+            dentalseg_model_zip=args.dentalseg_model_zip,
+            dentalseg_nnunet_raw=args.dentalseg_nnunet_raw,
+            dentalseg_nnunet_preprocessed=args.dentalseg_nnunet_preprocessed,
+            dentalseg_nnunet_results=args.dentalseg_nnunet_results,
+            dentalseg_dataset_id=args.dentalseg_dataset_id,
+            dentalseg_configuration=args.dentalseg_configuration,
+            dentalseg_trainer=args.dentalseg_trainer,
+            dentalseg_plans=args.dentalseg_plans,
+            dentalseg_folds=tuple(args.dentalseg_fold or ["0"]),
+            dentalseg_disable_tta=args.dentalseg_disable_tta,
+            dentalseg_not_on_device=args.dentalseg_not_on_device,
+            dentalseg_npp=args.dentalseg_npp,
+            dentalseg_nps=args.dentalseg_nps,
+            dentalseg_timeout_sec=args.dentalseg_timeout_sec,
             copy_input=not args.no_copy_input,
             skip_device_check=args.skip_device_check,
             robust_crop=args.robust_crop,

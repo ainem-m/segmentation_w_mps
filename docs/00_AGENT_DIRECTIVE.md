@@ -34,10 +34,11 @@ folded into the Python preview package by accident.
    - Do not build DICOM normalization into the Python preview package.
    - Keep DICOM normalization/rescue in the separate C++ binary track.
 
-3. **Use TotalSegmentator first.**
+3. **Use TotalSegmentator first, with DentalSegmentator as explicit opt-in.**
    - Prioritize `craniofacial_structures`.
    - Then test `teeth`.
-   - DentalSegmentator pure model support is later.
+   - DentalSegmentator nnU-Net support is experimental and MPS-focused in the
+     Mac app. It must not silently replace or fallback to TotalSegmentator.
 
 4. **MPS support must be proven, not assumed.**
    - First run ConvTranspose3D smoke test.

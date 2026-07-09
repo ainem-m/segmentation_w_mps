@@ -157,6 +157,18 @@ def resolve_surface_preview_input(
             "input": str(teeth_fullspace.resolve()),
         }
 
+    dentalseg_fullspace = (
+        case_dir
+        / "segmentations"
+        / "dentalsegmentator"
+        / "dentalsegmentator_multilabel.nii.gz"
+    )
+    if dentalseg_fullspace.exists():
+        return dentalseg_fullspace, {
+            "source": "dentalsegmentator_multilabel",
+            "input": str(dentalseg_fullspace.resolve()),
+        }
+
     raw_totalseg = case_dir / "segmentations" / "raw_totalseg"
     if any((raw_totalseg / filename).exists() for filename, _label, _name in CRANIOFACIAL_SURFACE_LABELS):
         derived, metadata = build_craniofacial_surface_labelmap(case_dir=case_dir)
@@ -164,7 +176,7 @@ def resolve_surface_preview_input(
 
     raise FileNotFoundError(
         "No default surface-preview input found. Expected either "
-        f"{teeth_fullspace} or craniofacial masks under {raw_totalseg}."
+        f"{teeth_fullspace}, {dentalseg_fullspace}, or craniofacial masks under {raw_totalseg}."
     )
 
 
@@ -452,7 +464,13 @@ def group_specs(label_entries: list[dict[str, Any]]) -> dict[str, list[int]]:
         "jaws": [
             entry["label"]
             for entry in label_entries
-            if entry["name"] in {"lower_jawbone", "upper_jawbone"}
+            if entry["name"] in {
+                "lower_jawbone",
+                "upper_jawbone",
+                "mandible",
+                "upper_skull",
+                "maxilla_upper_skull",
+            }
         ],
     }
 
@@ -667,7 +685,7 @@ code { color: #c9e2ff; }
   <aside id="panel">
     <h1>TotalSegmentator 3Dビューアー</h1>
     <p>データ: <code id="dataName"></code></p>
-    <p>検出された構造ラベル: <code id="labelCount"></code><br>形状: <code id="geometryModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
+    <p>検出された構造ラベル: <code id="labelCount"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
     <h2>表示</h2>
     <div id="displayControls">
     <div id="geometryControl" class="controlRow" hidden>
@@ -970,7 +988,8 @@ function applySmoothingPreset(presetName, refreshGpu) {
     mesh.bounds = computeBounds(mesh.vertices);
     if (refreshGpu) refreshMeshBuffers(mesh);
   }
-  document.getElementById('smooth').textContent = smoothingLabel(presetName);
+  const smoothingModeLabel = document.getElementById('smoothingModeLabel');
+  if (smoothingModeLabel) smoothingModeLabel.textContent = smoothingLabel(presetName);
 }
 function geometryForPreset(raw, presetName) {
   const variants = raw.variants || {};

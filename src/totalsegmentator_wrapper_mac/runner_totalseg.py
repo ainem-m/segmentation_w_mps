@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, asdict
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,15 @@ RUN_PROGRESS_PREFIX = "RUN_PROGRESS "
 TEETH_SUPPLIED_PREFLIGHT_ROBUST_WARNING = (
     "existing craniofacial case supplied; internal robust preflight skipped"
 )
+DENTALSEGMENTATOR_LABELS = {
+    1: "upper_skull",
+    2: "mandible",
+    3: "upper_teeth",
+    4: "lower_teeth",
+    5: "mandibular_canal",
+}
+DENTALSEGMENTATOR_ZENODO_DOI = "10.5281/zenodo.10829675"
+DENTALSEGMENTATOR_MODEL_ZIP = "Dataset112_DentalSegmentator_v100.zip"
 
 
 @dataclass(frozen=True)
@@ -93,9 +103,26 @@ def run_totalsegmentator(
     output_root: Path,
     task: str,
     requested_device: str,
+    backend: str = "totalsegmentator",
     totalseg_bin: str = "TotalSegmentator",
     totalseg_home: Path | None = None,
     totalseg_weights: Path | None = None,
+    dentalseg_bin: str = "nnUNetv2_predict",
+    dentalseg_model_dir: Path | None = None,
+    dentalseg_model_zip: Path | None = None,
+    dentalseg_nnunet_raw: Path | None = None,
+    dentalseg_nnunet_preprocessed: Path | None = None,
+    dentalseg_nnunet_results: Path | None = None,
+    dentalseg_dataset_id: str = "112",
+    dentalseg_configuration: str = "3d_fullres",
+    dentalseg_trainer: str = "nnUNetTrainer",
+    dentalseg_plans: str = "nnUNetPlans",
+    dentalseg_folds: tuple[str, ...] = ("0",),
+    dentalseg_disable_tta: bool = False,
+    dentalseg_not_on_device: bool = False,
+    dentalseg_npp: int = 1,
+    dentalseg_nps: int = 1,
+    dentalseg_timeout_sec: int = 7200,
     copy_input: bool = True,
     skip_device_check: bool = False,
     robust_crop: bool = False,
@@ -111,10 +138,18 @@ def run_totalsegmentator(
     input_path = input_path.resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"Input not found: {input_path}")
+    if backend not in {"totalsegmentator", "dentalsegmentator"}:
+        raise ValueError(f"Unsupported backend: {backend}")
     if robust_crop and task != "craniofacial_structures":
         raise ValueError(
             "--robust-crop is only supported with task=craniofacial_structures; "
             "use --teeth-robust-craniofacial-preflight for experimental teeth preflight."
+        )
+    if backend == "dentalsegmentator" and robust_crop:
+        raise ValueError("--robust-crop is only supported by the TotalSegmentator backend")
+    if backend == "dentalsegmentator" and higher_order_resampling:
+        raise ValueError(
+            "--higher-order-resampling is only supported by the TotalSegmentator backend"
         )
 
     case = prepare_case_output(output_root)
@@ -133,6 +168,32 @@ def run_totalsegmentator(
         )
         raise RuntimeError(
             f"MPS smoke test failed for requested device {requested_device}: {device_check.error}"
+        )
+
+    if backend == "dentalsegmentator":
+        return _run_dentalsegmentator(
+            case=case,
+            input_path=input_path,
+            source_for_summary=source_for_summary,
+            requested_device=requested_device,
+            device_check=device_check,
+            task=task,
+            dentalseg_bin=dentalseg_bin,
+            dentalseg_model_dir=dentalseg_model_dir,
+            dentalseg_model_zip=dentalseg_model_zip,
+            dentalseg_nnunet_raw=dentalseg_nnunet_raw,
+            dentalseg_nnunet_preprocessed=dentalseg_nnunet_preprocessed,
+            dentalseg_nnunet_results=dentalseg_nnunet_results,
+            dentalseg_dataset_id=dentalseg_dataset_id,
+            dentalseg_configuration=dentalseg_configuration,
+            dentalseg_trainer=dentalseg_trainer,
+            dentalseg_plans=dentalseg_plans,
+            dentalseg_folds=dentalseg_folds,
+            dentalseg_disable_tta=dentalseg_disable_tta,
+            dentalseg_not_on_device=dentalseg_not_on_device,
+            dentalseg_npp=dentalseg_npp,
+            dentalseg_nps=dentalseg_nps,
+            dentalseg_timeout_sec=dentalseg_timeout_sec,
         )
 
     if task == "teeth" and not experimental_teeth:
@@ -489,6 +550,392 @@ def _run_experimental_teeth(
     return result
 
 
+def _run_dentalsegmentator(
+    *,
+    case: CaseOutput,
+    input_path: Path,
+    source_for_summary: Path,
+    requested_device: str,
+    device_check: DeviceCheck,
+    task: str,
+    dentalseg_bin: str,
+    dentalseg_model_dir: Path | None,
+    dentalseg_model_zip: Path | None,
+    dentalseg_nnunet_raw: Path | None,
+    dentalseg_nnunet_preprocessed: Path | None,
+    dentalseg_nnunet_results: Path | None,
+    dentalseg_dataset_id: str,
+    dentalseg_configuration: str,
+    dentalseg_trainer: str,
+    dentalseg_plans: str,
+    dentalseg_folds: tuple[str, ...],
+    dentalseg_disable_tta: bool,
+    dentalseg_not_on_device: bool,
+    dentalseg_npp: int,
+    dentalseg_nps: int,
+    dentalseg_timeout_sec: int,
+) -> TotalSegRunResult:
+    start = time.perf_counter()
+    extra: dict[str, Any] = {
+        "dentalsegmentator": {
+            "enabled": True,
+            "source": "nnunetv2",
+            "zenodo_doi": DENTALSEGMENTATOR_ZENODO_DOI,
+            "expected_model_zip": DENTALSEGMENTATOR_MODEL_ZIP,
+            "labels": {str(label): name for label, name in DENTALSEGMENTATOR_LABELS.items()},
+            "dataset_id": dentalseg_dataset_id,
+            "configuration": dentalseg_configuration,
+            "trainer": dentalseg_trainer,
+            "plans": dentalseg_plans,
+            "folds": list(dentalseg_folds),
+            "device": device_check.actual_device,
+            "disable_tta": dentalseg_disable_tta,
+            "not_on_device": dentalseg_not_on_device,
+            "npp": dentalseg_npp,
+            "nps": dentalseg_nps,
+            "timeout_sec": dentalseg_timeout_sec,
+            "versions": _dentalseg_versions(),
+            "mps_fallback_env_removed": True,
+        }
+    }
+    try:
+        if task != "craniofacial_structures":
+            raise ValueError(
+                "DentalSegmentator backend supports the arch/jaw preview path only; "
+                "it does not provide individual tooth labels."
+            )
+        if device_check.actual_device not in {"cpu", "mps"}:
+            raise RuntimeError(f"Unsupported DentalSegmentator device: {device_check.actual_device!r}")
+        if requested_device == "auto" and device_check.actual_device == "cpu":
+            raise RuntimeError(
+                "DentalSegmentator auto device resolved to CPU. "
+                "Use --device mps for the Mac preview path, or pass --device cpu explicitly "
+                "for development-only CPU checks."
+            )
+        if not dentalseg_folds:
+            raise ValueError("At least one DentalSegmentator fold must be specified")
+        if dentalseg_npp < 0 or dentalseg_nps < 0:
+            raise ValueError("DentalSegmentator npp/nps must be >= 0")
+
+        _prepare_dentalseg_input(input_path=input_path, case=case)
+        env = _dentalseg_environment(
+            case=case,
+            nnunet_raw=dentalseg_nnunet_raw,
+            nnunet_preprocessed=dentalseg_nnunet_preprocessed,
+            nnunet_results=dentalseg_nnunet_results,
+            require_results=dentalseg_model_dir is None,
+        )
+        extra["dentalsegmentator"]["nnunet_env"] = {
+            key: env.get(key)
+            for key in ("nnUNet_raw", "nnUNet_preprocessed", "nnUNet_results")
+        }
+        if dentalseg_model_zip is not None:
+            install_command = _dentalseg_install_command(dentalseg_model_zip)
+            extra["dentalsegmentator"]["install_command"] = _sanitize_dentalseg_command(
+                install_command,
+                case=case,
+            )
+            install_returncode, install_elapsed, install_stdout, install_stderr = _run_command_streamed(
+                command=install_command,
+                env=env,
+                log_path=case.run_log_path,
+                safe_command=extra["dentalsegmentator"]["install_command"],
+                timeout_sec=dentalseg_timeout_sec,
+            )
+            extra["dentalsegmentator"]["install"] = {
+                "returncode": install_returncode,
+                "elapsed_seconds": install_elapsed,
+                "stdout_tail": install_stdout[-2000:],
+                "stderr_tail": install_stderr[-2000:],
+            }
+            if install_returncode != 0:
+                raise RuntimeError(
+                    "DentalSegmentator model install failed: "
+                    + (install_stderr[-1000:] or install_stdout[-1000:])
+                )
+
+        command = _dentalseg_predict_command(
+            case=case,
+            dentalseg_bin=dentalseg_bin,
+            model_dir=dentalseg_model_dir,
+            dataset_id=dentalseg_dataset_id,
+            configuration=dentalseg_configuration,
+            trainer=dentalseg_trainer,
+            plans=dentalseg_plans,
+            folds=dentalseg_folds,
+            device=str(device_check.actual_device),
+            disable_tta=dentalseg_disable_tta,
+            not_on_device=dentalseg_not_on_device,
+            npp=dentalseg_npp,
+            nps=dentalseg_nps,
+        )
+        safe_command = _sanitize_dentalseg_command(command, case=case)
+        extra["dentalsegmentator"]["command"] = safe_command
+        returncode, child_elapsed, stdout, stderr = _run_command_streamed(
+            command=command,
+            env=env,
+            log_path=case.run_log_path,
+            safe_command=safe_command,
+            timeout_sec=dentalseg_timeout_sec,
+            append=dentalseg_model_zip is not None,
+        )
+        total_elapsed = time.perf_counter() - start
+        extra["dentalsegmentator"]["child_elapsed_seconds"] = child_elapsed
+        if returncode == 0:
+            validation = _finalize_dentalseg_output(case=case)
+            extra["dentalsegmentator"]["validation"] = validation
+            extra["dentalsegmentator"]["output_labelmap"] = str(case.dentalseg_multilabel_path)
+        else:
+            extra["dentalsegmentator"]["error"] = stderr[-2000:] or stdout[-2000:]
+        result = TotalSegRunResult(
+            status="success" if returncode == 0 else "failed",
+            returncode=returncode,
+            elapsed_seconds=total_elapsed,
+            requested_device=requested_device,
+            actual_device=str(device_check.actual_device),
+            fallback_reason=device_check.fallback_reason,
+            task=task,
+            output_dir=str(case.root),
+            stdout_tail=stdout[-4000:],
+            stderr_tail=stderr[-4000:],
+        )
+    except Exception as exc:  # noqa: BLE001
+        elapsed = time.perf_counter() - start
+        result = TotalSegRunResult(
+            status="failed",
+            returncode=1,
+            elapsed_seconds=elapsed,
+            requested_device=requested_device,
+            actual_device=device_check.actual_device or "unknown",
+            fallback_reason=device_check.fallback_reason,
+            task=task,
+            output_dir=str(case.root),
+            stdout_tail="",
+            stderr_tail=repr(exc),
+        )
+        case.run_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not case.run_log_path.exists():
+            case.run_log_path.write_text(
+                "DENTALSEGMENTATOR FAILED\n" + repr(exc) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            with case.run_log_path.open("a", encoding="utf-8") as handle:
+                handle.write("\n\nDENTALSEGMENTATOR FAILED\n")
+                handle.write(repr(exc))
+                handle.write("\n")
+        extra["dentalsegmentator"]["error"] = repr(exc)
+
+    _write_metadata(
+        case,
+        input_path,
+        task,
+        result,
+        device_check,
+        backend="dentalsegmentator",
+        extra=extra,
+    )
+    generate_output_report(
+        case=case,
+        source_volume_path=source_for_summary,
+        task=task,
+        run_result=result,
+    )
+    return result
+
+
+def _prepare_dentalseg_input(*, input_path: Path, case: CaseOutput) -> Path:
+    case.dentalseg_input_dir.mkdir(parents=True, exist_ok=True)
+    destination = case.dentalseg_input_dir / "case_0000.nii.gz"
+    if destination.exists() or destination.is_symlink():
+        destination.unlink()
+    try:
+        os.symlink(input_path.resolve(), destination)
+    except OSError:
+        shutil.copy2(input_path, destination)
+    return destination
+
+
+def _dentalseg_environment(
+    *,
+    case: CaseOutput,
+    nnunet_raw: Path | None,
+    nnunet_preprocessed: Path | None,
+    nnunet_results: Path | None,
+    require_results: bool,
+) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
+    env["nnUNet_raw"] = str((nnunet_raw or Path(env.get("nnUNet_raw", case.root / "nnunet_raw"))).resolve())
+    env["nnUNet_preprocessed"] = str(
+        (nnunet_preprocessed or Path(env.get("nnUNet_preprocessed", case.root / "nnunet_preprocessed"))).resolve()
+    )
+    if nnunet_results is not None:
+        env["nnUNet_results"] = str(nnunet_results.resolve())
+    elif "nnUNet_results" not in env and require_results:
+        raise RuntimeError(
+            "DentalSegmentator requires nnUNet_results or --dentalseg-model-dir. "
+            "Install the Zenodo model zip with nnUNetv2_install_pretrained_model_from_zip "
+            "or pass --dentalseg-model-dir."
+        )
+    for key in ("nnUNet_raw", "nnUNet_preprocessed", "nnUNet_results"):
+        if key in env:
+            Path(env[key]).mkdir(parents=True, exist_ok=True)
+    return env
+
+
+def _dentalseg_install_command(model_zip: Path) -> list[str]:
+    model_zip = model_zip.expanduser().resolve()
+    if not model_zip.exists():
+        raise FileNotFoundError(f"DentalSegmentator model zip not found: {model_zip}")
+    executable = resolve_totalseg_executable("nnUNetv2_install_pretrained_model_from_zip")
+    return [executable, str(model_zip)]
+
+
+def _dentalseg_predict_command(
+    *,
+    case: CaseOutput,
+    dentalseg_bin: str,
+    model_dir: Path | None,
+    dataset_id: str,
+    configuration: str,
+    trainer: str,
+    plans: str,
+    folds: tuple[str, ...],
+    device: str,
+    disable_tta: bool,
+    not_on_device: bool,
+    npp: int,
+    nps: int,
+) -> list[str]:
+    case.dentalseg_predictions_dir.mkdir(parents=True, exist_ok=True)
+    if model_dir is not None:
+        model_dir = model_dir.expanduser().resolve()
+        if not model_dir.exists():
+            raise FileNotFoundError(f"DentalSegmentator model folder not found: {model_dir}")
+        command = [
+            resolve_totalseg_executable("nnUNetv2_predict_from_modelfolder"),
+            "-i",
+            str(case.dentalseg_input_dir),
+            "-o",
+            str(case.dentalseg_predictions_dir),
+            "-m",
+            str(model_dir),
+        ]
+    else:
+        command = [
+            resolve_totalseg_executable(dentalseg_bin),
+            "-i",
+            str(case.dentalseg_input_dir),
+            "-o",
+            str(case.dentalseg_predictions_dir),
+            "-d",
+            dataset_id,
+            "-c",
+            configuration,
+            "-tr",
+            trainer,
+            "-p",
+            plans,
+        ]
+    command.extend(["-f", *folds])
+    command.extend(["-device", device, "-npp", str(npp), "-nps", str(nps)])
+    if disable_tta:
+        command.append("--disable_tta")
+    if not_on_device:
+        command.append("--not_on_device")
+    return command
+
+
+def _finalize_dentalseg_output(*, case: CaseOutput) -> dict[str, Any]:
+    prediction = case.dentalseg_predictions_dir / "case.nii.gz"
+    if not prediction.exists():
+        raise FileNotFoundError(f"DentalSegmentator prediction not found: {prediction}")
+    shutil.copy2(prediction, case.dentalseg_multilabel_path)
+
+    import nibabel as nib
+    import numpy as np
+
+    image = nib.load(str(case.dentalseg_multilabel_path))
+    data = np.asanyarray(image.dataobj)
+    labels, counts = np.unique(data, return_counts=True)
+    non_empty = []
+    unexpected = []
+    for label, count in zip(labels, counts, strict=True):
+        label_int = int(label)
+        if label_int == 0:
+            continue
+        item = {
+            "label": label_int,
+            "name": DENTALSEGMENTATOR_LABELS.get(label_int, f"label_{label_int}"),
+            "voxels": int(count),
+        }
+        non_empty.append(item)
+        if label_int not in DENTALSEGMENTATOR_LABELS:
+            unexpected.append(label_int)
+    if not non_empty:
+        raise RuntimeError("DentalSegmentator output completed but contained no non-zero labels")
+    sidecar = case.dentalseg_multilabel_path.with_name(
+        case.dentalseg_multilabel_path.name + ".labels.json"
+    )
+    sidecar.write_text(
+        json.dumps(
+            {
+                "source": "dentalsegmentator",
+                "zenodo_doi": DENTALSEGMENTATOR_ZENODO_DOI,
+                "labels": {str(label): name for label, name in DENTALSEGMENTATOR_LABELS.items()},
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "path": str(case.dentalseg_multilabel_path.resolve()),
+        "label_sidecar": str(sidecar.resolve()),
+        "shape": [int(value) for value in image.shape[:3]],
+        "spacing": [float(value) for value in image.header.get_zooms()[:3]],
+        "non_empty_label_count": len(non_empty),
+        "non_empty_labels": non_empty,
+        "unexpected_labels": unexpected,
+    }
+
+
+def _sanitize_dentalseg_command(command: list[str], *, case: CaseOutput) -> list[str]:
+    result = []
+    skip_next = None
+    for index, part in enumerate(command):
+        if skip_next == index:
+            continue
+        if index == 0:
+            result.append(Path(part).name)
+        elif part in {"-i"} and index + 1 < len(command):
+            result.extend([part, f"<input:{case.dentalseg_input_dir.name}>"])
+            skip_next = index + 1
+        elif part in {"-o"} and index + 1 < len(command):
+            result.extend([part, f"<output:{case.dentalseg_predictions_dir.name}>"])
+            skip_next = index + 1
+        elif part in {"-m"} and index + 1 < len(command):
+            result.extend([part, f"<model:{Path(command[index + 1]).name}>"])
+            skip_next = index + 1
+        elif part.endswith(".zip") and Path(part).exists():
+            result.append(Path(part).name)
+        else:
+            result.append(part)
+    return result
+
+
+def _dentalseg_versions() -> dict[str, str]:
+    versions = {}
+    for package in ("nnunetv2", "torch", "nibabel"):
+        try:
+            versions[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            versions[package] = "not_installed"
+    return versions
+
+
 def _teeth_child_command(
     *,
     input_path: Path,
@@ -648,6 +1095,7 @@ def _run_command_streamed(
     log_path: Path,
     safe_command: list[str],
     timeout_sec: int | None = None,
+    append: bool = False,
 ) -> tuple[int, float, str, str]:
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
@@ -703,7 +1151,9 @@ def _run_command_streamed(
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
-    with log_path.open("w", encoding="utf-8") as log_file:
+    with log_path.open("a" if append else "w", encoding="utf-8") as log_file:
+        if append:
+            log_file.write("\n\n")
         log_file.write("COMMAND:\n" + " ".join(safe_command))
         log_file.flush()
         proc = subprocess.Popen(  # noqa: S603
@@ -770,6 +1220,7 @@ def _write_metadata(
     device_check: DeviceCheck,
     robust_crop: bool = False,
     higher_order_resampling: bool = False,
+    backend: str = "totalsegmentator",
     extra: dict[str, Any] | None = None,
 ) -> None:
     env = environment_metadata()
@@ -779,6 +1230,7 @@ def _write_metadata(
         "environment": env,
         "input": input_metadata(input_path),
         "run": {
+            "backend": backend,
             "task": task,
             "requested_device": result.requested_device,
             "actual_device": result.actual_device,

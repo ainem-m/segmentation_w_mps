@@ -113,7 +113,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("LICENSE_INVENTORY_ENV_DIR", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_LICENSE_SITE_PATH", text)
         self.assertIn("--site-path", text)
-        self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps]"', text)
+        self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps,dentalseg]"', text)
         self.assertIn("--fail-on-unresolved", text)
         self.assertIn('"third_party_licenses": {', text)
         self.assertIn('"inventory": "licenses/third_party_license_inventory.json"', text)
@@ -246,7 +246,9 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("updateInstallRunning", texts["AppState.swift"])
         self.assertIn("configure_totalseg_privacy", texts["CommandBuilder.swift"])
         self.assertIn("download_totalseg_weights", texts["CommandBuilder.swift"])
+        self.assertIn("download_dentalseg_weights", texts["CommandBuilder.swift"])
         self.assertIn("weights_download_failed", texts["CommandBuilder.swift"])
+        self.assertIn("dentalseg_weights_download_failed", texts["CommandBuilder.swift"])
         self.assertIn("利用状況データ", texts["CommandBuilder.swift"])
         self.assertIn("totalseg_privacy_config_failed", texts["CommandBuilder.swift"])
         self.assertIn("setupRecoverySuggestion", texts["CommandBuilder.swift"])
@@ -281,7 +283,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("guard inputSource == .sample || inputSource == .nifti", texts["AppState.swift"])
         self.assertIn("let output = nextCaseOutput()", texts["AppState.swift"])
         self.assertIn("regenerateSurfacePreview", texts["AppState.swift"])
-        self.assertIn("CT解析は再実行せず", texts["AppState.swift"])
+        self.assertIn("labelmap作成は再実行せず", texts["AppState.swift"])
         self.assertIn("stopRequested", texts["AppState.swift"])
         self.assertIn("停止要求済み", texts["AppState.swift"])
         self.assertIn("showingUpdateConfirmation", texts["AppState.swift"])
@@ -454,7 +456,9 @@ class MacAppPackagingTests(unittest.TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn("pydicom>=3,<4", constraints)
+        self.assertIn("nnunetv2==2.8.1", constraints)
         self.assertIn('"pydicom>=3,<4"', pyproject)
+        self.assertIn('"nnunetv2>=2.8.1,<2.9"', pyproject)
         self.assertNotIn("pydicom>=2.4,<3", constraints)
 
     def test_dmg_scripts_support_user_local_install_validation(self) -> None:
