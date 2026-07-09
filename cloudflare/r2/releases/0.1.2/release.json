@@ -1,0 +1,15 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.cloudflare_release.v1",
+  "app_name": "TotalSegmentator Wrapper for Mac",
+  "channel": "stable",
+  "version": "0.1.2",
+  "file_name": "TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg",
+  "file_size_bytes": 64673701,
+  "sha256": "636d0e071dd68a60f13054165c4ef8ab7ef3f51ba535231128759810e5264a3a",
+  "download_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.2/TotalSegmentator%20Wrapper%20for%20Mac-0.1.2-20260708-modelsetup-arm64.dmg",
+  "update_manifest_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json",
+  "release_notes_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.2/RELEASE_NOTES.txt",
+  "published_at": "2026-07-09T03:05:39Z",
+  "notarized": true,
+  "clinical_use": false
+}

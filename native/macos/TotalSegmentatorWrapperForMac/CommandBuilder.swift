@@ -15,6 +15,7 @@ enum SetupStep: String {
     case syncBundle = "sync_bundle"
     case installWheel = "install_wheel"
     case configureTotalsegPrivacy = "configure_totalseg_privacy"
+    case downloadTotalsegWeights = "download_totalseg_weights"
     case doctor
     case complete
     case setupException = "setup_exception"
@@ -29,6 +30,7 @@ enum SetupStep: String {
         case .syncBundle: return "アプリ更新反映"
         case .installWheel: return "依存パッケージ取得"
         case .configureTotalsegPrivacy: return "プライバシー設定"
+        case .downloadTotalsegWeights: return "モデル準備"
         case .doctor: return "MPS確認"
         case .complete: return "起動準備完了"
         case .setupException: return "エラー"
@@ -53,6 +55,8 @@ enum SetupStep: String {
             return "依存パッケージを取得中です。数分かかることがあります。"
         case .configureTotalsegPrivacy:
             return "利用状況データの送信を止めています。"
+        case .downloadTotalsegWeights:
+            return "初回実行に必要なモデルを取得しています。"
         case .doctor:
             return "PyTorch MPSとCT確認用部品を確認しています。"
         case .complete:
@@ -317,6 +321,9 @@ struct CommandBuilder {
             command.append("--experimental-teeth")
             command.append("--teeth-crop-margin-mm")
             command.append(defaultTeethMarginMM)
+            command.append("--teeth-robust-craniofacial-preflight")
+        } else {
+            command.append("--robust-crop")
         }
         return command
     }
@@ -405,6 +412,22 @@ struct CommandBuilder {
         ]
     }
 
+    static func slicerExportCommand(python: URL, caseDir: URL, source: URL?) -> [String] {
+        var command = [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "slicer-export",
+            "--case",
+            caseDir.path,
+        ]
+        if let source {
+            command.append("--source")
+            command.append(source.path)
+        }
+        return command
+    }
+
     static func updateCheckCommand(python: URL, manifestURL: String, json: URL, currentVersion: String, allowedHosts: [String]) -> [String] {
         var command = [
             python.path,
@@ -467,6 +490,7 @@ func setupReasonToJapanese(_ reason: String?) -> String {
     case "runtime_install_failed": return "依存パッケージの導入に失敗しました。"
     case "normalizer_missing": return "CT確認用部品の確認に失敗しました。"
     case "totalseg_privacy_config_failed": return "プライバシー設定に失敗しました。"
+    case "weights_download_failed": return "モデルの取得に失敗しました。"
     case "bundle_manifest_invalid": return "アプリ同梱manifestを読めません。"
     case "setup_exception": return "セットアップ中にエラーが発生しました。"
     case .some(let value): return "未対応のエラーです: \(value)"
@@ -482,7 +506,7 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
         return "このMacでMPS確認に失敗しました。Apple Silicon Macか、macOS/PyTorch環境を確認してください。"
     case "python312_missing", "wheel_missing", "constraints_missing", "bundle_manifest_invalid":
         return "アプリをDMGからもう一度コピーしてから起動してください。改善しない場合はログ回収コマンドを実行してください。"
-    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed":
+    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed", "weights_download_failed":
         return "ネットワークを確認して再試行してください。改善しない場合はDMG内のログ回収コマンドを実行してください。"
     case "normalizer_missing":
         return "CT確認用部品が見つかりません。アプリをDMGからもう一度コピーしてください。"

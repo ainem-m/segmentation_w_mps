@@ -145,6 +145,28 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertEqual(compare_versions("0.1.0", "0.1"), 0)
         self.assertLess(compare_versions("0.1.0", "0.1.1"), 0)
 
+    def test_012_stable_manifest_updates_existing_011_clients(self) -> None:
+        manifest = {
+            "schema": "totalsegmentator_wrapper_mac.update_manifest.v1",
+            "latest_version": "0.1.2",
+            "minimum_supported_version": "0.1.1",
+            "channel": "stable",
+            "download_url": "https://example.invalid/download.dmg",
+            "release_notes_url": "https://example.invalid/notes",
+            "sha256": "abc123",
+            "published_at": "2026-07-08T00:00:00Z",
+        }
+
+        with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(manifest)):
+            result = check_for_update(
+                manifest_url="https://example.invalid/update.json",
+                current_version="0.1.1",
+            )
+
+        self.assertEqual(result.status, "update_available")
+        self.assertTrue(result.update_available)
+        self.assertFalse(result.critical)
+
     def test_update_request_metadata_excludes_user_data(self) -> None:
         metadata = update_request_metadata()
         joined = " ".join(f"{key}={value}" for key, value in metadata.items()).lower()

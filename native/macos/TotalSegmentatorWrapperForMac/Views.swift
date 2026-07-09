@@ -55,7 +55,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("TotalSegmentator Wrapper for Mac")
                 .font(.title2.weight(.semibold))
-            Text("TotalSegmentatorを利用する非公式Mac wrapperです。非臨床プレビュー用で、DICOM/CT/結果は送信しません。")
+            Text("TotalSegmentatorを利用した非公式wrapperです。研究・教育目的の非臨床プレビューで、DICOM/CT/結果は送信しません。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -288,10 +288,10 @@ struct SampleTutorialView: View {
             }
 
             RunSettingsView()
-            Label("同梱Sample 1はUI確認用です。診断・治療計画・精度評価には使いません。", systemImage: "info.circle")
+            Label("同梱Sample 1はUI確認・動作確認用です。診断、治療方針の決定、治療計画、定量的な精度評価、または臨床利用には使用できません。", systemImage: "info.circle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Label("Sample 1の3Dプレビュー作成は、モデル取得済みの場合このMacでおおむね100秒前後かかります。初回はモデル取得で追加の通信と時間がかかる場合があります。", systemImage: "clock")
+            Label("Sample 1の3Dプレビュー作成は、モデル準備済みの場合このMacでおおむね100秒前後かかります。モデルはセットアップ時に取得します。", systemImage: "clock")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             HStack {
@@ -349,7 +349,7 @@ struct OwnDataView: View {
                     Label("撮影フォルダは、プレビュー作成の前にアプリが確認します", systemImage: "checklist")
                     Label("通常のCTとして取り込める場合は、自動で準備します", systemImage: "arrow.right.doc.on.clipboard")
                     Label("追加確認が必要な形式の場合、理由を表示してここで止めます", systemImage: "exclamationmark.triangle")
-                    Label("このアプリは非臨床プレビュー用です。診断、治療計画、精度評価には使わないでください。", systemImage: "info.circle")
+                    Label("研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。", systemImage: "info.circle")
                 }
             }
 
@@ -731,6 +731,15 @@ struct ResultView: View {
                         state.regenerateSurfacePreview()
                     } label: {
                         Label("3Dプレビューを再生成", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(state.isRunning)
+                }
+
+                if state.canExportForSlicer {
+                    Button {
+                        state.exportForSlicer()
+                    } label: {
+                        Label("Slicerで開くファイルを書き出す", systemImage: "square.and.arrow.up")
                     }
                     .disabled(state.isRunning)
                 }

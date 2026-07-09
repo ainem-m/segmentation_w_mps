@@ -78,7 +78,7 @@ The current thin-app alpha wheel is intentionally Python 3.12 / macOS arm64
 specific, for example:
 
 ```text
-totalsegmentator_wrapper_mac-0.1.1-cp312-cp312-macosx_11_0_arm64.whl
+totalsegmentator_wrapper_mac-0.1.2-cp312-cp312-macosx_11_0_arm64.whl
 ```
 
 This matches the app launcher’s Python 3.12 gate and avoids pretending the
@@ -130,7 +130,7 @@ scripts/build_mac_dmg.sh
 This creates:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.1.1-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg
 ```
 
 The DMG contains the app, an `/Applications` symlink, and a short README. Users
@@ -419,7 +419,7 @@ Do not write into Slicer directories.
 The preview should show its own version and backend versions:
 
 ```text
-TotalSegmentator Wrapper for Mac: 0.1.1
+TotalSegmentator Wrapper for Mac: 0.1.2
 Python: x.y.z
 Torch: x.y.z
 TotalSegmentator: x.y.z

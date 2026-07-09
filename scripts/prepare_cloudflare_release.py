@@ -5,9 +5,13 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from totalsegmentator_wrapper_mac.disclaimers import NON_CLINICAL_NOTICE_EN
 
 
 APP_NAME = "TotalSegmentator Wrapper for Mac"
@@ -22,7 +26,7 @@ def main() -> int:
     version = args.version
     dmg = args.dmg
     if dmg is None:
-        dmg = repo_root / "dist" / f"{APP_NAME}-{version}-arm64.dmg"
+        dmg = repo_root / "dist" / f"{APP_NAME}-{version}-20260708-modelsetup-arm64.dmg"
     dmg = dmg.expanduser()
     if not dmg.is_file():
         raise SystemExit(f"DMG not found: {dmg}")
@@ -30,7 +34,7 @@ def main() -> int:
     download_origin = normalize_https_origin(args.download_origin)
     object_prefix = normalize_object_prefix(args.object_prefix)
     published_at = args.published_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    minimum_supported = args.minimum_supported_version or version
+    minimum_supported = args.minimum_supported_version or default_minimum_supported(version, args.channel)
     sha256 = sha256_file(dmg)
     size = dmg.stat().st_size
     file_name = dmg.name
@@ -138,7 +142,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Cloudflare R2 release metadata.")
-    parser.add_argument("--version", default="0.1.1")
+    parser.add_argument("--version", default="0.1.2")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--minimum-supported-version", default=None)
     parser.add_argument("--dmg", type=Path, default=None)
@@ -188,6 +192,12 @@ def object_key(prefix: str, suffix: str) -> str:
     return suffix
 
 
+def default_minimum_supported(version: str, channel: str) -> str:
+    if channel == "stable" and version == "0.1.2":
+        return "0.1.1"
+    return version
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -231,12 +241,16 @@ def release_notes(version: str) -> str:
 - Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
 - Bundled dcm2niix and native DICOM normalizer for local CT intake.
 - Bundled Sample 1 non-clinical preview data and offline 3D preview HTML.
+- First setup now prepares the craniofacial, robust crop, and teeth model weights.
+- Craniofacial app previews now use the robust crop path by default for local CBCT inputs.
 - Update checks run only after the user presses the update button.
 
 Non-clinical limitation:
-This alpha is not for diagnosis, treatment planning, or quantitative accuracy
-evaluation. DICOM, CT, generated outputs, local paths, logs, and user
-identifiers are not sent to the update endpoint.
+{NON_CLINICAL_NOTICE_EN}
+
+Data and update endpoint:
+DICOM, CT, generated outputs, local paths, logs, and user identifiers are not
+sent to the update endpoint.
 """
 
 

@@ -170,6 +170,13 @@ preliminary segmentation
 manual review required
 ```
 
+Public Japanese notices must reuse the canonical copy in
+`src/totalsegmentator_wrapper_mac/disclaimers.py`. When changing public pages,
+Swift UI text, support copy, release notes, or generated output README text,
+run `tests/test_non_clinical_language.py` and update the canonical constants
+first. Do not introduce one-off Japanese variants of the diagnosis/treatment
+planning/accuracy warning.
+
 ## Commit discipline for coding agents
 
 Make small commits by phase:

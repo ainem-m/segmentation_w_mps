@@ -1,0 +1,16 @@
+TotalSegmentator Wrapper for Mac 0.1.2 alpha
+
+- Developer ID signed and Apple notarized DMG for Apple Silicon Macs.
+- Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
+- Bundled dcm2niix and native DICOM normalizer for local CT intake.
+- Bundled Sample 1 non-clinical preview data and offline 3D preview HTML.
+- First setup now prepares the craniofacial, robust crop, and teeth model weights.
+- Craniofacial app previews now use the robust crop path by default for local CBCT inputs.
+- Update checks run only after the user presses the update button.
+
+Non-clinical limitation:
+This is a non-clinical research/education preview. It is not a medical device and is not intended for diagnosis, treatment planning, surgical planning, or autonomous clinical decision-making. Outputs must be treated as preliminary segmentation model outputs and manually reviewed.
+
+Data and update endpoint:
+DICOM, CT, generated outputs, local paths, logs, and user identifiers are not
+sent to the update endpoint.

@@ -193,6 +193,24 @@ def build_parser() -> argparse.ArgumentParser:
     surface.add_argument("--smooth-iterations", type=int, default=None)
     surface.add_argument("--smooth-lambda", dest="smooth_lambda", type=float, default=None)
     surface.add_argument("--smooth-mu", type=float, default=None)
+
+    slicer_export = subparsers.add_parser(
+        "slicer-export",
+        help="Write a file-only 3D Slicer import folder without launching Slicer.",
+    )
+    slicer_export.add_argument("--case", required=True, type=Path)
+    slicer_export.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="Optional source CT NIfTI to copy into the Slicer import folder.",
+    )
+    slicer_export.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional output directory. Defaults to <case>/slicer_export.",
+    )
     return parser
 
 
@@ -373,6 +391,17 @@ def main(argv: list[str] | None = None) -> int:
             min_voxels=args.min_voxels,
             preview_step_size=args.preview_step_size,
             smoothing=smoothing,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "slicer-export":
+        from totalsegmentator_wrapper_mac.slicer_export import run_slicer_export
+
+        result = run_slicer_export(
+            case_dir=args.case,
+            source_path=args.source,
+            output_dir=args.output,
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0

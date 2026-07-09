@@ -10,8 +10,8 @@ Cloudflare R2に置く。
 
 理由:
 
-- 現在の `dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg` は
-  `46 MiB`。
+- `dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg` は
+  `61.7 MiB` / `64673701` bytes。
 - Cloudflare Pagesは単一assetの上限が `25 MiB`。CloudflareのPages limits
   docsでも、大きいファイルはR2 public bucketやcustom domainを検討するよう
   案内されている。
@@ -36,6 +36,15 @@ Pages deploy directory:
   cloudflare/pages/
 
 Pages custom domain:
+  totalsegmentator.lacramy.com
+
+Apps hub Pages project:
+  lacramy-apps
+
+Apps hub deploy directory:
+  cloudflare/app-hub/
+
+Apps hub custom domain:
   app.lacramy.com
 
 R2 bucket:
@@ -60,11 +69,12 @@ rate limitや運用機能の制約がある。
 ## 配置するR2 object
 
 ```text
-totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg
-totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt
-totalsegmentator-wrapper-mac/releases/0.1.1/RELEASE_NOTES.txt
-totalsegmentator-wrapper-mac/releases/0.1.1/release.json
+totalsegmentator-wrapper-mac/releases/0.1.2/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg
+totalsegmentator-wrapper-mac/releases/0.1.2/SHA256SUMS.txt
+totalsegmentator-wrapper-mac/releases/0.1.2/RELEASE_NOTES.txt
+totalsegmentator-wrapper-mac/releases/0.1.2/release.json
 totalsegmentator-wrapper-mac/releases/stable/update.json
+totalsegmentator-wrapper-mac/releases/0.1.1/...  # rollback/history
 totalsegmentator-wrapper-mac/releases/0.1.0/...  # rollback/history
 totalsegmentator-wrapper-mac/releases/alpha/update.json
 ```
@@ -83,37 +93,43 @@ release metadataを再生成する。
 
 ```bash
 scripts/prepare_cloudflare_release.py \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --channel stable \
-  --minimum-supported-version 0.1.0 \
-  --dmg "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
+  --minimum-supported-version 0.1.1 \
+  --dmg "dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg" \
   --download-origin https://downloads.lacramy.com \
   --bucket lacramy-downloads \
   --object-prefix totalsegmentator-wrapper-mac \
-  --published-at 2026-06-22T04:17:49Z
+  --published-at 2026-07-09T03:05:39Z
 ```
 
 生成物:
 
 ```text
 cloudflare/r2/releases/stable/update.json
-cloudflare/r2/releases/0.1.1/SHA256SUMS.txt
-cloudflare/r2/releases/0.1.1/RELEASE_NOTES.txt
-cloudflare/r2/releases/0.1.1/release.json
+cloudflare/r2/releases/0.1.2/SHA256SUMS.txt
+cloudflare/r2/releases/0.1.2/RELEASE_NOTES.txt
+cloudflare/r2/releases/0.1.2/release.json
 cloudflare/r2/upload-plan.json
 ```
 
-公開ページは以下。
+公開ページは以下。`cloudflare/pages/` は TotalSegmentator Wrapper 専用ページ、
+`cloudflare/app-hub/` は `app.lacramy.com` の複数アプリ入口として使う。
 
 ```text
 cloudflare/pages/index.html
 cloudflare/pages/_headers
 cloudflare/pages/_redirects
 cloudflare/pages/assets/sample1-preview.png
+cloudflare/app-hub/index.html
+cloudflare/app-hub/_headers
+cloudflare/app-hub/_redirects
 ```
 
-`cloudflare/pages/_redirects` は `downloads.lacramy.com/totalsegmentator-wrapper-mac/...`
-へredirectする。
+app page と hub の `/download` はどちらも
+`downloads.lacramy.com/totalsegmentator-wrapper-mac/...` へredirectする。
+`app.lacramy.com/totalsegmentator-wrapper-mac` は canonical app page の
+`https://totalsegmentator.lacramy.com/` へredirectする。
 
 ## notarized DMG build時のupdate URL
 
@@ -140,7 +156,8 @@ export TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_ALLOWED_HOSTS=downloads.lacramy.com
 ```bash
 npx wrangler login
 npx wrangler r2 bucket create lacramy-downloads
-npx wrangler pages project create
+npx wrangler pages project create totalsegmentator-wrapper-mac
+npx wrangler pages project create lacramy-apps
 ```
 
 Cloudflare dashboardでR2 bucketへcustom domainを接続する。
@@ -149,7 +166,9 @@ Cloudflare dashboardでR2 bucketへcustom domainを接続する。
 R2 > bucket > Settings > Custom Domains > Add
 ```
 
-Cloudflare Pagesもcustom domainを接続する。
+Cloudflare Pagesもcustom domainを接続する。`totalsegmentator.lacramy.com` は
+`totalsegmentator-wrapper-mac` projectへ、`app.lacramy.com` は `lacramy-apps`
+projectへ接続する。
 
 ```text
 Workers & Pages > Pages project > Custom domains
@@ -187,11 +206,12 @@ Current status on 2026-06-22:
 created:
   lacramy-downloads
   Pages project totalsegmentator-wrapper-mac
+  Pages project lacramy-apps
 
 uploaded to lacramy-downloads:
   redact/openai-privacy-filter-q4.signed.json
   choioki/beta/2026-06-06-paid-beta-2/*
-  totalsegmentator-wrapper-mac/releases/0.1.1/*
+  totalsegmentator-wrapper-mac/releases/0.1.2/*
   totalsegmentator-wrapper-mac/releases/0.1.0/*
   totalsegmentator-wrapper-mac/releases/stable/update.json
   totalsegmentator-wrapper-mac/releases/alpha/update.json
@@ -199,10 +219,16 @@ uploaded to lacramy-downloads:
 Pages:
   https://totalsegmentator-wrapper-mac.pages.dev/ -> 200
   https://totalsegmentator-wrapper-mac.pages.dev/download -> stable DMG 302
-  app.lacramy.com is connected to the Pages project:
+  totalsegmentator.lacramy.com is connected to the totalsegmentator-wrapper-mac Pages project:
     status: active
-  https://app.lacramy.com/ -> 200
+  https://totalsegmentator.lacramy.com/ -> 200
+  https://totalsegmentator.lacramy.com/download -> stable DMG 302
+  https://lacramy-apps.pages.dev/ -> 200
+  app.lacramy.com is connected to the lacramy-apps Pages project:
+    status: active
+  https://app.lacramy.com/ -> 200 hub
   https://app.lacramy.com/download -> stable DMG 302
+  https://app.lacramy.com/totalsegmentator-wrapper-mac -> canonical app page 302
 
 custom domain:
   downloads.lacramy.com is connected to lacramy-downloads
@@ -211,14 +237,17 @@ custom domain:
   min_tls_version: 1.2
 
 verified through Cloudflare edge:
-  totalsegmentator-wrapper-mac/releases/stable/update.json -> 200, latest_version=0.1.1
+  totalsegmentator-wrapper-mac/releases/stable/update.json -> 200, latest_version=0.1.2
   totalsegmentator-wrapper-mac/releases/alpha/update.json -> 200
-  totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg -> 200
-  app.lacramy.com/download -> 302 to the 0.1.1 public2 DMG
+  totalsegmentator-wrapper-mac/releases/0.1.2/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg -> 200
+  totalsegmentator.lacramy.com/download -> 302 to the 0.1.2 DMG
+  app.lacramy.com/download -> 302 to the 0.1.2 DMG
+  app.lacramy.com/totalsegmentator-wrapper-mac -> 302 to https://totalsegmentator.lacramy.com/
   choioki/beta/2026-06-06-paid-beta-2/SHA256SUMS.txt -> 200
 
 DNS note:
   1.1.1.1 resolves downloads.lacramy.com to Cloudflare edge IPs.
+  1.1.1.1 resolves totalsegmentator.lacramy.com to Cloudflare edge IPs.
   1.1.1.1 resolves app.lacramy.com to Cloudflare edge IPs.
   The local default resolver may lag immediately after domain cutover.
 ```
@@ -255,23 +284,23 @@ cutover後は、Choioki/Redact既存URLとTotalSegmentator Wrapper URLをすぐ�
 BUCKET=lacramy-downloads
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
-  --file "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.2/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg" \
+  --file "dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt" \
-  --file "cloudflare/r2/releases/0.1.1/SHA256SUMS.txt" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.2/SHA256SUMS.txt" \
+  --file "cloudflare/r2/releases/0.1.2/SHA256SUMS.txt" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/RELEASE_NOTES.txt" \
-  --file "cloudflare/r2/releases/0.1.1/RELEASE_NOTES.txt" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.2/RELEASE_NOTES.txt" \
+  --file "cloudflare/r2/releases/0.1.2/RELEASE_NOTES.txt" \
   --remote
 
 npx wrangler r2 object put \
-  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.1/release.json" \
-  --file "cloudflare/r2/releases/0.1.1/release.json" \
+  "${BUCKET}/totalsegmentator-wrapper-mac/releases/0.1.2/release.json" \
+  --file "cloudflare/r2/releases/0.1.2/release.json" \
   --remote
 
 npx wrangler r2 object put \
@@ -289,7 +318,7 @@ downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json
 downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/alpha/update.json
   bypass cache or low TTL
 
-downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/*
+downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.2/*
   long TTL
 ```
 
@@ -297,10 +326,11 @@ downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/*
 
 ```bash
 npx wrangler pages deploy cloudflare/pages --project-name totalsegmentator-wrapper-mac
+npx wrangler pages deploy cloudflare/app-hub --project-name lacramy-apps
 ```
 
-PagesはDMG本体を持たない。`/download` と `/release-notes` はR2 custom domainへ
-302 redirectする。
+PagesはDMG本体を持たない。app page と hub の `/download` と `/release-notes` は
+R2 custom domainへ302 redirectする。
 
 ## 公開前チェック
 
@@ -308,7 +338,7 @@ R2 object:
 
 ```bash
 curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json | python3 -m json.tool
-curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/SHA256SUMS.txt
+curl -fsS https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.2/SHA256SUMS.txt
 ```
 
 Updater互換:
@@ -324,35 +354,42 @@ DMG checksum:
 
 ```bash
 curl -L \
-  -o /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.1-20260622public2-arm64.dmg \
-  "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.1/TotalSegmentator%20Wrapper%20for%20Mac-0.1.1-20260622public2-arm64.dmg"
+  -o /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.2-20260708-modelsetup-arm64.dmg \
+  "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.1.2/TotalSegmentator%20Wrapper%20for%20Mac-0.1.2-20260708-modelsetup-arm64.dmg"
 
-shasum -a 256 /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.1-20260622public2-arm64.dmg
+shasum -a 256 /tmp/TotalSegmentator-Wrapper-for-Mac-0.1.2-20260708-modelsetup-arm64.dmg
 ```
 
-期待SHA256:
+期待SHA256は `cloudflare/r2/releases/0.1.2/SHA256SUMS.txt` と
+`cloudflare/r2/releases/stable/update.json` の値に一致させる。
+
+現在の0.1.2 SHA256:
 
 ```text
-8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e
+636d0e071dd68a60f13054165c4ef8ab7ef3f51ba535231128759810e5264a3a
 ```
+
 
 Pages:
 
 ```bash
 curl -I https://totalsegmentator-wrapper-mac.pages.dev/
 curl -I https://totalsegmentator-wrapper-mac.pages.dev/download
+curl -I https://totalsegmentator.lacramy.com/
+curl -I https://totalsegmentator.lacramy.com/download
 curl -I https://app.lacramy.com/
 curl -I https://app.lacramy.com/download
+curl -I https://app.lacramy.com/totalsegmentator-wrapper-mac
 ```
 
-`app.lacramy.com` を使う場合は、Pages custom domainを追加したうえで
-`app.lacramy.com` のCNAMEを `totalsegmentator-wrapper-mac.pages.dev` へ向ける。
-2026-06-22時点ではPages custom domainは `active`、DNSはCloudflare proxied CNAME
-で接続済み。
+`totalsegmentator.lacramy.com` は app-specific canonical page として
+`totalsegmentator-wrapper-mac` Pages projectへ接続する。`app.lacramy.com` は
+`lacramy-apps` Pages projectへ接続し、複数アプリのhubとして使う。
 
 ## 運用上の注意
 
 - `downloads.lacramy.com` は共通download hostなので、アプリごとにprefixを切る。
+- `app.lacramy.com` は特定アプリ専用にしない。外部共有は各アプリのcanonical pageを使う。
 - 公開appに埋め込む `update_manifest_url` は
   `totalsegmentator-wrapper-mac/releases/stable/update.json` にする。
 - 検証appだけ `totalsegmentator-wrapper-mac/releases/alpha/update.json` を使う。

@@ -16,7 +16,7 @@ PYTHON_RUNTIME_STRATEGY="external_python312_required"
 PYTHON_RUNTIME_EXECUTABLE_JSON="null"
 PYTHON_RUNTIME_BUNDLED_JSON="false"
 PYTHON_RUNTIME_BUNDLE_JSON="null"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.1}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"
 BUILD_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_BUILD_ID:-}"
 DEPENDENCY_SET_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_SET_ID:-macos-arm64-py312-torch2.12-totalseg2.14.0-pydicom3}"
 UPDATE_MANIFEST_URL="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_MANIFEST_URL:-}"
@@ -29,6 +29,12 @@ BUNDLE_IDENTIFIER="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER:-jp.chino.to
 NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-}"
 APP_ENTITLEMENTS="${ROOT}/resources/entitlements/app.entitlements"
 PYTHON_ENTITLEMENTS="${ROOT}/resources/entitlements/python-runtime.entitlements"
+TOTALSEGMENTATOR_LICENSE_PATH="${ROOT}/resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt"
+DCM2NIIX_LICENSE_PATH="${ROOT}/resources/third_party/licenses/dcm2niix-license.txt"
+LICENSE_MANUAL_OVERRIDES_PATH="${ROOT}/resources/third_party/licenses/manual-overrides.json"
+LICENSE_INVENTORY_SCRIPT="${ROOT}/scripts/generate_third_party_license_inventory.py"
+LICENSE_INVENTORY_ENV_DIR="${DIST_DIR}/license_inventory_env"
+LICENSE_SITE_PACKAGES="${TOTALSEGMENTATOR_WRAPPER_MAC_LICENSE_SITE_PATH:-}"
 
 json_string() {
   "${PYTHON_BIN}" -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
@@ -157,13 +163,22 @@ codesign_developer_id() {
     "${RESOURCES_DIR}/bin/dcm2niix"
   )
   if [[ -d "${RESOURCES_DIR}/python/cpython-3.12" ]]; then
+    local python_framework_binary="${RESOURCES_DIR}/python/cpython-3.12/Frameworks/Python.framework/Versions/3.12/Python"
+    local deferred_python_framework_binary=""
     while IFS= read -r path; do
-      sign_targets+=("${path}")
+      if [[ "${path}" == "${python_framework_binary}" ]]; then
+        deferred_python_framework_binary="${path}"
+      else
+        sign_targets+=("${path}")
+      fi
     done < <(
       find "${RESOURCES_DIR}/python/cpython-3.12" -type f \
         \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) \
         -print | sort
     )
+    if [[ -n "${deferred_python_framework_binary}" ]]; then
+      sign_targets+=("${deferred_python_framework_binary}")
+    fi
   fi
 
   local target
@@ -210,6 +225,22 @@ WHEEL_PATH="$(ls -1t "${DIST_DIR}"/totalsegmentator_wrapper_mac-*.whl | head -n 
 NORMALIZER_PATH="${ROOT}/build/dicom_normalizer/totalsegmentator-wrapper-dicom-normalizer"
 CONSTRAINTS_PATH="${ROOT}/constraints/macos-arm64-py312.txt"
 SAMPLE1_MANIFEST_PATH="${ROOT}/resources/sample1/sample_manifest.json"
+if [[ ! -f "${TOTALSEGMENTATOR_LICENSE_PATH}" ]]; then
+  echo "TotalSegmentator Apache-2.0 license text is missing: ${TOTALSEGMENTATOR_LICENSE_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${DCM2NIIX_LICENSE_PATH}" ]]; then
+  echo "dcm2niix license text is missing: ${DCM2NIIX_LICENSE_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${LICENSE_MANUAL_OVERRIDES_PATH}" ]]; then
+  echo "Manual license override manifest is missing: ${LICENSE_MANUAL_OVERRIDES_PATH}" >&2
+  exit 1
+fi
+if [[ ! -x "${LICENSE_INVENTORY_SCRIPT}" && ! -f "${LICENSE_INVENTORY_SCRIPT}" ]]; then
+  echo "Third-party license inventory script is missing: ${LICENSE_INVENTORY_SCRIPT}" >&2
+  exit 1
+fi
 WHEEL_SHA256="$(sha256_file "${WHEEL_PATH}")"
 CONSTRAINTS_SHA256="$(sha256_file "${CONSTRAINTS_PATH}")"
 NORMALIZER_SHA256="$(sha256_file "${NORMALIZER_PATH}")"
@@ -233,13 +264,15 @@ if [[ -d "${APP_DIR}" ]]; then
   chmod -R u+rwX "${APP_DIR}" || true
 fi
 rm -rf "${APP_DIR}"
-mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/sample1"
+mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/sample1" "${RESOURCES_DIR}/licenses"
 
 build_swiftui_frontend
 cp "${WHEEL_PATH}" "${RESOURCES_DIR}/wheels/"
 cp "${CONSTRAINTS_PATH}" "${RESOURCES_DIR}/constraints/"
 cp "${NORMALIZER_PATH}" "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
 cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"
+cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"
+cp "${DCM2NIIX_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/dcm2niix-license.txt"
 rsync -a "${ROOT}/resources/sample1/" "${RESOURCES_DIR}/sample1/"
 chmod 755 "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
 chmod 755 "${RESOURCES_DIR}/bin/dcm2niix"
@@ -258,6 +291,37 @@ if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
   PYTHON_RUNTIME_BUNDLED_JSON="true"
   PYTHON_RUNTIME_BUNDLE_JSON='"python/cpython-3.12"'
 fi
+
+LICENSE_INVENTORY_ARGS=(
+  "${LICENSE_INVENTORY_SCRIPT}"
+  --output-dir "${RESOURCES_DIR}/licenses"
+  --dependency-set-id "${DEPENDENCY_SET_ID}"
+  --manual-overrides "${LICENSE_MANUAL_OVERRIDES_PATH}"
+  --fail-on-unresolved
+)
+if [[ "${PYTHON_RUNTIME_STRATEGY}" == "bundled_python312" ]]; then
+  LICENSE_INVENTORY_ARGS+=(--python-runtime-root "${PYTHON_RUNTIME_SOURCE}")
+fi
+LICENSE_INVENTORY_BASE_PYTHON="${PYTHON_BIN}"
+if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
+  LICENSE_INVENTORY_BASE_PYTHON="${PYTHON_RUNTIME_SOURCE}/bin/python3.12"
+fi
+if [[ -z "${LICENSE_SITE_PACKAGES}" ]]; then
+  rm -rf "${LICENSE_INVENTORY_ENV_DIR}"
+  "${LICENSE_INVENTORY_BASE_PYTHON}" -m venv "${LICENSE_INVENTORY_ENV_DIR}"
+  LICENSE_INVENTORY_ENV_PYTHON="${LICENSE_INVENTORY_ENV_DIR}/bin/python"
+  "${LICENSE_INVENTORY_ENV_PYTHON}" -m pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps]" >/dev/null
+  LICENSE_SITE_PACKAGES="$("${LICENSE_INVENTORY_ENV_PYTHON}" -c 'import site; print(next(path for path in site.getsitepackages() if path.endswith("site-packages")))')"
+fi
+if [[ ! -d "${LICENSE_SITE_PACKAGES}" ]]; then
+  echo "License inventory site-packages directory is missing: ${LICENSE_SITE_PACKAGES}" >&2
+  exit 1
+fi
+LICENSE_INVENTORY_ARGS+=(--site-path "${LICENSE_SITE_PACKAGES}")
+"${PYTHON_BIN}" "${LICENSE_INVENTORY_ARGS[@]}" >/dev/null
+LICENSE_INVENTORY_JSON="${RESOURCES_DIR}/licenses/third_party_license_inventory.json"
+LICENSE_UNRESOLVED_COUNT="$("${PYTHON_BIN}" -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["unresolved_count"])' "${LICENSE_INVENTORY_JSON}")"
+LICENSE_GENERATED_AT_JSON="$("${PYTHON_BIN}" -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))["generated_at"]))' "${LICENSE_INVENTORY_JSON}")"
 
 cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -326,6 +390,13 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     "required_major": 3,
     "required_minor": 12
   },
+  "third_party_licenses": {
+    "inventory": "licenses/third_party_license_inventory.json",
+    "summary": "licenses/THIRD_PARTY_LICENSES.txt",
+    "dependency_set_id": "${DEPENDENCY_SET_ID}",
+    "generated_at": ${LICENSE_GENERATED_AT_JSON},
+    "unresolved_count": ${LICENSE_UNRESOLVED_COUNT}
+  },
   "permission_policy": {
     "requires_admin": false,
     "writes_system_locations": false,
@@ -338,6 +409,10 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     "constraints": "constraints/macos-arm64-py312.txt",
     "dicom_normalizer": "bin/totalsegmentator-wrapper-dicom-normalizer",
     "dcm2niix": "bin/dcm2niix",
+    "totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt",
+    "dcm2niix_license": "licenses/dcm2niix-license.txt",
+    "third_party_license_inventory": "licenses/third_party_license_inventory.json",
+    "third_party_license_summary": "licenses/THIRD_PARTY_LICENSES.txt",
     "sample1": {
       "root": "sample1",
       "input": "sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
@@ -357,19 +432,31 @@ TotalSegmentator Wrapper for Mac third-party notices
 TotalSegmentator Wrapper for Mac is an unofficial Mac wrapper powered by TotalSegmentator.
 It is not the official TotalSegmentator application or project.
 
+License inventory
+- Inventory JSON: Contents/Resources/licenses/third_party_license_inventory.json
+- License summary: Contents/Resources/licenses/THIRD_PARTY_LICENSES.txt
+- Unresolved license items at build time: ${LICENSE_UNRESOLVED_COUNT}
+
+TotalSegmentator
+- Upstream: https://github.com/wasserth/TotalSegmentator
+- License: Apache-2.0
+- Bundled license text: Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt
+
 dcm2niix
 - Bundled executable: Contents/Resources/bin/dcm2niix
 - Build input executable name: $(basename "${DCM2NIIX_PATH}")
 - Version line: $(printf '%s' "${DCM2NIIX_VERSION_JSON}" | "${PYTHON_BIN}" -c 'import json, sys; print(json.load(sys.stdin))')
 - SHA256: ${DCM2NIIX_SHA256}
 - Upstream: https://github.com/rordenlab/dcm2niix
-- License summary from upstream README: the bulk of dcm2niix is covered by the BSD license; some units are public domain or MIT licensed. See the upstream license.txt for full details.
+- Bundled license text: Contents/Resources/licenses/dcm2niix-license.txt
 
 Sample 1 notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
 TotalSegmentator Wrapper for Mac is a non-clinical preview and is not for diagnosis or treatment planning.
 TXT
 
 if command -v xattr >/dev/null 2>&1; then
+  find "${APP_DIR}" -type d -exec chmod u+rwx,go+rx {} +
+  find "${APP_DIR}" -type f -exec chmod u+rw {} +
   xattr -cr "${APP_DIR}" || true
 fi
 if [[ "${SKIP_CODESIGN:-0}" != "1" ]] && command -v codesign >/dev/null 2>&1; then

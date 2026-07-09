@@ -26,6 +26,7 @@ FORBIDDEN_WRITE_PREFIXES = (
     Path("/Library"),
     Path("/System"),
 )
+DEFAULT_TOTALSEG_WEIGHT_TASK_IDS = (115, 297, 113)
 
 
 CommandRunner = Callable[[list[str], Path | None, dict[str, str] | None], subprocess.CompletedProcess[str]]
@@ -203,6 +204,25 @@ def build_totalseg_privacy_command(venv_python: Path) -> list[str]:
             "setup_totalseg(); "
             "set_config_key('send_usage_stats', False); "
             "set_config_key('statistics_disclaimer_shown', True)"
+        ),
+    ]
+    validate_safe_command(command)
+    return command
+
+
+def build_totalseg_weights_command(
+    venv_python: Path,
+    task_ids: tuple[int, ...] = DEFAULT_TOTALSEG_WEIGHT_TASK_IDS,
+) -> list[str]:
+    downloads = "; ".join(f"download_pretrained_weights({task_id})" for task_id in task_ids)
+    command = [
+        str(venv_python),
+        "-c",
+        (
+            "from totalsegmentator.config import setup_totalseg; "
+            "from totalsegmentator.libs import download_pretrained_weights; "
+            "setup_totalseg(); "
+            f"{downloads}"
         ),
     ]
     validate_safe_command(command)
@@ -422,6 +442,23 @@ def run_setup(
             result.reason = "totalseg_privacy_config_failed"
             return _finalize_result(result, write_state=not dry_run)
         _write_progress(progress_log, "configure_totalseg_privacy", privacy_step.status, "プライバシー設定を適用しました。")
+
+        _write_progress(progress_log, "download_totalseg_weights", "running", "初回実行に必要なモデルを取得しています。数分かかることがあります。")
+        weights_step = _execute_step(
+            "download_totalseg_weights",
+            build_totalseg_weights_command(venv_python),
+            paths.logs_dir,
+            runner,
+            env=build_setup_environment(paths),
+            dry_run=dry_run or skip_install,
+        )
+        steps.append(weights_step)
+        if weights_step.status == "failed":
+            _write_progress(progress_log, "download_totalseg_weights", "failed", "モデルの取得に失敗しました。")
+            result.status = "failed"
+            result.reason = "weights_download_failed"
+            return _finalize_result(result, write_state=not dry_run)
+        _write_progress(progress_log, "download_totalseg_weights", weights_step.status, "モデルの取得が完了しました。")
 
         doctor_json = paths.logs_dir / "doctor.json"
         _write_progress(progress_log, "doctor", "running", "MPSとCT確認用部品を確認しています。")

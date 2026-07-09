@@ -1,0 +1,100 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.manual_license_overrides.v1",
+  "overrides": [
+    {
+      "package": "argparse",
+      "version": "1.4.0",
+      "license": "Python Software Foundation License",
+      "source_url": "https://files.pythonhosted.org/packages/source/a/argparse/argparse-1.4.0.tar.gz",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "The source distribution includes LICENSE.txt declaring that argparse 1.4.0 files are under the Python license.",
+      "license_file": "argparse-1.4.0-LICENSE.txt"
+    },
+    {
+      "package": "linecache2",
+      "version": "1.0.0",
+      "license": "Python Software Foundation License",
+      "source_url": "https://files.pythonhosted.org/packages/source/l/linecache2/linecache2-1.0.0.tar.gz",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "The source PKG-INFO declares License :: OSI Approved :: Python Software Foundation License.",
+      "license_file": "Python-Software-Foundation-License-Version-2.txt"
+    },
+    {
+      "package": "traceback2",
+      "version": "1.4.0",
+      "license": "Python Software Foundation License",
+      "source_url": "https://files.pythonhosted.org/packages/source/t/traceback2/traceback2-1.4.0.tar.gz",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "The source PKG-INFO declares License :: OSI Approved :: Python Software Foundation License.",
+      "license_file": "Python-Software-Foundation-License-Version-2.txt"
+    },
+    {
+      "package": "unittest2",
+      "version": "1.1.0",
+      "license": "BSD License",
+      "source_url": "https://files.pythonhosted.org/packages/source/u/unittest2/unittest2-1.1.0.tar.gz",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "The source setup.py and PKG-INFO declare BSD License, but no standalone LICENSE file is shipped.",
+      "license_file": "unittest2-1.1.0-BSD-license-notice.txt"
+    },
+    {
+      "package": "connected-components-3d",
+      "version": "4.0.0",
+      "license": "LGPL-3.0-or-later",
+      "source_url": "https://pypi.org/project/connected-components-3d/4.0.0/",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "Attention license reviewed for release packaging. The wheel includes COPYING and COPYING.LESSER in dist-info/licenses, and the inventory copies those files."
+    },
+    {
+      "package": "pandas",
+      "version": "3.0.3",
+      "license": "BSD-3-Clause with bundled third-party notices",
+      "source_url": "https://pypi.org/project/pandas/3.0.3/",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "Attention terms are from bundled third-party notices inside pandas LICENSE. The wheel includes pandas-3.0.3.dist-info/LICENSE, and the inventory copies it."
+    },
+    {
+      "package": "matplotlib",
+      "version": "3.11.0",
+      "license": "Matplotlib License with bundled third-party notices",
+      "source_url": "https://pypi.org/project/matplotlib/3.11.0/",
+      "reviewed_at": "2026-07-08",
+      "decision": "accepted",
+      "reason": "Attention terms are from bundled third-party notices inside matplotlib LICENSE. The wheel includes matplotlib-3.11.0.dist-info/LICENSE, and the inventory copies it."
+    },
+    {
+      "package": "scipy",
+      "version": "1.17.1",
+      "license": "BSD-3-Clause with bundled third-party notices",
+      "source_url": "https://pypi.org/project/scipy/1.17.1/",
+      "reviewed_at": "2026-06-23",
+      "decision": "accepted",
+      "reason": "Attention terms are from bundled third-party notices, including dynamically linked libraries such as libquadmath. The wheel includes LICENSE.txt and component license files, and the inventory copies them."
+    },
+    {
+      "package": "scipy",
+      "version": "1.18.0",
+      "license": "BSD-3-Clause with bundled third-party notices",
+      "source_url": "https://pypi.org/project/scipy/1.18.0/",
+      "reviewed_at": "2026-07-08",
+      "decision": "accepted",
+      "reason": "Attention terms are from bundled third-party notices, including dynamically linked libraries such as libquadmath. The wheel includes LICENSE.txt and component license files, and the inventory copies them."
+    },
+    {
+      "package": "totalsegmentator-wrapper-mac",
+      "version": "0.1.2",
+      "license": "LicenseRef-Proprietary",
+      "source_url": "local pyproject.toml",
+      "reviewed_at": "2026-07-08",
+      "decision": "accepted",
+      "reason": "This is the first-party wrapper package included in the signed app bundle.",
+      "license_file": "TotalSegmentatorWrapperMac-Proprietary-License.txt"
+    }
+  ]
+}

@@ -58,6 +58,11 @@ review/export path is:
 - case summary and mask statistics
 ```
 
+Optional Slicer handoff, if reintroduced, is a file export only: write a
+Slicer-readable folder under the case output and let the user open Slicer
+manually. The app should not discover a Slicer install path, launch Slicer, or
+require users to run a Python script in Slicer.
+
 Slicer is not used as:
 
 ```text
@@ -65,6 +70,7 @@ Slicer is not used as:
 - package manager
 - Python environment
 - MPS controller
+- app controlled by this wrapper
 ```
 
 ## Input policy

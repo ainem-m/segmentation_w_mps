@@ -35,6 +35,8 @@ TotalSegmentator attribution
 - The precomputed teeth preview was generated with TotalSegmentator 2.14.0
   using the experimental teeth workflow in TotalSegmentator Wrapper for Mac.
 - TotalSegmentator is distributed under the Apache License 2.0.
+- The bundled app includes the TotalSegmentator Apache-2.0 license text at
+  Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt.
 - TotalSegmentator states that it is not a medical device and is not intended
   for clinical use.
 - Project: https://github.com/wasserth/TotalSegmentator

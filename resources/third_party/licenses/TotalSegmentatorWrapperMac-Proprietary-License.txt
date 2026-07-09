@@ -1,0 +1,8 @@
+TotalSegmentator Wrapper for Mac proprietary notice
+
+Copyright (c) TotalSegmentator Wrapper for Mac contributors.
+All rights reserved.
+
+This notice applies only to the TotalSegmentator Wrapper for Mac wrapper
+package. Third-party components remain under their respective licenses and are
+listed separately in the bundled third-party license inventory.

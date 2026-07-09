@@ -6,8 +6,9 @@ DIST_DIR="${ROOT}/dist"
 APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
 DMG_STAGING="${DIST_DIR}/dmg_staging"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.1}"
-DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${APP_VERSION}-arm64.dmg}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"
+DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"
+DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 
 if [[ "${TOTALSEGMENTATOR_WRAPPER_MAC_SKIP_APP_BUILD:-0}" != "1" ]]; then
@@ -58,13 +59,13 @@ TotalSegmentator Wrapper for Mac alpha
 
 権限と通信:
 - 管理者権限、Homebrew、system Pythonの変更は不要です。
-- 初回Setupまたは明示的な依存更新時のみ、Pythonパッケージ取得のためにネットワークを使用します。
-- 初回3Dプレビュー作成時に、モデルweight取得で追加の通信と時間がかかる場合があります。
+- 初回Setupまたは明示的な依存更新時のみ、Pythonパッケージとモデルweight取得のためにネットワークを使用します。
+- 初回実行に必要なモデルweightはSetup時に準備します。
 - DICOM、CT、処理結果、3Dプレビュー出力は、セットアップ中もプレビュー作成中も送信しません。
 - 利用状況データの送信も、専用環境内で無効化します。
 - Setup中は「3Dサンプルを開く」から、同梱Sample 1のオフライン3Dプレビューをブラウザで操作できます。
 - Setup完了後、アプリには同梱Sample 1のCT入力が用意されています。
-- Sample 1の3Dプレビュー作成は、モデル取得済みの場合、このMacでおおむね100秒前後かかります。
+- Sample 1の3Dプレビュー作成は、モデル準備済みの場合、このMacでおおむね100秒前後かかります。
 - CTフォルダを選んだ場合、アプリ内で安全確認し、通常CTとして取り込める場合は同梱dcm2niixでプレビュー用入力を準備します。
 - CTを見るソフトから「表示用の断面画像」として書き出されたデータの場合、slice確認後に救済3Dプレビューへ進めることがあります。
 - 自動取り込みできないCTでも、CT画像そのものが壊れているとは限りません。対応できる場合があるため、必要であれば開発者へご連絡ください。
@@ -78,8 +79,12 @@ TotalSegmentator Wrapper for Mac alpha
 - Sample 1は3D Slicer SampleData由来のNIfTIとprecomputed previewで、DICOMではありません。
 - Sample 1の出典、SHA256、TotalSegmentator Apache-2.0表記はアプリ内
   Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt に記録しています。
-- 同梱dcm2niixの出典、SHA256、BSD/MIT/public-domain component表記はアプリ内
-  Contents/Resources/THIRD_PARTY_NOTICES.txt に記録しています。
+- TotalSegmentator Apache-2.0ライセンス本文はアプリ内
+  Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt に同梱しています。
+- 同梱dcm2niixのライセンス本文はアプリ内
+  Contents/Resources/licenses/dcm2niix-license.txt に同梱しています。
+- Python依存を含むthird-party license inventoryはアプリ内
+  Contents/Resources/licenses/third_party_license_inventory.json に記録しています。
 - 同梱3DサンプルはUI体験用で、精度評価用データではありません。
 - 診断や治療計画には使用しないでください。
 
@@ -144,13 +149,13 @@ ${OPEN_WARNING_TEST}
 
 プライバシーと用途:
 - Setupは ~/Library/Application Support/TotalSegmentatorWrapperMac/ 配下へ書き込みます。
-- 初回Setupまたは明示的な依存更新時のみPython依存を取得します。
-- 初回3Dプレビュー作成時に、モデルweight取得で追加の通信と時間がかかる場合があります。
+- 初回Setupまたは明示的な依存更新時のみPython依存とモデルweightを取得します。
+- 初回実行に必要なモデルweightはSetup時に準備します。
 - DICOM、CT、処理結果、3Dプレビュー出力は、セットアップ中もプレビュー作成中も送信しません。
 - 利用状況データの送信も、専用環境内で無効化します。
 - Setup中は「3Dサンプルを開く」から、同梱Sample 1のオフライン3Dプレビューをブラウザで操作できます。
 - Setup完了後、アプリの入力欄には同梱Sample 1 NIfTIが自動設定されます。
-- Sample 1の3Dプレビュー作成は、モデル取得済みの場合、このMacでおおむね100秒前後かかります。
+- Sample 1の3Dプレビュー作成は、モデル準備済みの場合、このMacでおおむね100秒前後かかります。
 - CTフォルダを選んだ場合、アプリ内で安全確認し、通常CTとして取り込める場合は同梱dcm2niixでプレビュー用入力を準備します。
 - 更新確認はユーザーが「更新を確認」を押した時だけversion manifestを取得します。起動時やSetup中に自動確認しません。
 - 更新がある場合は、追加確認後にnotarized DMGをダウンロードし、SHA256とGatekeeper確認後にアプリを置き換えて再起動します。

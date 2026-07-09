@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SWIFT_APP_DIR = ROOT / "native" / "macos" / "TotalSegmentatorWrapperForMac"
 APP_STATE = SWIFT_APP_DIR / "AppState.swift"
+COMMAND_BUILDER = SWIFT_APP_DIR / "CommandBuilder.swift"
 VIEWS = SWIFT_APP_DIR / "Views.swift"
 
 
@@ -88,6 +89,7 @@ VIEW_REQUIRED_ACTIONS = {
         "openOutputFolder",
         "openResultPreview",
         "regenerateSurfacePreview",
+        "exportForSlicer",
         "useSelectedDicomSeries",
         "useSelectedViewerExportCandidate",
         "showDetailedLog",
@@ -97,6 +99,7 @@ VIEW_REQUIRED_ACTIONS = {
         "この撮影を使う",
         "この断面群を確認する",
         "3Dプレビューを再生成",
+        "Slicerで開くファイルを書き出す",
         "詳細ログを表示",
         "最初に戻る",
     },
@@ -106,6 +109,7 @@ VIEW_REQUIRED_ACTIONS = {
 class SwiftUINavigationCoverageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.app_state = APP_STATE.read_text(encoding="utf-8")
+        self.command_builder = COMMAND_BUILDER.read_text(encoding="utf-8")
         self.views = VIEWS.read_text(encoding="utf-8")
 
     def test_all_app_screens_are_rendered_and_labeled(self) -> None:
@@ -376,6 +380,26 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         can_regenerate = _computed_property_body(self.app_state, "canRegenerateSurfacePreview")
         self.assertIn("resultKind == .inference", can_regenerate)
         self.assertIn("outputURL != nil", can_regenerate)
+
+    def test_slicer_export_is_file_only_and_does_not_auto_launch_slicer(self) -> None:
+        command_builder = _function_body(self.command_builder, "slicerExportCommand")
+        self.assertIn('"slicer-export"', command_builder)
+        self.assertIn('"--case"', command_builder)
+        self.assertIn('"--source"', command_builder)
+        self.assertNotIn("open -a", command_builder)
+        self.assertNotIn("Slicer.app", command_builder)
+
+        export_body = _function_body(self.app_state, "exportForSlicer")
+        self.assertIn("CommandBuilder.slicerExportCommand", export_body)
+        self.assertIn("slicer_export", export_body)
+        self.assertIn("openURLInWorkspace(exportURL)", export_body)
+        self.assertNotIn("openURLInWorkspace(paths", export_body)
+        self.assertNotIn("open -a", export_body)
+        self.assertNotIn("Slicer.app", export_body)
+
+        can_export = _computed_property_body(self.app_state, "canExportForSlicer")
+        self.assertIn("resultKind == .inference", can_export)
+        self.assertIn("outputURL != nil", can_export)
 
     def test_stop_request_returns_to_result_after_termination_or_kill(self) -> None:
         stop_run = _function_body(self.app_state, "stopRun")

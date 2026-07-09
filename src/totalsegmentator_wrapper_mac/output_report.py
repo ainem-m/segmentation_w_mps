@@ -5,16 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from totalsegmentator_wrapper_mac.benchmark import write_json
+from totalsegmentator_wrapper_mac.disclaimers import NON_CLINICAL_NOTICE_EN
 from totalsegmentator_wrapper_mac.mask_stats import collect_mask_stats
 from totalsegmentator_wrapper_mac.outputs import CaseOutput
-
-
-NON_CLINICAL_NOTICE = (
-    "This is a non-clinical research/education preview. It is not a medical device "
-    "and is not intended for diagnosis, treatment planning, surgical planning, or "
-    "autonomous clinical decision-making. Outputs must be treated as preliminary "
-    "segmentation model outputs and manually reviewed."
-)
 
 
 def generate_output_report(
@@ -94,7 +87,7 @@ mask stats: logs/mask_stats.json
 
 ## Notice
 
-{NON_CLINICAL_NOTICE}
+{NON_CLINICAL_NOTICE_EN}
 """
 
 

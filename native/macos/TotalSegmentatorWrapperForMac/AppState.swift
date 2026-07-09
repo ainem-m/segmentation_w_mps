@@ -210,6 +210,10 @@ final class AppState: ObservableObject {
         !isRunning && resultKind == .inference && outputURL != nil
     }
 
+    var canExportForSlicer: Bool {
+        !isRunning && resultKind == .inference && outputURL != nil
+    }
+
     var canUseSelectedDicomSeries: Bool {
         !isRunning && resultKind == .dicomAudit && lastDicomDirURL != nil && selectedDicomSeriesID != nil
     }
@@ -281,7 +285,7 @@ final class AppState: ObservableObject {
             screen = .start
             selectedStep = 0
             setupError = ""
-            setupMessage = "セットアップ済みです。初回3Dプレビュー作成時にモデル取得で追加の通信と時間がかかる場合があります。"
+            setupMessage = "セットアップ済みです。初回実行に必要なモデルは準備されています。"
         } else if status.action == "resync_wheel" {
             screen = .setup
             setupMessage = "同梱アプリ更新を専用環境へ反映します。"
@@ -332,7 +336,7 @@ final class AppState: ObservableObject {
                 if rc == 0 {
                     self?.setupStep = .complete
                     self?.setupHint = SetupStep.complete.hint
-                    self?.setupMessage = "起動準備が完了しました。初回3Dプレビュー作成時にモデル取得で追加の通信と時間がかかる場合があります。"
+                    self?.setupMessage = "起動準備が完了しました。初回実行に必要なモデルは準備されています。"
                     self?.setupError = ""
                     self?.screen = .start
                     self?.selectedStep = 0
@@ -1066,6 +1070,51 @@ final class AppState: ObservableObject {
         }
     }
 
+    func exportForSlicer() {
+        guard let outputURL else {
+            resultMessage = "結果フォルダが見つかりません。"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: paths.venvPython.path) else {
+            statusText = "セットアップが必要です。"
+            screen = .setup
+            return
+        }
+        let logURL = outputURL.appendingPathComponent("logs/run.log")
+        let source = inputURL.flatMap {
+            isDirectory($0) || !FileManager.default.fileExists(atPath: $0.path) ? nil : $0
+        }
+        let command = CommandBuilder.slicerExportCommand(
+            python: paths.venvPython,
+            caseDir: outputURL,
+            source: source
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let runner = self.runner
+        resultMessage = "Slicerで開くファイルを書き出しています。"
+        isRunning = true
+        activeLogURL = logURL
+        resultLogURL = nil
+        runner.resetTerminationRequest()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: logURL)
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                self?.refreshLog(from: logURL)
+                self?.activeLogURL = nil
+                self?.resultLogURL = logURL
+                if rc == 0 {
+                    let exportURL = outputURL.appendingPathComponent("slicer_export", isDirectory: true)
+                    self?.resultMessage = "Slicerで開けるファイルを書き出しました。3D Slicerを手動で開き、フォルダ内のファイルをドラッグしてください。"
+                    openURLInWorkspace(exportURL)
+                } else {
+                    self?.resultMessage = "Slicer用ファイルの書き出しに失敗しました。詳細ログを確認してください。"
+                }
+            }
+        }
+    }
+
     func checkUpdates() {
         guard !updateCheckRunning else {
             return
@@ -1080,7 +1129,7 @@ final class AppState: ObservableObject {
             updateMessage = "更新確認URLは設定されていません。"
             return
         }
-        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.1"
+        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.2"
         let allowedHosts = (manifest["update_allowed_hosts"] as? [String]) ?? []
         let updateJSON = paths.logs.appendingPathComponent("update_check.json")
         updateCheckRunning = true
@@ -1270,9 +1319,9 @@ final class AppState: ObservableObject {
         lastRunProgressAt = nil
         lastRunProgressSignature = ""
         if inputSource == .sample {
-            runHeartbeatText = "サンプル1を解析中です。モデル取得済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
+            runHeartbeatText = "サンプル1を解析中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
         } else {
-            runHeartbeatText = "ログを待っています。初回3Dプレビュー作成時はモデル取得で時間がかかる場合があります。"
+            runHeartbeatText = "ログを待っています。モデル準備済みでも初回処理には時間がかかる場合があります。"
         }
     }
 
@@ -1283,9 +1332,9 @@ final class AppState: ObservableObject {
         }
         guard let lastRunProgressAt else {
             if inputSource == .sample {
-                runHeartbeatText = "サンプル1を解析中です。モデル取得済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
+                runHeartbeatText = "サンプル1を解析中です。モデル準備済みの場合の目安は約100秒です。途中で数十秒表示が変わらないことがあります。"
             } else {
-                runHeartbeatText = "ログを待っています。初回3Dプレビュー作成時はモデル取得で時間がかかる場合があります。"
+                runHeartbeatText = "ログを待っています。モデル準備済みでも初回処理には時間がかかる場合があります。"
             }
             return
         }

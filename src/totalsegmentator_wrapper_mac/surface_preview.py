@@ -608,7 +608,7 @@ def _write_offline_viewer(
     preview_meshes: list[dict[str, Any]],
 ) -> None:
     payload = {
-        "input": Path(summary["input"]).name,
+        "dataLabel": "選択したデータ",
         "labelCount": summary["label_count"],
         "smoothing": summary["smoothing"],
         "meshes": preview_meshes,
@@ -624,16 +624,17 @@ def _html_document(payload: dict[str, Any]) -> str:
 
 def _webgl_html_document(payload_json: str) -> str:
     return """<!doctype html>
-<html lang="en">
+<html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TotalSegmentator Wrapper 3Dプレビュー</title>
+<title>TotalSegmentator 3Dビューアー</title>
 <style>
 body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 #app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
 #panel { padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
 #panel h1 { font-size: 18px; margin: 0 0 12px; }
+#panel h2 { font-size: 14px; margin: 16px 0 8px; color: #cfe4e2; }
 #panel p, #panel label { font-size: 13px; line-height: 1.45; }
 #panel button { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
 #panel button.active { background: #496078; border-color: #71839a; }
@@ -649,26 +650,29 @@ code { color: #c9e2ff; }
 <body>
 <div id="app">
   <aside id="panel">
-    <h1>TotalSegmentator Wrapper 3Dプレビュー</h1>
-    <p>入力: <code id="inputName"></code></p>
-    <p>ラベル数: <code id="labelCount"></code><br>なめらかさ: <code id="smooth"></code></p>
+    <h1>TotalSegmentator 3Dビューアー</h1>
+    <p>データ: <code id="dataName"></code></p>
+    <p>このデータで検出された構造ラベル: <code id="labelCount"></code><br>表面平滑化: <code id="smooth"></code></p>
+    <h2>操作方法</h2>
     <div id="mode">
-      <button id="modeTrackpad" class="active" type="button">トラックパッド</button>
-      <button id="modeMouse" type="button">マウス</button>
+      <button id="modeTrackpad" class="active" type="button" aria-label="操作方法: トラックパッド">トラックパッド</button>
+      <button id="modeMouse" type="button" aria-label="操作方法: マウス">マウス</button>
     </div>
+    <h2>表示方向</h2>
     <div id="views">
-      <button id="viewFront" type="button">正面</button>
-      <button id="viewBack" type="button">背面</button>
-      <button id="viewLeft" type="button">左</button>
-      <button id="viewRight" type="button">右</button>
-      <button id="viewTop" type="button">上</button>
-      <button id="viewBottom" type="button">下</button>
-      <button id="fitAll" type="button">全体表示</button>
-      <button id="reset" type="button">リセット</button>
+      <button id="viewFront" type="button" aria-label="標準方向で表示">標準方向</button>
+      <button id="viewBack" type="button" aria-label="標準方向の反対側から表示">反対方向</button>
+      <button id="viewLeft" type="button" aria-label="左回転方向で表示">左回転方向</button>
+      <button id="viewRight" type="button" aria-label="右回転方向で表示">右回転方向</button>
+      <button id="viewTop" type="button" aria-label="上方向から表示">上方向</button>
+      <button id="viewBottom" type="button" aria-label="下方向から表示">下方向</button>
+      <button id="fitAll" type="button" aria-label="全体に合わせる">全体に合わせる</button>
+      <button id="reset" type="button" aria-label="初期表示に戻す">初期表示に戻す</button>
     </div>
+    <h2>表示する構造</h2>
     <div id="layers"></div>
   </aside>
-  <canvas id="view"></canvas>
+  <canvas id="view" aria-label="3Dデータ表示領域"></canvas>
 </div>
 <script>
 const DATA = __PAYLOAD__;
@@ -701,7 +705,7 @@ let program = null;
 let attribs = null;
 let uniforms = null;
 let uintIndexExtension = null;
-document.getElementById('inputName').textContent = DATA.input;
+document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
 document.getElementById('labelCount').textContent = DATA.labelCount;
 document.getElementById('smooth').textContent = smoothingLabel(DATA.smoothing.preset);
 const layers = document.getElementById('layers');
@@ -712,7 +716,7 @@ for (const mesh of DATA.meshes) {
   input.checked = visible[mesh.name];
   input.onchange = () => { visible[mesh.name] = input.checked; draw(); };
   label.appendChild(input);
-  label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name) + ' (面数: ' + mesh.faces.length + ')'));
+  label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name) + '（ポリゴン数: ' + mesh.faces.length + '）'));
   layers.appendChild(label);
 }
 document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
@@ -745,8 +749,8 @@ function meshDisplayName(name) {
   const labels = {
     dental_hard_tissue: '歯',
     jaws: '顎骨',
-    pulp: '歯髄',
-    all_nonzero: 'すべて'
+    pulp: '歯髄腔（推定）',
+    all_nonzero: '全構造'
   };
   return labels[name] || name;
 }

@@ -4,13 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-NON_CLINICAL_NOTICE = (
-    "This is a non-clinical research/education preview. It is not a medical device "
-    "and is not intended for diagnosis, treatment planning, surgical planning, or "
-    "autonomous clinical decision-making. Outputs must be treated as preliminary "
-    "segmentation model outputs and manually reviewed."
-)
+from totalsegmentator_wrapper_mac.disclaimers import NON_CLINICAL_NOTICE_EN
 
 
 def load_case_summary(case_dir: Path) -> dict[str, Any]:
@@ -104,7 +98,7 @@ def format_case_summary_markdown(case_dir: Path) -> str:
             "",
             "## Notice",
             "",
-            NON_CLINICAL_NOTICE,
+            NON_CLINICAL_NOTICE_EN,
             "",
         ]
     )

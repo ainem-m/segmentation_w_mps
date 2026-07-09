@@ -28,7 +28,7 @@ struct TotalSegmentatorWrapperForMacApp: App {
                             .applicationName: appTitle,
                             .applicationVersion: currentAppVersion(),
                             .credits: NSAttributedString(
-                                string: "TotalSegmentatorを利用する非公式Mac wrapperです。非臨床プレビュー用で、DICOM/CT/処理結果は送信しません。"
+                                string: "TotalSegmentatorを利用した非公式wrapperです。TotalSegmentator公式アプリではありません。研究・教育目的の非臨床プレビューです。DICOM/CT/処理結果は送信しません。"
                             ),
                         ]
                     )
@@ -41,5 +41,5 @@ struct TotalSegmentatorWrapperForMacApp: App {
 func currentAppVersion() -> String {
     let paths = AppPaths.current()
     let manifest = readJSON(paths.manifest) ?? [:]
-    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.1"
+    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.2"
 }

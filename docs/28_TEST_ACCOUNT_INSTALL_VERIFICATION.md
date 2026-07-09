@@ -33,7 +33,7 @@ scripts/build_mac_dmg.sh
 Expected artifact:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.1.1-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg
 ```
 
 ## Automated Preflight
@@ -54,7 +54,7 @@ test-account-style evidence.
 
 1. 別のmacOSテスト用アカウントへログインする。
 2. そのアカウントには Homebrew、`uv`、pyenv、Python をインストールしない。
-3. `TotalSegmentator Wrapper for Mac-0.1.1-arm64.dmg` をそのアカウントへコピーする。
+3. `TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg` をそのアカウントへコピーする。
 4. DMGを開く。
 5. `TotalSegmentator Wrapper for Mac.app` を `~/Applications` へドラッグする。
    `~/Applications` がない場合はFinderで作成する。

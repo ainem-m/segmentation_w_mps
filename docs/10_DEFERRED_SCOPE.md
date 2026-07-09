@@ -90,6 +90,15 @@ not:
 run inside Slicer
 ```
 
+Optional Slicer handoff may be added as a file-only export later:
+
+```text
+write Slicer-readable files -> user opens Slicer manually -> drag-and-drop import
+```
+
+Do not make Slicer auto-launch, Slicer.app path discovery, or user-run Python
+scripts part of the main workflow.
+
 ## Feature admission rule
 
 A feature may enter MVP only if it directly supports one of:

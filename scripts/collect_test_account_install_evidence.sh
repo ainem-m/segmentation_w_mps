@@ -66,6 +66,9 @@ manifest_path = resources / "setup_manifest.json"
 runtime_dir = resources / "python" / "cpython-3.12"
 runtime_python = runtime_dir / "bin" / "python3.12"
 bundled_dcm2niix = resources / "bin" / "dcm2niix"
+license_inventory = resources / "licenses" / "third_party_license_inventory.json"
+totalsegmentator_license = resources / "licenses" / "TotalSegmentator-Apache-2.0.txt"
+dcm2niix_license = resources / "licenses" / "dcm2niix-license.txt"
 sample1_input = resources / "sample1" / "input" / "DZ-CBCT_jawcrop_0p5mm.nii.gz"
 sample1_viewer = resources / "sample1" / "surface_preview" / "index.html"
 sample1_manifest = resources / "sample1" / "sample_manifest.json"
@@ -183,6 +186,7 @@ if runtime_dir.exists():
 check("bundled_python_has_no_absolute_symlinks", not absolute_symlinks, absolute_symlinks[:20])
 
 bundled = manifest.get("bundled", {})
+license_inventory_payload = load_json(license_inventory)
 sample1_manifest_payload = load_json(sample1_manifest)
 check("manifest_includes_sample1", "sample1" in bundled, bundled.get("sample1"))
 for manifest_field in (
@@ -198,6 +202,7 @@ for manifest_field in (
     "sample1_manifest_sha256",
     "update_manifest_url",
     "update_allowed_hosts",
+    "third_party_licenses",
   ):
     check(f"manifest_has_{manifest_field}", manifest_field in manifest, manifest.get(manifest_field))
 actual_app_version = manifest.get("app_version") or manifest.get("version")
@@ -208,6 +213,14 @@ if expected_app_version:
         {"expected": expected_app_version, "actual": actual_app_version},
     )
 check("bundled_dcm2niix_exists", bundled_dcm2niix.exists() and os.access(bundled_dcm2niix, os.X_OK), str(bundled_dcm2niix))
+check("totalsegmentator_license_exists", totalsegmentator_license.exists(), str(totalsegmentator_license))
+check("dcm2niix_license_exists", dcm2niix_license.exists(), str(dcm2niix_license))
+check("license_inventory_exists", license_inventory.exists(), str(license_inventory))
+check(
+    "license_inventory_unresolved_zero",
+    license_inventory_payload.get("unresolved_count") == 0,
+    license_inventory_payload.get("unresolved"),
+)
 check("sample1_input_exists", sample1_input.exists(), str(sample1_input))
 check("sample1_surface_preview_exists", sample1_viewer.exists(), str(sample1_viewer))
 check("sample1_manifest_exists", sample1_manifest.exists(), str(sample1_manifest))

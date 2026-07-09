@@ -18,6 +18,10 @@ SAMPLE1_ROOT = ROOT / "resources" / "sample1"
 SAMPLE1_VIEWER_HTML = SAMPLE1_ROOT / "surface_preview" / "index.html"
 SAMPLE1_MANIFEST = SAMPLE1_ROOT / "sample_manifest.json"
 SAMPLE1_NOTICES = SAMPLE1_ROOT / "THIRD_PARTY_NOTICES.txt"
+TOTALSEGMENTATOR_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "TotalSegmentator-Apache-2.0.txt"
+DCM2NIIX_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "dcm2niix-license.txt"
+MANUAL_LICENSE_OVERRIDES = ROOT / "resources" / "third_party" / "licenses" / "manual-overrides.json"
+LICENSE_INVENTORY_SCRIPT = ROOT / "scripts" / "generate_third_party_license_inventory.py"
 
 
 class MacAppPackagingTests(unittest.TestCase):
@@ -95,9 +99,35 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX", text)
         self.assertIn('cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"', text)
         self.assertIn('"dcm2niix": "bin/dcm2niix"', text)
+        self.assertIn("TOTALSEGMENTATOR_LICENSE_PATH", text)
+        self.assertIn("resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt", text)
+        self.assertIn('cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"', text)
+        self.assertIn('"totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt"', text)
+        self.assertIn("DCM2NIIX_LICENSE_PATH", text)
+        self.assertIn("resources/third_party/licenses/dcm2niix-license.txt", text)
+        self.assertIn('cp "${DCM2NIIX_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/dcm2niix-license.txt"', text)
+        self.assertIn('"dcm2niix_license": "licenses/dcm2niix-license.txt"', text)
+        self.assertIn("LICENSE_MANUAL_OVERRIDES_PATH", text)
+        self.assertIn("resources/third_party/licenses/manual-overrides.json", text)
+        self.assertIn("generate_third_party_license_inventory.py", text)
+        self.assertIn("LICENSE_INVENTORY_ENV_DIR", text)
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_LICENSE_SITE_PATH", text)
+        self.assertIn("--site-path", text)
+        self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps]"', text)
+        self.assertIn("--fail-on-unresolved", text)
+        self.assertIn('"third_party_licenses": {', text)
+        self.assertIn('"inventory": "licenses/third_party_license_inventory.json"', text)
+        self.assertIn('"summary": "licenses/THIRD_PARTY_LICENSES.txt"', text)
+        self.assertIn('"unresolved_count": ${LICENSE_UNRESOLVED_COUNT}', text)
+        self.assertIn('"third_party_license_inventory": "licenses/third_party_license_inventory.json"', text)
+        self.assertIn('"third_party_license_summary": "licenses/THIRD_PARTY_LICENSES.txt"', text)
         self.assertIn("THIRD_PARTY_NOTICES.txt", text)
-        self.assertIn("BSD license", text)
-        self.assertIn("public domain or MIT licensed", text)
+        self.assertIn("TotalSegmentator", text)
+        self.assertIn("Apache-2.0", text)
+        self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", text)
+        self.assertIn("Contents/Resources/licenses/dcm2niix-license.txt", text)
+        self.assertIn("Contents/Resources/licenses/third_party_license_inventory.json", text)
+        self.assertNotIn("See the upstream license.txt", text)
         self.assertIn("sample1_manifest_sha256", text)
         self.assertIn("dependency_set_id", text)
         self.assertIn("pydicom3", text)
@@ -110,8 +140,9 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_notarization_script_submits_staples_and_validates_dmg(self) -> None:
         text = NOTARIZE_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.1}"', text)
-        self.assertIn('${APP_NAME}-${APP_VERSION}-arm64.dmg', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"', text)
+        self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY", text)
@@ -136,8 +167,9 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_dmg_build_script_uses_configured_app_version_for_filename(self) -> None:
         text = DMG_BUILD_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.1}"', text)
-        self.assertIn('${APP_NAME}-${APP_VERSION}-arm64.dmg', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"', text)
+        self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertNotIn('${APP_NAME}-0.1.0-arm64.dmg"', text)
 
@@ -193,6 +225,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"Resources"', texts["CommandBuilder.swift"])
         self.assertIn('"Library/Application Support"', texts["CommandBuilder.swift"])
         self.assertIn('"--totalseg-bin"', texts["CommandBuilder.swift"])
+        self.assertIn('"--robust-crop"', texts["CommandBuilder.swift"])
+        self.assertIn('"--teeth-robust-craniofacial-preflight"', texts["CommandBuilder.swift"])
         self.assertIn("dicom-normalizer-audit", texts["CommandBuilder.swift"])
         self.assertIn("dicom-normalizer-convert-clean", texts["CommandBuilder.swift"])
         self.assertIn("var dcm2niix: URL", texts["CommandBuilder.swift"])
@@ -204,10 +238,14 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"120"', texts["CommandBuilder.swift"])
         self.assertIn("surface-preview", texts["CommandBuilder.swift"])
         self.assertIn("surfacePreviewCommand", texts["CommandBuilder.swift"])
+        self.assertIn("slicer-export", texts["CommandBuilder.swift"])
+        self.assertIn("slicerExportCommand", texts["CommandBuilder.swift"])
         self.assertIn("update-check", texts["CommandBuilder.swift"])
         self.assertIn("updateCheckRunning", texts["AppState.swift"])
         self.assertIn("updateInstallRunning", texts["AppState.swift"])
         self.assertIn("configure_totalseg_privacy", texts["CommandBuilder.swift"])
+        self.assertIn("download_totalseg_weights", texts["CommandBuilder.swift"])
+        self.assertIn("weights_download_failed", texts["CommandBuilder.swift"])
         self.assertIn("利用状況データ", texts["CommandBuilder.swift"])
         self.assertIn("totalseg_privacy_config_failed", texts["CommandBuilder.swift"])
         self.assertIn("setupRecoverySuggestion", texts["CommandBuilder.swift"])
@@ -253,6 +291,9 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertNotIn("rc == 0 && modeForRun == .individualTeeth", texts["AppState.swift"])
         self.assertIn("歯列・顎骨", texts["AppState.swift"])
         self.assertIn("CommandBuilder.surfacePreviewCommand", texts["AppState.swift"])
+        self.assertIn("CommandBuilder.slicerExportCommand", texts["AppState.swift"])
+        self.assertIn("Slicerで開けるファイルを書き出しました", texts["AppState.swift"])
+        self.assertIn("Slicerで開くファイルを書き出す", texts["Views.swift"])
         self.assertIn("3Dプレビュー作成中", texts["AppState.swift"])
         self.assertIn("3Dプレビューを作成しました", texts["AppState.swift"])
         self.assertIn("3Dプレビュー生成に失敗しました", texts["AppState.swift"])
@@ -298,7 +339,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX", texts["CommandBuilder.swift"])
         self.assertIn("DICOM/CT/結果は送信しません", texts["Views.swift"])
         self.assertIn("利用状況データの送信も止めます", texts["Views.swift"])
-        self.assertIn("初回はモデル取得", texts["Views.swift"])
+        self.assertIn("モデルはセットアップ時に取得します", texts["Views.swift"])
         self.assertIn("setupReasonToJapanese", texts["CommandBuilder.swift"])
         self.assertNotIn("shell=True", combined)
         self.assertNotIn("/usr/bin/env python3", combined)
@@ -306,14 +347,17 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_bundled_sample1_viewer_is_offline_html(self) -> None:
         text = SAMPLE1_VIEWER_HTML.read_text(encoding="utf-8")
 
-        self.assertIn("TotalSegmentator Wrapper 3Dプレビュー", text)
+        self.assertIn("TotalSegmentator 3Dビューアー", text)
         self.assertIn("const DATA =", text)
+        self.assertIn('"dataLabel":"付属サンプル"', text)
+        self.assertNotIn("teeth_multilabel_fullspace.nii.gz", text)
         self.assertIn("modeTrackpad", text)
         self.assertIn("トラックパッド", text)
         self.assertIn("マウス", text)
-        self.assertIn("全体表示", text)
-        self.assertIn("なめらかさ", text)
-        self.assertIn("面数", text)
+        self.assertIn("全体に合わせる", text)
+        self.assertIn("表面平滑化", text)
+        self.assertIn("ポリゴン数", text)
+        self.assertIn("歯髄腔（推定）", text)
         self.assertNotIn("http://", text)
         self.assertNotIn("https://", text)
         self.assertNotIn("cdn", text.lower())
@@ -322,6 +366,7 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_bundled_sample1_manifest_and_notices_document_license_and_purpose(self) -> None:
         manifest = json.loads(SAMPLE1_MANIFEST.read_text(encoding="utf-8"))
         notices = SAMPLE1_NOTICES.read_text(encoding="utf-8")
+        license_text = TOTALSEGMENTATOR_LICENSE.read_text(encoding="utf-8")
 
         self.assertEqual(manifest["sample_id"], "sample1_dz_cbct_jawcrop_0p5mm")
         self.assertEqual(manifest["default_input"], "input/DZ-CBCT_jawcrop_0p5mm.nii.gz")
@@ -334,7 +379,41 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db", notices)
         self.assertIn("TotalSegmentator", notices)
         self.assertIn("Apache License 2.0", notices)
+        self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", notices)
         self.assertIn("not for diagnosis", notices)
+        self.assertIn("Apache License", license_text)
+        self.assertIn("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION", license_text)
+        self.assertIn("Redistribution", license_text)
+
+    def test_static_third_party_license_files_are_present(self) -> None:
+        dcm2niix_license = DCM2NIIX_LICENSE.read_text(encoding="utf-8")
+        manual_overrides = json.loads(MANUAL_LICENSE_OVERRIDES.read_text(encoding="utf-8"))
+        inventory_script = LICENSE_INVENTORY_SCRIPT.read_text(encoding="utf-8")
+        override_keys = {
+            (item["package"], item["version"], item["decision"])
+            for item in manual_overrides["overrides"]
+        }
+
+        self.assertIn("Copyright (c) 2014-2025 Chris Rorden", dcm2niix_license)
+        self.assertIn("Redistribution and use in source and binary forms", dcm2niix_license)
+        self.assertEqual(
+            manual_overrides["schema"],
+            "totalsegmentator_wrapper_mac.manual_license_overrides.v1",
+        )
+        self.assertIn(("argparse", "1.4.0", "accepted"), override_keys)
+        self.assertIn(("linecache2", "1.0.0", "accepted"), override_keys)
+        self.assertIn(("traceback2", "1.4.0", "accepted"), override_keys)
+        self.assertIn(("unittest2", "1.1.0", "accepted"), override_keys)
+        self.assertIn(("connected-components-3d", "4.0.0", "accepted"), override_keys)
+        self.assertIn(("pandas", "3.0.3", "accepted"), override_keys)
+        self.assertIn(("matplotlib", "3.11.0", "accepted"), override_keys)
+        self.assertIn(("scipy", "1.17.1", "accepted"), override_keys)
+        self.assertIn(("scipy", "1.18.0", "accepted"), override_keys)
+        self.assertIn(("totalsegmentator-wrapper-mac", "0.1.2", "accepted"), override_keys)
+        self.assertIn("third_party_license_inventory.v1", inventory_script)
+        self.assertIn("attention_license_requires_review", inventory_script)
+        self.assertIn("license_metadata_unknown", inventory_script)
+        self.assertIn("license_text_missing", inventory_script)
 
     def test_bundled_sample1_metadata_does_not_expose_developer_local_paths(self) -> None:
         checked = [
@@ -399,7 +478,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("同梱Sample 1のオフライン3Dプレビュー", build_text)
         self.assertIn("同梱Sample 1のCT入力", build_text)
         self.assertIn("100秒前後", build_text)
-        self.assertIn("モデル取得済みの場合", build_text)
+        self.assertIn("モデル準備済みの場合", build_text)
         self.assertIn("利用状況データ", build_text)
         self.assertIn("セットアップ中もプレビュー作成中も送信しません", build_text)
         self.assertIn("表示用の断面画像", build_text)
@@ -413,6 +492,10 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("アプリを置き換えて再起動", build_text)
         self.assertIn("THIRD_PARTY_NOTICES.txt", build_text)
         self.assertIn("Apache-2.0", build_text)
+        self.assertIn("TotalSegmentator Apache-2.0ライセンス本文", build_text)
+        self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", build_text)
+        self.assertIn("Contents/Resources/licenses/dcm2niix-license.txt", build_text)
+        self.assertIn("Contents/Resources/licenses/third_party_license_inventory.json", build_text)
         self.assertIn("精度評価用データではありません", build_text)
         self.assertIn("管理者権限", build_text)
         self.assertIn("DICOM、CT", build_text)
@@ -437,7 +520,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_SHARED_EVIDENCE_DIR", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION", verify_text)
-        self.assertIn("0.1.1", verify_text)
+        self.assertIn("0.1.2", verify_text)
+        self.assertIn("0.1.2-20260708-modelsetup-arm64.dmg", verify_text)
         self.assertIn("SharedEvidence/test_account_install_evidence.json", verify_text)
         self.assertNotIn("sudo", build_text + verify_text)
         self.assertNotIn("brew install", build_text + verify_text)
@@ -476,7 +560,12 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("dcm2niix_sha256", text)
         self.assertIn("dcm2niix_version", text)
         self.assertIn("dcm2niix_source", text)
+        self.assertIn("third_party_licenses", text)
         self.assertIn("bundled_dcm2niix_exists", text)
+        self.assertIn("totalsegmentator_license_exists", text)
+        self.assertIn("dcm2niix_license_exists", text)
+        self.assertIn("license_inventory_exists", text)
+        self.assertIn("license_inventory_unresolved_zero", text)
         self.assertIn("update_allowed_hosts", text)
         self.assertIn("sample1_input_exists", text)
         self.assertIn("sample1_surface_preview_exists", text)
@@ -510,10 +599,12 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("stapler_dmg_valid", text)
         self.assertIn("setup_state_installed_bundle_current", text)
         self.assertIn("manifest_has_update_allowed_hosts", text)
+        self.assertIn("manifest_has_third_party_licenses", text)
         self.assertIn("manifest_has_dcm2niix_sha256", text)
         self.assertIn("manifest_has_dcm2niix_version", text)
         self.assertIn("manifest_has_dcm2niix_source", text)
         self.assertIn("bundled_dcm2niix_exists", text)
+        self.assertIn("license_inventory_unresolved_zero", text)
         self.assertNotIn("sudo", text)
         self.assertNotIn("brew", text)
 

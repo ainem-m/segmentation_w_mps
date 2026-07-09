@@ -3,27 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TotalSegmentator Wrapper for Mac public alpha</title>
+  <title>TotalSegmentator Wrapper for Mac｜CT・CBCTをMacで3D表示</title>
+  <link rel="canonical" href="https://totalsegmentator.lacramy.com/">
   <meta
     name="description"
-    content="TotalSegmentator Wrapper for Mac public alpha distribution page for Apple Silicon Macs."
+    content="医科用CT／歯科用CBCTのDICOMまたはNIfTIデータをApple Silicon搭載Macで扱い、顎骨・歯などの自動抽出結果を3D表示する研究・教育用アプリです。"
+  >
+  <meta property="og:url" content="https://totalsegmentator.lacramy.com/">
+  <meta property="og:title" content="TotalSegmentator Wrapper for Mac">
+  <meta
+    property="og:description"
+    content="CT／CBCT画像をMac内で処理し、自動抽出結果をブラウザ上の3Dビューアーで確認できる研究・教育用アプリです。"
+  >
+  <meta
+    property="og:image:alt"
+    content="顎骨と歯の自動抽出結果を表示したTotalSegmentator Wrapper for Macの3Dビューアー"
   >
   <style>
     :root {
       color-scheme: light;
       --ink: #13272b;
       --muted: #53666a;
-      --surface: #f7faf8;
+      --surface: #f5f8f6;
       --panel: #ffffff;
       --line: #c9d7d3;
+      --line-strong: #9bb4ae;
       --teal: #1f7a73;
       --teal-dark: #173f46;
       --amber: #8a540f;
+      --amber-soft: #fff6e4;
+      --red-soft: #fff0ed;
       --blue: #315e8a;
+      --blue-soft: #eef6fb;
+      --green-soft: #eef7f1;
     }
 
     * {
       box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
     }
 
     body {
@@ -31,7 +51,7 @@
       background: var(--surface);
       color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.55;
+      line-height: 1.65;
     }
 
     a {
@@ -45,14 +65,15 @@
 
     .topbar-inner,
     .main,
-    .band-inner {
-      max-width: 1120px;
+    .band-inner,
+    .footer-inner {
+      max-width: 1160px;
       margin: 0 auto;
       padding: 0 28px;
     }
 
     .topbar-inner {
-      min-height: 72px;
+      min-height: 76px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -72,28 +93,52 @@
       white-space: nowrap;
     }
 
+    .nav {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      font-size: 14px;
+    }
+
+    .nav a {
+      color: #e8f4f2;
+      text-decoration: none;
+    }
+
     .main {
-      padding-top: 44px;
-      padding-bottom: 56px;
+      padding-top: 46px;
+      padding-bottom: 58px;
     }
 
     .hero {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 430px;
-      gap: 36px;
+      grid-template-columns: 1fr;
+      gap: 30px;
       align-items: start;
     }
 
+    .hero-copy {
+      max-width: 900px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--teal);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
     h1 {
-      margin: 0 0 14px;
-      font-size: 42px;
+      margin: 0 0 16px;
+      font-size: 44px;
       line-height: 1.12;
       letter-spacing: 0;
     }
 
     .lead {
-      max-width: 680px;
-      margin: 0 0 24px;
+      max-width: 820px;
+      margin: 0 0 16px;
       color: var(--muted);
       font-size: 18px;
     }
@@ -102,7 +147,7 @@
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin: 28px 0;
+      margin: 26px 0 0;
     }
 
     .button {
@@ -114,6 +159,8 @@
       border-radius: 8px;
       padding: 0 18px;
       border: 1px solid var(--teal);
+      cursor: pointer;
+      font: inherit;
       text-decoration: none;
       font-weight: 700;
     }
@@ -128,6 +175,157 @@
       color: var(--teal-dark);
     }
 
+    .button.compact {
+      min-height: 38px;
+      padding: 0 14px;
+      font-size: 14px;
+    }
+
+    .button.ghost {
+      border-color: var(--line-strong);
+      background: transparent;
+      color: var(--teal-dark);
+    }
+
+    .download-note {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .warning-box {
+      max-width: 900px;
+      margin: 24px 0 0;
+      padding: 18px;
+      border: 1px solid #e5b871;
+      border-radius: 8px;
+      background: var(--amber-soft);
+    }
+
+    .warning-box p {
+      margin: 0;
+    }
+
+    .warning-box p + p {
+      margin-top: 10px;
+    }
+
+    .hero-preview {
+      min-width: 0;
+    }
+
+    .preview-shell {
+      position: relative;
+      width: 100%;
+      height: 500px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #111317;
+    }
+
+    .preview-image,
+    .preview-frame {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .preview-image {
+      object-fit: cover;
+    }
+
+    .preview-frame {
+      border: 0;
+      background: #111317;
+    }
+
+    .preview-overlay {
+      position: absolute;
+      inset: auto 18px 18px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      border-radius: 8px;
+      background: rgba(19, 39, 43, 0.88);
+      color: #ffffff;
+      backdrop-filter: blur(8px);
+    }
+
+    .preview-overlay p {
+      margin: 0;
+      font-size: 14px;
+      color: #dcebea;
+    }
+
+    .preview-title {
+      margin: 0 0 4px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .preview-caption {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .band {
+      border-top: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .band.alt {
+      background: var(--surface);
+    }
+
+    .band-inner {
+      padding-top: 42px;
+      padding-bottom: 46px;
+    }
+
+    .section-head {
+      max-width: 820px;
+      margin-bottom: 24px;
+    }
+
+    .section-head h2,
+    .release-panel h2 {
+      margin: 0 0 10px;
+      font-size: 26px;
+      line-height: 1.24;
+      letter-spacing: 0;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .grid-two,
+    .grid-three,
+    .grid-four {
+      display: grid;
+      gap: 18px;
+    }
+
+    .grid-two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .notice-panel,
     .release-panel {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -135,12 +333,115 @@
       padding: 20px;
     }
 
-    .release-panel h2,
-    .band h2 {
-      margin: 0 0 14px;
-      font-size: 22px;
-      line-height: 1.25;
+    .card h3,
+    .step h3,
+    .notice-panel h3 {
+      margin: 0 0 9px;
+      font-size: 18px;
+      line-height: 1.3;
       letter-spacing: 0;
+    }
+
+    .card p,
+    .step p,
+    .notice-panel p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .card p + p,
+    .notice-panel p + p {
+      margin-top: 10px;
+    }
+
+    .plain-list {
+      margin: 0;
+      padding-left: 1.15em;
+      color: var(--muted);
+    }
+
+    .plain-list li + li {
+      margin-top: 6px;
+    }
+
+    .spec-table {
+      display: grid;
+      gap: 0;
+      margin: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .spec-row {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px 20px;
+    }
+
+    .spec-row + .spec-row {
+      border-top: 1px solid var(--line);
+    }
+
+    .spec-row dt {
+      margin: 0;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .spec-row dd {
+      margin: 0;
+    }
+
+    .install-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .install-prep {
+      margin: 0 0 18px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 18px;
+    }
+
+    .step-number {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: var(--green-soft);
+      color: var(--teal-dark);
+      font-weight: 700;
+    }
+
+    .step-download {
+      margin-top: 12px;
+    }
+
+    .roadmap-actions {
+      display: flex;
+      justify-content: center;
+      margin-top: 24px;
     }
 
     .meta {
@@ -161,60 +462,76 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
-    .preview {
-      width: 100%;
-      margin: 4px 0 18px;
-      border: 1px solid var(--line);
+    .release-note {
+      margin: 16px 0 0;
+      padding: 13px;
       border-radius: 8px;
-      display: block;
-    }
-
-    .note {
-      margin: 18px 0 0;
-      color: var(--amber);
+      background: var(--blue-soft);
+      color: var(--ink);
       font-size: 14px;
     }
 
-    .band {
-      border-top: 1px solid var(--line);
-      background: #ffffff;
+    .limitation {
+      border-top: 3px solid var(--amber);
+      background: var(--amber-soft);
     }
 
-    .band-inner {
-      padding-top: 36px;
-      padding-bottom: 40px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 28px;
-    }
-
-    .section p {
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .section strong {
-      color: var(--ink);
+    .critical {
+      border-top: 3px solid #b44b35;
+      background: var(--red-soft);
     }
 
     footer {
       border-top: 1px solid var(--line);
-      padding: 22px 28px 34px;
+      background: #ffffff;
       color: var(--muted);
       font-size: 13px;
+    }
+
+    .footer-inner {
+      padding-top: 22px;
+      padding-bottom: 34px;
       text-align: center;
     }
 
-    @media (max-width: 860px) {
-      .hero,
-      .band-inner {
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      margin-top: 12px;
+    }
+
+    .footer-links a {
+      color: var(--teal-dark);
+    }
+
+    @media (max-width: 980px) {
+      .install-layout,
+      .grid-four {
         grid-template-columns: 1fr;
       }
 
-      h1 {
-        font-size: 34px;
+      .grid-two,
+      .grid-three {
+        grid-template-columns: 1fr;
       }
 
+      .spec-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      h1 {
+        font-size: 36px;
+      }
+
+      .preview-shell {
+        height: 440px;
+      }
+    }
+
+    @media (max-width: 720px) {
       .topbar-inner {
         align-items: flex-start;
         flex-direction: column;
@@ -226,18 +543,24 @@
       .status {
         white-space: normal;
       }
+
+      .preview-overlay {
+        align-items: stretch;
+        flex-direction: column;
+      }
     }
 
     @media (max-width: 520px) {
       .topbar-inner,
       .main,
-      .band-inner {
+      .band-inner,
+      .footer-inner {
         padding-left: 18px;
         padding-right: 18px;
       }
 
       h1 {
-        font-size: 29px;
+        font-size: 30px;
       }
 
       .lead {
@@ -252,6 +575,16 @@
         width: 100%;
       }
 
+      .preview-shell {
+        height: 320px;
+        overflow: auto;
+      }
+
+      .preview-frame {
+        min-width: 720px;
+      }
+
+      .step,
       .meta {
         grid-template-columns: 1fr;
       }
@@ -261,74 +594,269 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <p class="brand">TotalSegmentator Wrapper for Mac</p>
-      <p class="status">Public alpha 0.1.1 / Apple Silicon / macOS 13+</p>
+      <div>
+        <p class="brand">TotalSegmentator Wrapper for Mac</p>
+        <p class="status">公開アルファ版（試用段階）0.1.2 ・ Apple Silicon搭載Mac ・ macOS 13以降</p>
+      </div>
+      <nav class="nav" aria-label="ページ内ナビゲーション">
+        <a href="#overview">概要</a>
+        <a href="#input-output">入力と出力</a>
+        <a href="#install">インストール</a>
+        <a href="#data">データと通信</a>
+        <a href="#limits">使用上の制限</a>
+      </nav>
     </div>
   </header>
 
-  <main class="main">
+  <main class="main" id="overview">
     <section class="hero" aria-labelledby="title">
-      <div>
-        <h1 id="title">TotalSegmentator Wrapper for Mac</h1>
+      <div class="hero-copy">
+        <p class="eyebrow">Mac内処理｜研究・教育用</p>
+        <h1 id="title">医科用CT／歯科用CBCTから、顎骨・歯などを自動抽出して3D表示</h1>
         <p class="lead">
-          Apple Silicon Mac 上で、ローカルの CT/CBCT から非臨床 3D preview を作成する
-          public alpha 配布版です。Developer ID 署名と Apple notarization 済みの DMG を配布します。
+          DICOM形式のCT／CBCTデータを選ぶと、顎骨・歯などの候補を自動で抽出し、Mac上で3D表示して確認できます。
+          研究用のNIfTIファイルにも対応しています。
         </p>
-        <div class="actions" aria-label="Download links">
-          <a class="button primary" href="/download">
-            DMGをダウンロード
-          </a>
-          <a class="button secondary" href="/release-notes">
-            リリースノート
-          </a>
+        <p class="lead">
+          まずは下の3Dサンプルで、表示内容と操作方法を確認できます。
+        </p>
+        <div class="actions" aria-label="主要リンク">
+          <a class="button primary" href="/download">アプリをダウンロード</a>
+          <a class="button secondary" href="#install">インストール手順を見る</a>
+          <a class="button ghost" href="/release-notes">リリースノート</a>
         </div>
-        <p class="note">
-          診断、治療計画、精度評価には使わないでください。初回 Setup や model weight 取得で通信する場合があります。
-        </p>
+        <p class="download-note">Apple Silicon Mac用インストーラー（DMG）：61.7 MiB</p>
+        <div class="warning-box" role="note" aria-label="公開アルファ版の状態メモ">
+          <p>公開アルファ版（試用段階）です。画面や出力形式は変わる可能性があります。初回起動時に、動作に必要なファイルとモデルweightを取得します。回線速度によりしばらく時間がかかる場合があります。詳しくは<a href="#limits">使用上の制限</a>を確認してください。</p>
+        </div>
       </div>
 
-      <aside class="release-panel" aria-labelledby="release-title">
-        <img
-          class="preview"
-          src="/assets/sample1-preview.png"
-          alt="同梱 Sample 1 の非臨床プレビュー画像"
-          width="1200"
-          height="760"
-        >
-        <h2 id="release-title">Release 0.1.1</h2>
-        <dl class="meta">
-          <dt>File</dt>
-          <dd>TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg</dd>
-          <dt>Size</dt>
-          <dd>43 MiB</dd>
-          <dt>SHA256</dt>
-          <dd>8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e</dd>
-          <dt>Signing</dt>
-          <dd>Developer ID / notarized</dd>
-        </dl>
-      </aside>
+      <div class="hero-preview" aria-labelledby="sample-title">
+        <div class="preview-shell" data-preview-shell>
+          <img
+            class="preview-image"
+            src="/assets/sample1-web-preview.jpg"
+            alt="付属サンプルを3Dビューアーで表示した画面。顎骨、歯、歯髄腔の推定領域を個別に表示できる。"
+            width="1200"
+            height="544"
+          >
+          <div class="preview-overlay">
+            <div>
+              <h2 class="preview-title" id="sample-title">付属サンプルを3Dで操作</h2>
+              <p>ボタンを押すと、約7.2 MBの3Dデータを読み込みます。</p>
+            </div>
+            <button class="button primary" type="button" data-preview-load>3Dサンプルを読み込む（約7.2 MB）</button>
+          </div>
+        </div>
+        <p class="preview-caption">
+          読み込み後は、ブラウザ上で回転、拡大縮小、表示方向の変更、構造ごとの表示切り替えを操作できます。
+          動作が遅い場合は、<a href="/preview/sample1.html" target="_blank" rel="noopener">3Dサンプルを別タブで開く</a>を選択してください。
+        </p>
+      </div>
     </section>
   </main>
 
-  <section class="band" aria-label="Distribution notes">
+  <section class="band" aria-labelledby="what-title">
     <div class="band-inner">
-      <div class="section">
-        <h2>送信しないもの</h2>
-        <p><strong>DICOM、CT、処理結果、ローカル path、ログ、ユーザー識別子</strong>は更新確認やプレビュー作成で送信しません。</p>
+      <div class="section-head">
+        <h2 id="what-title">このアプリでできること</h2>
+        <p>CT／CBCTデータからAIによる自動抽出結果を作成し、ブラウザ上の3Dビューアーで確認できます。</p>
       </div>
-      <div class="section">
-        <h2>初回 Setup</h2>
-        <p>専用 runtime はユーザーの App Support 配下に作成されます。sudo、Homebrew、システム領域への書き込みは使いません。</p>
+      <div class="grid-two">
+        <article class="card">
+          <h3>CT／CBCTから3D表示を作成</h3>
+          <p>通常のCT／CBCTとして確認できるDICOMフォルダ、またはNIfTIファイルを入力として、顎骨・歯などの推定領域を自動抽出し、3D表示用のデータを作成します。</p>
+        </article>
+        <article class="card">
+          <h3>ブラウザで3D結果を確認</h3>
+          <p>作成された確認画面（HTMLビューアー）で、回転、拡大縮小、表示方向の変更、構造ごとの表示切り替えを確認できます。</p>
+        </article>
       </div>
-      <div class="section">
-        <h2>問い合わせ</h2>
-        <p>起動や Setup に失敗した場合は、DMG 内のログ回収コマンドで得たファイルを確認してから共有してください。</p>
+    </div>
+  </section>
+
+  <section class="band alt" id="input-output" aria-labelledby="io-title">
+    <div class="band-inner">
+      <div class="section-head">
+        <h2 id="io-title">入力と出力</h2>
+        <p>入力できるデータと、作成されるファイルの一覧です。</p>
+      </div>
+      <dl class="spec-table">
+        <div class="spec-row">
+          <dt>入力</dt>
+          <dd>
+            <ul class="plain-list">
+              <li>通常のCT／CBCTとして確認できるDICOMフォルダ</li>
+              <li>NIfTIファイル（.nii／.nii.gz）</li>
+            </ul>
+          </dd>
+        </div>
+        <div class="spec-row">
+          <dt>出力</dt>
+          <dd>
+            <ul class="plain-list">
+              <li>自動抽出結果の保存ファイル（NIfTI）</li>
+              <li>3Dで確認するための画面（HTML）</li>
+              <li>3D表示用ファイル（STL）</li>
+              <li>処理記録（ログ）</li>
+            </ul>
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="band" id="install" aria-labelledby="install-title">
+    <div class="band-inner">
+      <div class="section-head">
+        <h2 id="install-title">インストール手順</h2>
+        <p>ここでは試用までの流れを簡単にまとめます。</p>
+      </div>
+      <article class="notice-panel install-prep">
+        <h3>事前準備</h3>
+        <p>M1/M2/M3/M4などのApple Silicon搭載Macとインターネット接続があれば始められます。追加のアプリや専門的な設定作業は不要です。</p>
+      </article>
+      <div class="install-layout">
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>インストールファイルを保存</h3>
+              <p>下のボタンを押し、DMG（Mac用のインストールファイル）を保存します。</p>
+              <a class="button primary compact step-download" href="/download">アプリをダウンロード</a>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>「アプリケーション」フォルダへ移動</h3>
+              <p>ダウンロードしたDMGを開き、TotalSegmentator Wrapper for Macを「アプリケーション」フォルダへドラッグします。</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>アプリを開いて初期設定</h3>
+              <p>初回起動時に、動作に必要なファイルと初回実行に必要なモデルweightを取得します。回線速度により数分以上かかる場合があります。</p>
+            </div>
+          </article>
+        </div>
+
+        <aside class="release-panel" aria-labelledby="release-title">
+          <h2 id="release-title">配布情報</h2>
+          <dl class="meta">
+            <dt>バージョン</dt>
+            <dd>0.1.2</dd>
+            <dt>ファイル名</dt>
+            <dd>TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg</dd>
+            <dt>ダウンロードサイズ</dt>
+            <dd>61.7 MiB</dd>
+            <dt>SHA-256</dt>
+            <dd>636d0e071dd68a60f13054165c4ef8ab7ef3f51ba535231128759810e5264a3a</dd>
+            <dt>署名</dt>
+            <dd>Developer ID署名済み・Apple notarization済みDMG</dd>
+            <dt>TotalSegmentator</dt>
+            <dd>2.14.0</dd>
+            <dt>リリース日</dt>
+            <dd>2026-07-09</dd>
+          </dl>
+          <p class="release-note">
+            アプリは自動で更新を確認しません。ユーザーがアプリ内で「更新を確認」を選択した場合に限り、バージョン情報を取得します。
+          </p>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt" id="data" aria-labelledby="data-title">
+    <div class="band-inner">
+      <div class="section-head">
+        <h2 id="data-title">データと通信</h2>
+        <p>画像処理はMac内で行います。外部へ送信しないデータと、インターネット接続を使う場面をまとめます。</p>
+      </div>
+      <article class="notice-panel">
+        <ul class="plain-list">
+          <li>選択したCT画像、作成された結果、保存場所の情報、処理記録は、処理のために外部へ送信しません。</li>
+          <li>初期設定、モデルweight準備、更新確認など、アプリ自体に必要な情報の取得ではインターネット接続を使います。</li>
+          <li>TotalSegmentator側の利用状況送信設定は、このアプリの初期設定時にオフにします。</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section class="band" id="limits" aria-labelledby="limits-title">
+    <div class="band-inner">
+      <div class="section-head">
+        <h2 id="limits-title">使用上の制限</h2>
+      </div>
+      <article class="notice-panel limitation">
+        <ul class="plain-list">
+          <li>研究・教育用のアプリです。医療機器として提供するものではなく、診断や治療計画などの臨床判断には使用しないでください。</li>
+          <li>AIによる自動抽出結果には誤りが含まれることがあります。結果を評価する場合は、原画像との照合と専門家による目視確認が必要です。</li>
+          <li>3D表示用データ（メッシュ）は、歯科CAD／CAMや3Dプリント用の製作用データではありません。寸法精度や適合精度を保証するものではありません。</li>
+          <li>ローカル処理は匿名化を意味しません。入力データ、フォルダ名、作成された確認画面（HTML）、自動抽出結果には患者由来の情報が含まれる場合があります。</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section class="band alt" id="roadmap" aria-labelledby="roadmap-title">
+    <div class="band-inner">
+      <div class="section-head">
+        <h2 id="roadmap-title">今後の展望</h2>
+        <p>公開アルファ版として、実際のCT／CBCTデータでの動作を確認しながら改善していきます。</p>
+      </div>
+      <div class="grid-two">
+        <article class="card">
+          <h3>読めないDICOMの改善</h3>
+          <p>通常のCT／CBCTとして確認できるDICOMフォルダでも読み込めない場合は、改善の参考にしたいので状況を教えてください。患者情報を含むファイルは送らず、まずは読み込めなかった状況やエラー内容だけ共有してください。</p>
+        </article>
+        <article class="card">
+          <h3>3D Slicerへの引き継ぎ</h3>
+          <p>今後、作成した結果を3D Slicerで確認・活用しやすくするためのデータ引き継ぎ機能を開発予定です。</p>
+        </article>
+      </div>
+      <div class="roadmap-actions">
+        <a class="button primary compact roadmap-download" href="/download">アプリをダウンロード</a>
       </div>
     </div>
   </section>
 
   <footer>
-    TotalSegmentator Wrapper for Mac is an unofficial, non-clinical preview wrapper powered by TotalSegmentator.
+    <div class="footer-inner">
+      <p>TotalSegmentator Wrapper for Macは、TotalSegmentatorを利用する非公式ラッパーアプリです。</p>
+      <div class="footer-links" aria-label="TotalSegmentator関連リンク">
+        <a href="https://github.com/wasserth/TotalSegmentator" rel="noopener">TotalSegmentator公式プロジェクト</a>
+        <a href="https://github.com/wasserth/TotalSegmentator/blob/master/LICENSE" rel="noopener">TotalSegmentatorのライセンス（Apache-2.0）</a>
+        <a href="https://github.com/wasserth/TotalSegmentator#citation" rel="noopener">研究で使用する場合の引用方法</a>
+      </div>
+      <div class="footer-links" aria-label="TotalSegmentator Wrapper for Mac 関連リンク">
+        <a href="/release-notes">リリースノート</a>
+        <a href="https://app.lacramy.com/">Lacramy Apps</a>
+      </div>
+    </div>
   </footer>
+
+  <script>
+    (() => {
+      const loadButton = document.querySelector("[data-preview-load]");
+      const shell = document.querySelector("[data-preview-shell]");
+      if (!loadButton || !shell) return;
+
+      loadButton.addEventListener("click", () => {
+        if (shell.querySelector("iframe")) return;
+
+        const frame = document.createElement("iframe");
+        frame.className = "preview-frame";
+        frame.src = "/preview/sample1.html";
+        frame.title = "付属サンプルの3Dビューアー";
+        frame.loading = "lazy";
+        frame.setAttribute("allow", "fullscreen");
+        frame.setAttribute("allowfullscreen", "");
+
+        shell.replaceChildren(frame);
+      });
+    })();
+  </script>
 </body>
 </html>

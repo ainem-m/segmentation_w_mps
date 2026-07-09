@@ -1,0 +1,20 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
+
+/
+  Cache-Control: public, max-age=300
+
+/index.html
+  Cache-Control: public, max-age=300
+
+/download
+  Cache-Control: no-cache
+
+/release-notes
+  Cache-Control: no-cache
+
+/totalsegmentator-wrapper-mac*
+  Cache-Control: no-cache

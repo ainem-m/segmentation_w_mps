@@ -1,6 +1,6 @@
 # 34 Alpha Distribution Support Card
 
-TotalSegmentator Wrapper for Mac `0.1.1` の外部紹介・返事待ち中に使う配布カードと
+TotalSegmentator Wrapper for Mac `0.1.2` の外部紹介・返事待ち中に使う配布カードと
 問い合わせ対応表。新機能追加ではなく、配布体験と失敗時対応を安定させるための
 運用メモ。
 
@@ -8,29 +8,32 @@ TotalSegmentator Wrapper for Mac `0.1.1` の外部紹介・返事待ち中に使
 
 | Item | Value |
 | --- | --- |
-| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg` |
-| SHA256 | `8ca21b2cdd14e2420cbb5a59741f01fb5026dd367ecd02a08e39a40beddc562e` |
-| Version | `0.1.1` |
+| 配布物 | `dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg` |
+| SHA256 | `636d0e071dd68a60f13054165c4ef8ab7ef3f51ba535231128759810e5264a3a` |
+| Size | `61.7 MiB` / `64673701` bytes |
+| Version | `0.1.2` |
 | Bundle ID | `jp.chino.totalsegmentator.wrapper.mac` |
 | Signing | Developer ID / hardened runtime |
 | Notarization | Apple notarized / stapled DMG |
-| Cloudflare Pages | `cloudflare/pages/` |
+| Public app page | `https://totalsegmentator.lacramy.com/` |
+| Lacramy apps hub | `https://app.lacramy.com/` |
+| Cloudflare Pages | `cloudflare/pages/` for app page, `cloudflare/app-hub/` for hub |
 | R2 update manifest | `https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json` |
 | 対応環境 | Apple Silicon Mac, macOS 13以降を想定 |
 | 同梱Sample | Sample 1 CT input, precomputed 3D HTML preview |
 | 初回Setup | App Support配下に専用runtimeを作成 |
 | 初回Setup所要時間 | zero-env検証では依存導入が約398秒。環境・通信状況により数分 |
-| 通信 | 初回Setup/初回プレビュー作成時に依存・model weight取得で通信する場合あり |
+| 通信 | 初回Setupまたは明示的な依存更新時に依存・model weight取得で通信する場合あり |
 | 送信しないもの | DICOM, CT, 処理結果, ローカルpath, ログ, ユーザー識別子 |
 | Sample 1処理時間 | model取得済み/MPS利用時におおむね100秒前後 |
-| 注意 | 非臨床preview。診断、治療計画、精度評価には使わない |
+| 注意 | 研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。 |
 
 共有時の短い説明:
 
 ```text
 TotalSegmentator Wrapper for Macは、Apple Silicon Mac上でCBCT/CTの非臨床3D previewを作るalpha版です。
 DMGはDeveloper ID署名・notarized済みです。DICOM/CT/処理結果は送信しません。
-初回Setupや初回プレビュー作成時のみ、依存パッケージやmodel weight取得で通信する場合があります。
+初回Setup時に依存パッケージと初回実行に必要なmodel weightを取得します。
 まずは同梱Sample 1の3D previewと3Dプレビュー作成を試してください。
 ```
 
@@ -86,16 +89,16 @@ DMGはDeveloper ID署名・notarized済みです。DICOM/CT/処理結果は送�
 配布前に1回だけ確認する。
 
 ```bash
-xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg"
+xcrun stapler validate "dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg"
 spctl --assess --type open --context context:primary-signature --verbose=4 \
-  "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg"
+  "dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg"
 ```
 
 DMGをmountしてappも確認する。
 
 ```bash
 MOUNT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/totalsegmentator-wrapper-mac-release-check.XXXXXX")"
-hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.1-20260622public2-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
+hdiutil attach "dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg" -nobrowse -readonly -mountpoint "$MOUNT_ROOT"
 spctl --assess --type execute --verbose=4 "$MOUNT_ROOT/TotalSegmentator Wrapper for Mac.app"
 hdiutil detach "$MOUNT_ROOT"
 ```
@@ -107,14 +110,16 @@ hdiutil detach "$MOUNT_ROOT"
 - DICOMフォルダ選択時にCT intakeが先に走り、直接プレビュー作成へ進まない。
 - 結果画面から3D preview再生成・詳細ログ・結果フォルダを開ける。
 
-## 現在のrelease evidence
+## release evidence
 
-- `notarytool submit`: `Accepted`
+- `notarytool submit`: `Accepted`, submission `a325757c-234e-4324-a542-6f9450469b83`
 - `stapler validate`: 成功
 - `spctl` DMG: `accepted`, `source=Notarized Developer ID`
 - `spctl` mounted app: `accepted`, `source=Notarized Developer ID`
+- `shasum -a 256`: `636d0e071dd68a60f13054165c4ef8ab7ef3f51ba535231128759810e5264a3a`
+- R2 metadata: `cloudflare/r2/releases/0.1.2/` と `cloudflare/r2/releases/stable/update.json`
 - `scripts/verify_zero_env_mac_dmg.sh`: pass
 - zero-env setup: `status=success`, `actual_device=mps`, DICOM normalizer `app_bundle`
-- zero-env dependency install: 約398秒
-- `unittest`: `108 tests OK`
-- Swift compile check: pass
+- zero-env dependency install: `111.0` 秒
+- zero-env model weight準備: `130.9` 秒
+- `unittest` with distribution dependency env: `130 tests OK`
