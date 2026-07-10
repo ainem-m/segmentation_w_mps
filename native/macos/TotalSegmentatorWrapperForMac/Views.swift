@@ -13,10 +13,26 @@ struct RootView: View {
                 Divider()
                 detailView
                 Spacer(minLength: 0)
-                LogDrawer()
             }
             .padding(22)
             .frame(minWidth: 760, minHeight: 620)
+            .sheet(isPresented: $state.showLog) {
+                LogSheetView()
+                    .environmentObject(state)
+            }
+            .sheet(isPresented: $state.showDicomSeriesSelection) {
+                DicomSeriesSelectionSheet()
+                    .environmentObject(state)
+            }
+            .toolbar {
+                ToolbarItem {
+                    Button {
+                        state.showDetailedLog()
+                    } label: {
+                        Label("詳細ログ", systemImage: "terminal")
+                    }
+                }
+            }
         }
     }
 
@@ -27,10 +43,8 @@ struct RootView: View {
             SetupView()
         case .start:
             StartChoiceView()
-        case .sample:
-            SampleTutorialView()
-        case .ownData:
-            OwnDataView()
+        case .inputAndCreation:
+            InputAndCreationView()
         case .running:
             RunProgressView()
         case .ctPreview:
@@ -45,7 +59,7 @@ struct SidebarView: View {
     @EnvironmentObject var state: AppState
 
     private let steps = [
-        ("1", "目的", "Sampleか自分のデータを選びます。"),
+        ("1", "目的", "Sampleか手元のCTデータを選びます。"),
         ("2", "入力", "CT入力を確認します。"),
         ("3", "実行", "このMacで3Dプレビューを作成します。"),
         ("4", "結果", "3Dプレビューと要約を確認します。"),
@@ -55,7 +69,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("TotalSegmentator Wrapper for Mac")
                 .font(.title2.weight(.semibold))
-            Text("TotalSegmentatorを利用した非公式wrapperです。研究・教育目的の非臨床プレビューで、DICOM/CT/結果は送信しません。")
+            Text("研究・教育・検証用の3Dプレビューを作成します。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -65,8 +79,8 @@ struct SidebarView: View {
                     Text(step.0)
                         .font(.headline)
                         .frame(width: 28, height: 28)
-                        .background(index == state.selectedStep ? Color.accentColor : Color.secondary.opacity(0.15))
-                        .foregroundStyle(index == state.selectedStep ? Color.white : Color.primary)
+                        .background(index == state.selectedStep && state.screen != .setup ? Color.accentColor : Color.secondary.opacity(0.15))
+                        .foregroundStyle(index == state.selectedStep && state.screen != .setup ? Color.white : Color.primary)
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 3) {
                         Text(step.1)
@@ -146,12 +160,11 @@ struct HeaderView: View {
 
     private var title: String {
         switch state.screen {
-        case .setup: return "セットアップ"
-        case .start: return "まず選んでください"
-        case .sample: return "Sampleで流れを体験"
-        case .ownData: return "自分のCTを開く"
+        case .setup: return "はじめの準備"
+        case .start: return "最初はSampleで流れを確認"
+        case .inputAndCreation: return "入力と作成内容"
         case .running: return "処理中"
-        case .ctPreview: return "CT確認プレビュー"
+        case .ctPreview: return "中央断面を確認"
         case .result: return "結果"
         }
     }
@@ -159,12 +172,11 @@ struct HeaderView: View {
     private var subtitle: String {
         switch state.screen {
         case .setup: return "管理者権限不要。このMac内のアプリ専用フォルダだけを使います。"
-        case .start: return "Sampleで完成形を触るか、自分のCTを確認します。"
-        case .sample: return "同梱Sample 1で、入力から3Dプレビューまでの流れを確認できます。"
-        case .ownData: return "CTファイルまたは撮影フォルダを選びます。フォルダは先に安全確認します。"
-        case .running: return "止まっていないことが分かるよう、進捗と経過時間を表示します。"
-        case .ctPreview: return "プレビュー作成へ進む前に中央sliceを確認します。"
-        case .result: return "結果フォルダ、3Dプレビュー、要約を確認できます。"
+        case .start: return "入力から結果確認までを先に試せます。"
+        case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
+        case .running: return "現在の処理と経過時間を表示します。"
+        case .ctPreview: return "歯列と確認したい範囲が3方向すべてに写っているか確認してください。"
+        case .result: return "作成したファイルと次の操作を確認できます。"
         }
     }
 }
@@ -174,31 +186,31 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            InfoCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("管理者権限は不要です", systemImage: "lock.open")
-                    Label("このMac内のアプリ専用フォルダだけを書き込みます", systemImage: "folder")
-                    Label("DICOM/CT/作成結果は送信しません", systemImage: "icloud.slash")
-                    Label("利用状況データの送信も止めます", systemImage: "hand.raised")
-                    Label("セットアップ開始を押すまで通信しません", systemImage: "network.slash")
-                }
-                .font(.callout)
+            Text("3Dプレビューを作成するための機能を、このMacに準備します。")
+                .foregroundStyle(.secondary)
+            DisclosureGroup("データの扱い") {
+                Text("入力データ、作成結果、ログはこのMacのアプリ専用フォルダに保存します。外部へ送信しません。研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(state.setupStep.label)
+                    Text(state.setupRunning ? state.setupStep.label : "準備を始める")
                         .font(.title3.weight(.semibold))
                     Text(state.setupHint)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(state.setupElapsed)
-                    .foregroundStyle(.secondary)
+                if state.setupRunning {
+                    Text(state.setupElapsed)
+                        .foregroundStyle(.secondary)
+                }
             }
-            ProgressView()
-                .progressViewStyle(.linear)
-                .opacity(state.setupRunning ? 1 : 0.25)
+            if state.setupRunning {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            }
 
             if !state.setupError.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -218,7 +230,7 @@ struct SetupView: View {
                 Button {
                     state.startSetup()
                 } label: {
-                    Label("セットアップ開始", systemImage: "play.fill")
+                    Label("準備を始める", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(state.setupRunning)
@@ -242,14 +254,17 @@ struct StartChoiceView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             ChoiceCardContent(
-                title: "Sampleで流れを体験する",
-                subtitle: "まず完成形の3Dを触って、入力から結果確認までの流れを安全に試します。",
+                title: "Sampleから始める",
+                subtitle: "入力から結果確認までの流れを先に試します。",
                 icon: "sparkles",
                 primaryAction: {
                     state.goToSample()
                 }
             ) {
                 VStack(alignment: .leading, spacing: 10) {
+                    Label("おすすめ", systemImage: "star.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tint)
                     Button {
                         state.openSampleViewer()
                     } label: {
@@ -260,9 +275,9 @@ struct StartChoiceView: View {
                 }
             }
             ChoiceCardContent(
-                title: "自分のCTを開く",
+                title: "手元のCTデータを使う",
                 subtitle: "CTファイルまたは撮影フォルダを選びます。必要な確認と取り込み準備はアプリ内で行います。",
-                icon: "folder.badge.person.crop",
+                icon: "folder",
                 primaryAction: {
                     state.goToOwnData()
                 }
@@ -273,178 +288,250 @@ struct StartChoiceView: View {
     }
 }
 
-struct SampleTutorialView: View {
+struct InputAndCreationView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sampleInputButton
-
-            InfoCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("本番ではここで自分のCTを選びます。Sampleでは同梱CTを使って同じ流れを練習できます。", systemImage: "checklist")
-                    Label("完成イメージは目的画面のSampleボタンから確認できます", systemImage: "cube.transparent")
-                }
-            }
-
-            RunSettingsView()
-            Label("同梱Sample 1はUI確認・動作確認用です。診断、治療方針の決定、治療計画、定量的な精度評価、または臨床利用には使用できません。", systemImage: "info.circle")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Label("Sample 1の3Dプレビュー作成は、モデル準備済みの場合このMacでおおむね100秒前後かかります。モデルはセットアップ時に取得します。", systemImage: "clock")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button {
-                    state.startRun()
-                } label: {
-                    Label("3Dプレビューを作成", systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!state.canStartSampleRun)
-                Button("保存先を選ぶ") { state.chooseOutputRoot() }
-                Spacer()
-                Button("自分のCTを開く") { state.goToOwnData() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 10) {
+                    Button {
+                        state.useSampleInput()
+                    } label: {
+                        Label(state.isSampleInputSelected ? "Sample 1（選択済み）" : "Sample 1を選ぶ", systemImage: state.sampleInputButtonIcon)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button {
+                        state.chooseCTInput()
+                    } label: {
+                        Label(state.inputSource == .sample ? "CTデータを選ぶ" : (state.inputURL?.lastPathComponent ?? "CTデータを選ぶ"), systemImage: "folder.badge.plus")
+                    }
                     .buttonStyle(.bordered)
-                Button("最初に戻る") { state.goToStart() }
-                    .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var sampleInputButton: some View {
-        if state.isSampleInputSelected {
-            Button {
-                state.useSampleInput()
-            } label: {
-                Label(state.sampleInputButtonTitle, systemImage: state.sampleInputButtonIcon)
-            }
-            .buttonStyle(.bordered)
-        } else {
-            Button {
-                state.useSampleInput()
-            } label: {
-                Label(state.sampleInputButtonTitle, systemImage: state.sampleInputButtonIcon)
-            }
-            .buttonStyle(.borderedProminent)
-        }
-    }
-}
-
-struct OwnDataView: View {
-    @EnvironmentObject var state: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Button {
-                state.chooseCTInput()
-            } label: {
-                Label("CTを選ぶ", systemImage: "folder.badge.plus")
-            }
-            .buttonStyle(.borderedProminent)
-
-            InfoCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("撮影フォルダは、プレビュー作成の前にアプリが確認します", systemImage: "checklist")
-                    Label("通常のCTとして取り込める場合は、自動で準備します", systemImage: "arrow.right.doc.on.clipboard")
-                    Label("追加確認が必要な形式の場合、理由を表示してここで止めます", systemImage: "exclamationmark.triangle")
-                    Label("研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。", systemImage: "info.circle")
                 }
-            }
 
-            RunSettingsView()
-            HStack {
-                Button {
-                    state.startRun()
-                } label: {
-                    Label(state.ownDataPrimaryButtonTitle, systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!state.canStartOwnDataRun)
-                Button("保存先を選ぶ") { state.chooseOutputRoot() }
-                Spacer()
-                Button("Sampleで流れを体験する") { state.goToSample() }
-                    .buttonStyle(.bordered)
-                Button("最初に戻る") { state.goToStart() }
-                    .buttonStyle(.bordered)
-            }
-        }
-    }
-}
-
-struct RunSettingsView: View {
-    @EnvironmentObject var state: AppState
-
-    var body: some View {
-        InfoCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("実行前確認")
+                Text(state.inputDisplayName)
                     .font(.headline)
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(state.runReadinessItems) { item in
-                        RunReadinessRow(item: item)
-                    }
-                }
-                Divider()
-                Picker("実行内容", selection: $state.runMode) {
-                    ForEach(RunMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(state.runMode.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Picker("backend", selection: $state.segmentationBackend) {
-                    ForEach(SegmentationBackend.allCases) { backend in
-                        Text(backend.rawValue).tag(backend)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(state.segmentationBackend.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                if state.segmentationBackend == .dentalSegmentator {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label("nnU-Net版DentalSegmentatorの5ラベルpreviewです。個別歯labelは出しません。", systemImage: "info.circle")
-                        Label("MPSで実行します。CPUやTotalSegmentatorへ自動切替しません。", systemImage: "cpu")
-                        Label(state.dentalSegmentatorModelStatusText, systemImage: state.isDentalSegmentatorModelReady ? "checkmark.circle" : "exclamationmark.triangle")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                if !state.runSettingsWarning.isEmpty {
-                    Label(state.runSettingsWarning, systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                DisclosureGroup("詳細設定（通常は変更不要）") {
+                if let candidate = state.selectedDicomSeries, state.dicomCleanCandidates.count > 1 {
                     HStack {
-                        Text("処理方法")
-                        Picker("", selection: $state.device) {
-                            Text("推奨 (mps)").tag("mps")
-                            Text("低速 (cpu)").tag("cpu")
-                            Text("自動 (auto)").tag("auto")
-                        }
-                        .labelsHidden()
-                        .frame(width: 160)
-                        Spacer()
+                        Text("使用する撮影: \(candidate.displayTitle)")
+                            .font(.callout)
+                        Button("変更") { state.showDicomSeriesSelection = true }
+                            .buttonStyle(.bordered)
                     }
-                    Text("サポート情報: 処理実行ファイルはアプリ専用環境内にあります。詳細ログには実行内容が記録されます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Toggle("境界を滑らかにする（高次補間）", isOn: $state.higherOrderResampling)
-                        .disabled(state.segmentationBackend == .dentalSegmentator)
-                    Text("TotalSegmentatorの高次resamplingを使います。処理時間が増える場合があります。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                Text("設定はこのMacに保存され、次回起動時に復元されます。")
+                if state.inputSource == .sample {
+                    Button {
+                        state.openSampleViewer()
+                    } label: {
+                        Label("Sample 1の3Dプレビューを開く", systemImage: "cube.transparent")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("作成する3Dプレビュー")
+                        .font(.headline)
+                    ForEach(CreationChoice.allCases) { choice in
+                        Button {
+                            state.requestCreationChoice(choice)
+                        } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: state.creationChoice == choice ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(state.creationChoice == choice ? Color.accentColor : Color.secondary)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(choice.rawValue)
+                                        .font(.headline)
+                                    Text(choice.detail)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Label("このMacのGPUを使用", systemImage: "cpu")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("保存先")
+                    TextField("フォルダ名", text: Binding(
+                        get: { state.selectedOutputRootURL.lastPathComponent },
+                        set: { _ in }
+                    ))
+                    .disabled(true)
+                    Button("変更") { state.chooseOutputRoot() }
+                        .buttonStyle(.bordered)
+                }
+                DisclosureGroup("追加機能") {
+                    Toggle("境界を滑らかにする", isOn: $state.higherOrderResampling)
+                        .disabled(state.creationChoice == .dentalSegmentatorExperimental)
+                    Text("DentalSegmentatorでは使用できません。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .opacity(state.creationChoice == .dentalSegmentatorExperimental ? 1 : 0)
+                }
+                DisclosureGroup("保存先と詳細") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("入力: \(state.inputURL?.path ?? "未選択")")
+                        Text("保存先: \(state.selectedOutputRootURL.path)")
+                        Text("使用機能: \(state.segmentationBackend.rawValue) / task=\(state.runMode.task) / device=mps")
+                        Text("作成内容は研究・教育・検証用の非臨床プレビューです。")
+                        if state.inputSource == .sample {
+                            Text("同梱Sample 1はUI確認・動作確認用です。診断、治療方針の決定、治療計画、定量的な精度評価、または臨床利用には使用できません。")
+                        }
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                }
+
+                if !state.runPreflightBlockingReason.isEmpty {
+                    Label(state.runPreflightBlockingReason, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
+
+                HStack {
+                    Button {
+                        state.startRun()
+                    } label: {
+                        Label(primaryTitle, systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canStart)
+                    Spacer()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 12)
+        }
+        .sheet(isPresented: $state.showDentalPreparationConfirmation) {
+            DentalPreparationConfirmationSheet()
+                .environmentObject(state)
+        }
+        .sheet(isPresented: $state.showDentalPreparationSheet) {
+            DentalPreparationSheet()
+                .environmentObject(state)
+        }
+    }
+
+    private var canStart: Bool {
+        if state.inputSource == .sample { return state.canStartSampleRun }
+        return state.canStartOwnDataRun
+    }
+
+    private var primaryTitle: String {
+        state.inputSource == .sample ? "Sampleで3Dプレビューを作る" : "このCTで3Dプレビューを作る"
+    }
+}
+
+struct DentalPreparationConfirmationSheet: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("DentalSegmentator（実験的）")
+                .font(.title2.weight(.semibold))
+            Text("歯列と顎骨を5つの領域に分けます。")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Label("追加モデルデータを取得します", systemImage: "arrow.down.circle")
+                Label("このMacのアプリ専用フォルダへ保存します", systemImage: "internaldrive")
+                Label("推論はこのMacのGPUを使用します", systemImage: "cpu")
+                Label("CPUやTotalSegmentatorへ切り替えません", systemImage: "arrow.triangle.branch")
+            }
+            .font(.callout)
+            HStack {
+                Button("準備を始める") { state.confirmDentalPreparation() }
+                    .buttonStyle(.borderedProminent)
+                Button("キャンセル") {
+                    state.showDentalPreparationConfirmation = false
+                    state.creationChoice = .standardArchJaw
+                }
+                .buttonStyle(.bordered)
+                Spacer()
             }
         }
+        .padding(24)
+        .frame(width: 480)
+    }
+}
+
+struct DentalPreparationSheet: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("DentalSegmentatorの準備")
+                .font(.title2.weight(.semibold))
+            Text(state.dentalPreparationMessage)
+                .foregroundStyle(.secondary)
+            if state.dentalPreparationRunning {
+                ProgressView()
+                    .progressViewStyle(.linear)
+                Text(state.dentalPreparationElapsed)
+                    .foregroundStyle(.secondary)
+                Button("キャンセル") { state.cancelDentalPreparation() }
+                    .buttonStyle(.bordered)
+            } else {
+                Button("閉じる") { state.showDentalPreparationSheet = false }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+}
+
+struct DicomSeriesSelectionSheet: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("使用する撮影を変更")
+                .font(.title2.weight(.semibold))
+            Text("最初の候補を選択しています。別の撮影を使う場合だけ変更してください。")
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(state.dicomCleanCandidates) { candidate in
+                        Button {
+                            state.selectDicomSeries(candidate)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(candidate.displayTitle)
+                                    Text(candidate.displayDetail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: state.selectedDicomSeriesID == candidate.id ? "checkmark.circle.fill" : "circle")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            HStack {
+                Button("この撮影を使う") { state.useSelectedDicomSeries() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!state.canUseSelectedDicomSeries)
+                Button("閉じる") { state.showDicomSeriesSelection = false }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }
+        }
+        .padding(24)
+        .frame(width: 560, height: 420)
     }
 }
 
@@ -464,33 +551,18 @@ struct RunProgressView: View {
                 Text(state.runElapsed)
                     .foregroundStyle(.secondary)
             }
-            if let fraction = state.runProgressFraction {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.linear)
-            } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
-            }
+            ProgressView()
+                .progressViewStyle(.linear)
             if !state.runHeartbeatText.isEmpty {
                 Text(state.runHeartbeatText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if state.resultKind == .inference {
-                InfoCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("現在の実行")
-                            .font(.headline)
-                        ForEach(state.activeRunContextItems) { item in
-                            RunReadinessRow(item: item)
-                        }
-                    }
-                }
-            }
-            if !state.failureReasonText.isEmpty {
-                Label(state.failureReasonText, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("使用機能: \(state.activeRunFeatureName)")
+                    .font(.headline)
+                Text("保存先: \(state.outputURL?.lastPathComponent ?? "準備中")")
+                    .foregroundStyle(.secondary)
             }
             if state.stopRequested {
                 Label("停止要求済み。終了処理中です。", systemImage: "hourglass")
@@ -522,30 +594,19 @@ struct CTPreviewView: View {
 
     var body: some View {
         let slicesByPlane = Dictionary(uniqueKeysWithValues: state.ctPreviewSlices.map { ($0.plane, $0) })
+        let candidateWarning = state.pendingViewerExportCandidate?.sparseSliceWarningText ?? ""
+        let warning = state.ctPreviewWarning.isEmpty ? candidateWarning : state.ctPreviewWarning
         VStack(alignment: .leading, spacing: 16) {
-            Text("CT確認プレビュー")
-                .font(.title2.weight(.semibold))
-            InfoCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("CTを見るソフトから「表示用の断面画像」として書き出されたデータの可能性があります。")
-                        .font(.headline)
-                    Text("プレビュー作成へ進む前に、中央sliceに歯列や確認したい範囲が写っているかを見てください。これは非診断preview専用です。")
-                        .foregroundStyle(.secondary)
-                    if let candidate = state.pendingViewerExportCandidate {
-                        Text("\(candidate.displayTitle) / \(candidate.displayDetail)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if !candidate.sparseSliceWarningText.isEmpty {
-                            Label(candidate.sparseSliceWarningText, systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
+            Text("軸位・冠状・矢状のすべてに、確認したい範囲が写っていることを確認してください。")
+                .foregroundStyle(.secondary)
+            if let candidate = state.pendingViewerExportCandidate {
+                Text("\(candidate.displayTitle) / \(candidate.displayDetail)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            if !state.ctPreviewWarning.isEmpty {
-                Label(state.ctPreviewWarning, systemImage: "exclamationmark.triangle")
+            if !warning.isEmpty {
+                Label(warning, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
 
@@ -559,7 +620,7 @@ struct CTPreviewView: View {
                 Button {
                     state.acceptPreparedCTPreview()
                 } label: {
-                    Label("このCTで3Dプレビューを作成", systemImage: "checkmark.circle")
+                    Label("このCTを使う", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!state.canAcceptCTPreview)
@@ -574,25 +635,11 @@ struct CTPreviewView: View {
                 Button {
                     state.goToInput()
                 } label: {
-                    Label("CTを選び直す", systemImage: "arrow.left")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    state.goToStart()
-                } label: {
-                    Label("最初に戻る", systemImage: "house")
+                    Label("別のCTを選ぶ", systemImage: "arrow.left")
                 }
                 .buttonStyle(.bordered)
 
                 Spacer()
-
-                Button {
-                    state.showDetailedLog()
-                } label: {
-                    Label("詳細ログを表示", systemImage: "terminal")
-                }
-                .buttonStyle(.bordered)
             }
         }
     }
@@ -647,185 +694,163 @@ struct ResultView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(state.resultMessage.isEmpty ? state.statusText : state.resultMessage)
-                .font(.title3.weight(.semibold))
-            if !state.failureReasonText.isEmpty {
-                Label(state.failureReasonText, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-            }
-            HStack {
-                if !state.dicomCleanCandidates.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("使用する撮影を選んでください")
-                            .font(.headline)
-                        ForEach(state.dicomCleanCandidates) { candidate in
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if state.resultOutcome == .failure {
+                    Text("3Dプレビューを作成できませんでした")
+                        .font(.title2.weight(.semibold))
+                    Text("処理を停止しました。入力データは変更されていません。")
+                        .foregroundStyle(.secondary)
+                    if state.activeRunBackend == .dentalSegmentator {
+                        Text("CPUや別の機能には切り替えていません。")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button {
+                            state.copySafeErrorInfo()
+                        } label: {
+                            Label("エラー情報をコピー", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button {
+                            state.showDetailedLog()
+                        } label: {
+                            Label("詳細ログを見る", systemImage: "terminal")
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                    navigationActions
+                } else if state.resultOutcome == .success {
+                    Text("3Dプレビューを作成しました")
+                        .font(.title2.weight(.semibold))
+                    if let candidate = state.selectedDicomSeries {
+                        Text("使用した撮影: \(candidate.displayTitle)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button {
+                            state.openResultPreview()
+                        } label: {
+                            Label("3Dプレビューを開く", systemImage: "cube.transparent")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button {
+                            state.exportForSlicer()
+                        } label: {
+                            Label("3D Slicer用に書き出す", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                    HStack {
+                        Button {
+                            state.openOutputFolder()
+                        } label: {
+                            Label("結果フォルダを開く", systemImage: "folder")
+                        }
+                        Button {
+                            state.showDetailedLog()
+                        } label: {
+                            Label("詳細ログを見る", systemImage: "terminal")
+                        }
+                        Spacer()
+                    }
+                    if !state.resultLocationItems.isEmpty {
+                        DisclosureGroup("保存されたファイル") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(state.resultLocationItems) { item in
+                                    RunLocationRow(item: item)
+                                }
+                            }
+                        }
+                    }
+                    if state.canRegenerateSurfacePreview {
+                        DisclosureGroup("3Dプレビューに問題がある場合") {
                             Button {
-                                state.selectedDicomSeriesID = candidate.id
+                                state.regenerateSurfacePreview()
+                            } label: {
+                                Label("3Dプレビューを再生成", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    navigationActions
+                } else {
+                    Text(state.resultMessage.isEmpty ? state.statusText : state.resultMessage)
+                        .font(.title3.weight(.semibold))
+                    if !state.dicomViewerExportCandidates.isEmpty {
+                        Text("確認する断面群")
+                            .font(.headline)
+                        ForEach(state.dicomViewerExportCandidates) { candidate in
+                            Button {
+                                state.selectedViewerExportCandidateID = candidate.id
                             } label: {
                                 HStack {
-                                    VStack(alignment: .leading) {
+                                    VStack(alignment: .leading, spacing: 3) {
                                         Text(candidate.displayTitle)
                                         Text(candidate.displayDetail)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    if state.selectedDicomSeriesID == candidate.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.tint)
-                                    }
+                                    Image(systemName: state.selectedViewerExportCandidateID == candidate.id ? "checkmark.circle.fill" : "circle")
                                 }
                             }
                             .buttonStyle(.bordered)
                         }
-                        Button {
-                            state.useSelectedDicomSeries()
-                        } label: {
-                            Label("この撮影を使う", systemImage: "checkmark.circle")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!state.canUseSelectedDicomSeries)
+                        Button("この断面群を確認する") { state.useSelectedViewerExportCandidate() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!state.canUseSelectedViewerExportCandidate)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    navigationActions
                 }
             }
-            if !state.dicomViewerExportCandidates.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("救済できる可能性のある断面群")
-                        .font(.headline)
-                    Text("CTを見るソフトから表示用に書き出された断面画像の可能性があります。結果は非診断preview専用です。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(state.dicomViewerExportCandidates) { candidate in
-                        Button {
-                            state.selectedViewerExportCandidateID = candidate.id
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(candidate.displayTitle)
-                                    Text(candidate.displayDetail)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if state.selectedViewerExportCandidateID == candidate.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.tint)
-                                }
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    Button {
-                        state.useSelectedViewerExportCandidate()
-                    } label: {
-                        Label("この断面群を確認する", systemImage: "square.stack.3d.up")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!state.canUseSelectedViewerExportCandidate)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack {
-                Button {
-                    state.goToInput()
-                } label: {
-                    Label("CTを選び直す", systemImage: "arrow.left")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(state.isRunning)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 12)
+        }
+    }
 
+    @ViewBuilder
+    private var navigationActions: some View {
+        HStack {
+            Button {
+                state.goToInput()
+            } label: {
+                Label("入力と作成内容へ戻る", systemImage: "arrow.left")
+            }
+            .buttonStyle(.bordered)
+            Button {
+                state.chooseCTInput()
+            } label: {
+                Label("別のCTを選ぶ", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.bordered)
+            if state.resultOutcome == .success {
                 Button {
                     state.retryRunFromResult()
                 } label: {
-                    Label(state.retryButtonTitle, systemImage: "arrow.clockwise")
+                    Label("もう一度作成", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
                 .disabled(!state.canRetryFromResult)
-
+            }
+            if state.dicomCleanCandidates.count > 1 {
                 Button {
-                    state.goToStart()
+                    state.showDicomSeriesSelection = true
                 } label: {
-                    Label("最初に戻る", systemImage: "house")
+                    Label("別の撮影で作り直す", systemImage: "square.stack.3d.up")
                 }
                 .buttonStyle(.bordered)
-                .disabled(state.isRunning)
-
-                Spacer()
             }
-            HStack {
-                Button {
-                    state.openOutputFolder()
-                } label: {
-                    Label("結果フォルダを開く", systemImage: "folder")
-                }
-                .disabled(state.outputURL == nil)
-
-                Button {
-                    state.openResultPreview()
-                } label: {
-                    Label("3Dプレビューを開く（ブラウザ）", systemImage: "cube")
-                }
-                .disabled(state.outputURL.flatMap(caseSurfacePreview) == nil)
-
-                if state.canRegenerateSurfacePreview {
-                    Button {
-                        state.regenerateSurfacePreview()
-                    } label: {
-                        Label("3Dプレビューを再生成", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .disabled(state.isRunning)
-                }
-
-                if state.canExportForSlicer {
-                    Button {
-                        state.exportForSlicer()
-                    } label: {
-                        Label("Slicerで開くファイルを書き出す", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(state.isRunning)
-                }
-
-                Button {
-                    state.showDetailedLog()
-                } label: {
-                    Label("詳細ログを表示", systemImage: "terminal")
-                }
-                Spacer()
+            Button {
+                state.goToStart()
+            } label: {
+                Label("最初に戻る", systemImage: "house")
             }
-            if !state.resultLocationItems.isEmpty {
-                InfoCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("出力の場所")
-                            .font(.headline)
-                        ForEach(state.resultLocationItems) { item in
-                            RunLocationRow(item: item)
-                        }
-                    }
-                }
-            }
-            if !state.summaryText.isEmpty {
-                Text("結果の要約")
-                    .font(.headline)
-                ScrollView {
-                    Text(state.summaryText)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(minHeight: 160)
-            }
-            if !state.dicomSummaryText.isEmpty {
-                ScrollView {
-                    Text(state.dicomSummaryText)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(minHeight: 160)
-            }
+            .buttonStyle(.bordered)
+            Spacer()
         }
     }
 }
@@ -909,25 +934,33 @@ struct RunLocationRow: View {
     }
 }
 
-struct LogDrawer: View {
+struct LogSheetView: View {
     @EnvironmentObject var state: AppState
-    private var logExpanded: Binding<Bool> {
-        Binding(
-            get: { state.showLog },
-            set: { expanded in
-                if expanded {
-                    state.showDetailedLog()
-                } else {
-                    state.showLog = false
-                }
-            }
-        )
-    }
 
     var body: some View {
-        DisclosureGroup(isExpanded: logExpanded) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("詳細ログ")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button("閉じる") { state.showLog = false }
+            }
             VStack(alignment: .leading, spacing: 8) {
+                if state.resultOutcome == .failure {
+                    Button {
+                        state.copySafeErrorInfo()
+                    } label: {
+                        Label("エラー情報をコピー", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                 HStack {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(state.logText, forType: .string)
+                    } label: {
+                        Label("ログをコピー", systemImage: "doc.on.doc")
+                    }
                     Button {
                         state.openCurrentLogFile()
                     } label: {
@@ -938,7 +971,7 @@ struct LogDrawer: View {
                     Button {
                         state.openCurrentLogFolder()
                     } label: {
-                        Label("ログフォルダを開く", systemImage: "folder")
+                        Label("Finderで表示", systemImage: "folder")
                     }
                     .disabled(!state.currentLogExists)
 
@@ -961,9 +994,9 @@ struct LogDrawer: View {
                 }
                 .frame(minHeight: 120, maxHeight: 220)
             }
-        } label: {
-            Label(state.showLog ? "詳細ログを隠す" : "詳細ログを表示", systemImage: "terminal")
         }
+        .padding(20)
+        .frame(width: 720, height: 420)
     }
 }
 

@@ -285,6 +285,10 @@ if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
   fi
   mkdir -p "${RESOURCES_DIR}/python"
   rsync -a "${PYTHON_RUNTIME_SOURCE}/" "${RESOURCES_DIR}/python/cpython-3.12/"
+  bundled_site_packages="${RESOURCES_DIR}/python/cpython-3.12/lib/python3.12/site-packages"
+  if [[ -L "${bundled_site_packages}" && ! -e "${bundled_site_packages}" ]]; then
+    rm "${bundled_site_packages}"
+  fi
   chmod 755 "${RESOURCES_DIR}/python/cpython-3.12/bin/python3.12"
   PYTHON_RUNTIME_STRATEGY="bundled_python312"
   PYTHON_RUNTIME_EXECUTABLE_JSON='"python/cpython-3.12/bin/python3.12"'

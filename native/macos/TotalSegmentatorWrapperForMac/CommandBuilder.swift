@@ -582,6 +582,12 @@ func formatElapsed(_ seconds: TimeInterval) -> String {
     return "経過時間: \(remaining)秒"
 }
 
+func currentAppVersion() -> String {
+    let paths = AppPaths.current()
+    let manifest = readJSON(paths.manifest) ?? [:]
+    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.2"
+}
+
 func setupReasonToJapanese(_ reason: String?) -> String {
     switch reason {
     case "needs_network": return "ネットワーク接続が必要です。"
