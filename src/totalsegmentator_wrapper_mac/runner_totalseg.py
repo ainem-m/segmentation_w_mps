@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, asdict
+from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ DENTALSEGMENTATOR_LABELS = {
 }
 DENTALSEGMENTATOR_ZENODO_DOI = "10.5281/zenodo.10829675"
 DENTALSEGMENTATOR_MODEL_ZIP = "Dataset112_DentalSegmentator_v100.zip"
+MACOS_APP_EXECUTION_PROFILE = "macos-app"
 
 
 @dataclass(frozen=True)
@@ -63,9 +65,16 @@ class TotalSegRunResult:
     output_dir: str
     stdout_tail: str
     stderr_tail: str
+    error_code: str | None = None
+    safe_reason: str | None = None
+    mps_state: str = "not_required"
+    occurred_at: str | None = None
+    execution_profile: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload.update(_result_safe_fields(self))
+        return payload
 
 
 def sanitized_command(command: list[str], input_path: Path, output_dir: Path) -> list[str]:
@@ -95,6 +104,64 @@ def resolve_totalseg_executable(totalseg_bin: str) -> str:
         return str(executable_candidate)
     found = shutil.which(totalseg_bin)
     return found or totalseg_bin
+
+
+def _is_strict_mps_profile(execution_profile: str | None, require_mps: bool) -> bool:
+    if execution_profile not in {None, MACOS_APP_EXECUTION_PROFILE}:
+        raise ValueError(f"Unsupported execution profile: {execution_profile}")
+    return execution_profile == MACOS_APP_EXECUTION_PROFILE or require_mps
+
+
+def _strict_preflight_failure(
+    *,
+    requested_device: str,
+    task: str,
+    execution_profile: str | None,
+    error_code: str,
+    safe_reason: str,
+    mps_state: str,
+) -> TotalSegRunResult:
+    return TotalSegRunResult(
+        status="failed",
+        returncode=2,
+        elapsed_seconds=0.0,
+        requested_device=requested_device,
+        actual_device="unknown",
+        fallback_reason=None,
+        task=task,
+        output_dir="",
+        stdout_tail="",
+        stderr_tail=safe_reason,
+        error_code=error_code,
+        safe_reason=safe_reason,
+        mps_state=mps_state,
+        occurred_at=datetime.now(UTC).isoformat(),
+        execution_profile=execution_profile,
+    )
+
+
+def _mps_state(device_check: DeviceCheck) -> str:
+    if device_check.actual_device == "mps" and device_check.status == "pass":
+        return "validated"
+    if device_check.actual_device == "cpu":
+        return "cpu"
+    return "unavailable"
+
+
+def _result_safe_fields(result: TotalSegRunResult) -> dict[str, str | None]:
+    if result.status != "failed":
+        return {
+            "error_code": result.error_code,
+            "safe_reason": result.safe_reason,
+            "mps_state": result.mps_state,
+            "occurred_at": result.occurred_at,
+        }
+    return {
+        "error_code": result.error_code or "runner_failed",
+        "safe_reason": result.safe_reason or "The segmentation run did not complete.",
+        "mps_state": result.mps_state,
+        "occurred_at": result.occurred_at or datetime.now(UTC).isoformat(),
+    }
 
 
 def run_totalsegmentator(
@@ -134,6 +201,8 @@ def run_totalsegmentator(
     teeth_craniofacial_case: Path | None = None,
     teeth_force_split: bool = False,
     teeth_robust_craniofacial_preflight: bool = False,
+    execution_profile: str | None = None,
+    require_mps: bool = False,
 ) -> TotalSegRunResult:
     input_path = input_path.resolve()
     if not input_path.exists():
@@ -152,11 +221,72 @@ def run_totalsegmentator(
             "--higher-order-resampling is only supported by the TotalSegmentator backend"
         )
 
+    strict_mps = _is_strict_mps_profile(execution_profile, require_mps)
+    if strict_mps and requested_device != "mps":
+        return _strict_preflight_failure(
+            requested_device=requested_device,
+            task=task,
+            execution_profile=execution_profile,
+            error_code="mps_required",
+            safe_reason="This app execution profile requires MPS.",
+            mps_state="required",
+        )
+    if execution_profile == MACOS_APP_EXECUTION_PROFILE and not require_mps:
+        return _strict_preflight_failure(
+            requested_device=requested_device,
+            task=task,
+            execution_profile=execution_profile,
+            error_code="mps_required",
+            safe_reason="The macOS app execution profile requires --require-mps.",
+            mps_state="required",
+        )
+    if strict_mps and backend == "dentalsegmentator":
+        from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
+            dentalsegmentator_model_status,
+        )
+        from totalsegmentator_wrapper_mac.setup_manager import (
+            DENTALSEGMENTATOR_DATASET_NAME,
+            DENTALSEGMENTATOR_MODEL_MD5,
+        )
+
+        model_ready = False
+        if dentalseg_model_zip is None and dentalseg_nnunet_results is not None:
+            model_status = dentalsegmentator_model_status(
+                model_root=dentalseg_nnunet_results.parent,
+                nnunet_results=dentalseg_nnunet_results,
+                expected_md5=DENTALSEGMENTATOR_MODEL_MD5,
+                dataset_id=dentalseg_dataset_id,
+                dataset_name=DENTALSEGMENTATOR_DATASET_NAME,
+            )
+            model_ready = model_status["model_state"] == "ready"
+        if not model_ready:
+            return _strict_preflight_failure(
+                requested_device=requested_device,
+                task=task,
+                execution_profile=execution_profile,
+                error_code="dentalseg_prepare_required",
+                safe_reason="Prepare the DentalSegmentator model before starting an app-profile run.",
+                mps_state="required",
+            )
+
+    device_check: DeviceCheck | None = None
+    if strict_mps:
+        device_check = resolve_device("mps", skip_device_check=False)
+        if device_check.status != "pass" or device_check.actual_device != "mps":
+            return _strict_preflight_failure(
+                requested_device=requested_device,
+                task=task,
+                execution_profile=execution_profile,
+                error_code="mps_unavailable",
+                safe_reason="MPS validation did not pass for this app run.",
+                mps_state="unavailable",
+            )
+
     case = prepare_case_output(output_root)
     copied_source = copy_source_if_requested(input_path, case, copy_input)
     source_for_summary = copied_source or input_path
 
-    device_check = resolve_device(requested_device, skip_device_check=skip_device_check)
+    device_check = device_check or resolve_device(requested_device, skip_device_check=skip_device_check)
     if device_check.status != "pass" or not device_check.actual_device:
         _write_failed_device_check(
             case,
@@ -194,6 +324,7 @@ def run_totalsegmentator(
             dentalseg_npp=dentalseg_npp,
             dentalseg_nps=dentalseg_nps,
             dentalseg_timeout_sec=dentalseg_timeout_sec,
+            execution_profile=execution_profile,
         )
 
     if task == "teeth" and not experimental_teeth:
@@ -246,6 +377,8 @@ def run_totalsegmentator(
             teeth_craniofacial_case=teeth_craniofacial_case,
             teeth_force_split=teeth_force_split,
             teeth_robust_craniofacial_preflight=teeth_robust_craniofacial_preflight,
+            execution_profile=execution_profile,
+            require_mps=require_mps,
             higher_order_resampling=higher_order_resampling,
             skip_device_check=skip_device_check,
         )
@@ -267,6 +400,8 @@ def run_totalsegmentator(
     if higher_order_resampling:
         command.append("--higher_order_resampling")
     env = os.environ.copy()
+    if strict_mps:
+        env.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
     if totalseg_home is not None:
         env["TOTALSEG_HOME_DIR"] = str(totalseg_home)
     if totalseg_weights is not None:
@@ -290,6 +425,11 @@ def run_totalsegmentator(
         output_dir=str(case.root),
         stdout_tail=stdout[-4000:],
         stderr_tail=stderr[-4000:],
+        error_code="backend_failed" if proc_returncode != 0 else None,
+        safe_reason="The segmentation backend did not complete." if proc_returncode != 0 else None,
+        mps_state=_mps_state(device_check),
+        occurred_at=datetime.now(UTC).isoformat() if proc_returncode != 0 else None,
+        execution_profile=execution_profile,
     )
     _write_metadata(
         case,
@@ -330,6 +470,10 @@ def _write_failed_device_check(
             "fallback_reason": device_check.fallback_reason,
             "status": "failed",
             "error": device_check.error,
+            "error_code": "mps_unavailable",
+            "safe_reason": "MPS validation did not pass for this run.",
+            "mps_state": _mps_state(device_check),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "robust_crop": robust_crop,
             "higher_order_resampling": higher_order_resampling,
         },
@@ -359,6 +503,8 @@ def _run_experimental_teeth(
     teeth_robust_craniofacial_preflight: bool,
     higher_order_resampling: bool,
     skip_device_check: bool,
+    execution_profile: str | None,
+    require_mps: bool,
 ) -> TotalSegRunResult:
     start = time.perf_counter()
     preflight_source = "none" if teeth_dry_run else ("provided" if teeth_craniofacial_case else "internal")
@@ -421,6 +567,8 @@ def _run_experimental_teeth(
                     skip_device_check=skip_device_check,
                     robust_crop=teeth_robust_craniofacial_preflight,
                     higher_order_resampling=higher_order_resampling,
+                    execution_profile=execution_profile,
+                    require_mps=require_mps,
                 )
                 if preflight.status != "success":
                     preflight_info["status"] = "failed"
@@ -574,6 +722,7 @@ def _run_dentalsegmentator(
     dentalseg_npp: int,
     dentalseg_nps: int,
     dentalseg_timeout_sec: int,
+    execution_profile: str | None,
 ) -> TotalSegRunResult:
     start = time.perf_counter()
     extra: dict[str, Any] = {
@@ -698,6 +847,8 @@ def _run_dentalsegmentator(
             output_dir=str(case.root),
             stdout_tail=stdout[-4000:],
             stderr_tail=stderr[-4000:],
+            mps_state=_mps_state(device_check),
+            execution_profile=execution_profile,
         )
     except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - start
@@ -712,6 +863,11 @@ def _run_dentalsegmentator(
             output_dir=str(case.root),
             stdout_tail="",
             stderr_tail=repr(exc),
+            error_code="dentalseg_failed",
+            safe_reason="DentalSegmentator did not complete.",
+            mps_state=_mps_state(device_check),
+            occurred_at=datetime.now(UTC).isoformat(),
+            execution_profile=execution_profile,
         )
         case.run_log_path.parent.mkdir(parents=True, exist_ok=True)
         if not case.run_log_path.exists():
@@ -1224,6 +1380,7 @@ def _write_metadata(
     extra: dict[str, Any] | None = None,
 ) -> None:
     env = environment_metadata()
+    safe_fields = _result_safe_fields(result)
     write_json(case.environment_path, env)
     benchmark = {
         "app_version": f"{__version__}-preview",
@@ -1238,6 +1395,11 @@ def _write_metadata(
             "elapsed_seconds": result.elapsed_seconds,
             "status": result.status,
             "returncode": result.returncode,
+            "error_code": safe_fields["error_code"],
+            "safe_reason": safe_fields["safe_reason"],
+            "mps_state": safe_fields["mps_state"],
+            "occurred_at": safe_fields["occurred_at"],
+            "execution_profile": result.execution_profile,
             "robust_crop": robust_crop,
             "higher_order_resampling": higher_order_resampling,
         },

@@ -5,6 +5,7 @@ import Darwin
 let appSupportName = "TotalSegmentatorWrapperMac"
 let appTitle = "TotalSegmentator Wrapper for Mac"
 let defaultTeethMarginMM = "5.0"
+let dentalsegExpectedMD5 = "b71cd5230168d28a4f71b078265b76be"
 
 enum SetupStep: String {
     case idle
@@ -42,7 +43,7 @@ enum SetupStep: String {
     var hint: String {
         switch self {
         case .idle:
-            return "セットアップ開始を押してください。"
+            return "準備を始めてください。"
         case .createAppSupportDirs:
             return "App Support配下に専用ディレクトリを準備しています。"
         case .validatePython312:
@@ -216,10 +217,19 @@ struct AppPaths {
     var dentalsegPreprocessed: URL { dentalsegRoot.appendingPathComponent("nnUNet_preprocessed", isDirectory: true) }
     var dentalsegResults: URL { dentalsegRoot.appendingPathComponent("nnUNet_results", isDirectory: true) }
     var dentalsegModelMetadata: URL { dentalsegRoot.appendingPathComponent("dentalsegmentator_model.json") }
+    var dentalsegStatusJSON: URL { logs.appendingPathComponent("dentalsegmentator_status.json") }
+    var dentalsegPrepareResultJSON: URL { logs.appendingPathComponent("dentalsegmentator_prepare_result.json") }
+    var dentalsegPrepareLog: URL { logs.appendingPathComponent("dentalsegmentator_prepare.log") }
+    var runResultJSON: URL { logs.appendingPathComponent("latest_run_result.json") }
     var dentalsegInstalledModel: URL {
         dentalsegResults
             .appendingPathComponent("Dataset112_DentalSegmentator_v100", isDirectory: true)
             .appendingPathComponent("nnUNetTrainer__nnUNetPlans__3d_fullres", isDirectory: true)
+    }
+    var dentalsegReadyMarker: URL {
+        dentalsegResults
+            .appendingPathComponent("Dataset112_DentalSegmentator_v100", isDirectory: true)
+            .appendingPathComponent(".dentalsegmentator_model_ready.json")
     }
     var manifest: URL { resources.appendingPathComponent("setup_manifest.json") }
     var constraints: URL { resources.appendingPathComponent("constraints/macos-arm64-py312.txt") }
@@ -265,6 +275,7 @@ struct CommandBuilder {
     static func launchEnvironment(paths: AppPaths) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "PYTHONPATH")
+        env.removeValue(forKey: "PYTORCH_ENABLE_MPS_FALLBACK")
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PIP_NO_INPUT"] = "1"
         env["PIP_CACHE_DIR"] = paths.cache.appendingPathComponent("pip", isDirectory: true).path
@@ -322,6 +333,7 @@ struct CommandBuilder {
             paths.manifest.path,
             "--progress-log",
             paths.launcherLog.path,
+            "--skip-dentalseg-model",
         ]
         if allowNetwork {
             command.append("--allow-network")
@@ -342,7 +354,7 @@ struct CommandBuilder {
         higherOrderResampling: Bool,
         paths: AppPaths
     ) -> [String] {
-        let runDevice = backend == .dentalSegmentator ? "mps" : device
+        _ = device
         var command = [
             python.path,
             "-m",
@@ -357,7 +369,12 @@ struct CommandBuilder {
             "--task",
             mode.task,
             "--device",
-            runDevice,
+            "mps",
+            "--execution-profile",
+            "macos-app",
+            "--require-mps",
+            "--result-json",
+            paths.runResultJSON.path,
             "--totalseg-bin",
             paths.totalsegBinary.path,
             "--no-copy-input",
@@ -384,6 +401,34 @@ struct CommandBuilder {
             command.append("--higher-order-resampling")
         }
         return command
+    }
+
+    static func dentalsegStatusCommand(python: URL, paths: AppPaths) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dentalseg-status",
+            "--model-root",
+            paths.dentalsegRoot.path,
+            "--json",
+            paths.dentalsegStatusJSON.path,
+        ]
+    }
+
+    static func dentalsegPrepareCommand(python: URL, paths: AppPaths) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dentalseg-prepare",
+            "--model-root",
+            paths.dentalsegRoot.path,
+            "--json",
+            paths.dentalsegPrepareResultJSON.path,
+            "--progress-log",
+            paths.dentalsegPrepareLog.path,
+        ]
     }
 
     static func dicomAuditCommand(python: URL, dicomDir: URL, outputJSON: URL, paths: AppPaths) -> [String] {

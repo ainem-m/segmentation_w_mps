@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+from totalsegmentator_wrapper_mac.benchmark import write_json
 from totalsegmentator_wrapper_mac.dicom_normalizer_bridge import (
     inspect_dicom_normalizer,
     run_dicom_normalizer_audit,
@@ -60,8 +63,28 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--dry-run", action="store_true")
     setup.add_argument("--skip-install", action="store_true", help="Build setup state without running venv/pip.")
     setup.add_argument("--skip-mps-check", action="store_true", help="Skip installed doctor/MPS gate.")
+    setup.add_argument(
+        "--skip-dentalseg-model",
+        action="store_true",
+        help="Defer DentalSegmentator model preparation to dentalseg-prepare.",
+    )
     setup.add_argument("--use-existing-env", action="store_true", help="Reuse the App Support venv if already bootstrapped.")
     setup.add_argument("--progress-log", type=Path, default=None, help="Append user-facing setup progress lines here.")
+
+    dentalseg_status = subparsers.add_parser(
+        "dentalseg-status",
+        help="Report the machine-readable DentalSegmentator model preparation state.",
+    )
+    dentalseg_status.add_argument("--model-root", required=True, type=Path)
+    dentalseg_status.add_argument("--json", required=True, type=Path)
+
+    dentalseg_prepare = subparsers.add_parser(
+        "dentalseg-prepare",
+        help="Prepare the DentalSegmentator model without running inference.",
+    )
+    dentalseg_prepare.add_argument("--model-root", required=True, type=Path)
+    dentalseg_prepare.add_argument("--json", required=True, type=Path)
+    dentalseg_prepare.add_argument("--progress-log", required=True, type=Path)
 
     dicom_audit = subparsers.add_parser(
         "dicom-audit",
@@ -123,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--backend", choices=BACKENDS, default="totalsegmentator")
     run.add_argument("--task", choices=TASKS, default="craniofacial_structures")
     run.add_argument("--device", choices=DEVICES, default="auto")
+    run.add_argument("--execution-profile", choices=("macos-app",), default=None)
+    run.add_argument("--require-mps", action="store_true")
+    run.add_argument(
+        "--result-json",
+        type=Path,
+        default=None,
+        help="Optional redacted app-facing run result JSON.",
+    )
     run.add_argument("--totalseg-bin", default="TotalSegmentator")
     run.add_argument("--totalseg-home", type=Path, default=None)
     run.add_argument("--totalseg-weights", type=Path, default=None)
@@ -251,8 +282,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "doctor":
-        from totalsegmentator_wrapper_mac.benchmark import write_json
-
         result = smoke_test_mps_convtranspose3d().to_dict()
         result["dicom_normalizer"] = inspect_dicom_normalizer()
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -262,7 +291,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "update-check":
         from totalsegmentator_wrapper_mac import __version__
-        from totalsegmentator_wrapper_mac.benchmark import write_json
         from totalsegmentator_wrapper_mac.update_check import check_for_update
 
         result = check_for_update(
@@ -277,7 +305,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["status"] != "failed" else 1
 
     if args.command == "setup":
-        from totalsegmentator_wrapper_mac.benchmark import write_json
         from totalsegmentator_wrapper_mac.setup_manager import run_setup
 
         result = run_setup(
@@ -290,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             skip_install=args.skip_install,
             skip_mps_check=args.skip_mps_check,
             use_existing_env=args.use_existing_env,
+            skip_dentalseg_model=args.skip_dentalseg_model,
             progress_log=args.progress_log,
         )
         payload = result.to_dict()
@@ -297,6 +325,64 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         write_json(args.json, payload)
         return 0 if result.status == "success" else 1
+
+    if args.command in {"dentalseg-status", "dentalseg-prepare"}:
+        from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
+            dentalsegmentator_model_status,
+            install_dentalsegmentator_model,
+        )
+        from totalsegmentator_wrapper_mac.setup_manager import (
+            DENTALSEGMENTATOR_DATASET_ID,
+            DENTALSEGMENTATOR_DATASET_NAME,
+            DENTALSEGMENTATOR_MODEL_MD5,
+            DENTALSEGMENTATOR_MODEL_URL,
+        )
+
+        model_root = args.model_root.expanduser().resolve()
+        if args.command == "dentalseg-status":
+            payload = dentalsegmentator_model_status(
+                model_root=model_root,
+                expected_md5=DENTALSEGMENTATOR_MODEL_MD5,
+                dataset_id=DENTALSEGMENTATOR_DATASET_ID,
+                dataset_name=DENTALSEGMENTATOR_DATASET_NAME,
+            )
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            write_json(args.json, payload)
+            return 0 if payload["status"] != "failed" else 1
+
+        args.progress_log.parent.mkdir(parents=True, exist_ok=True)
+        args.progress_log.write_text("DENTALSEG_PROGRESS status=running\n", encoding="utf-8")
+        try:
+            payload = install_dentalsegmentator_model(
+                model_url=DENTALSEGMENTATOR_MODEL_URL,
+                model_zip=model_root / "Dataset112_DentalSegmentator_v100.zip",
+                expected_md5=DENTALSEGMENTATOR_MODEL_MD5,
+                nnunet_results=model_root / "nnUNet_results",
+                nnunet_raw=model_root / "nnUNet_raw",
+                nnunet_preprocessed=model_root / "nnUNet_preprocessed",
+                dataset_id=DENTALSEGMENTATOR_DATASET_ID,
+                dataset_name=DENTALSEGMENTATOR_DATASET_NAME,
+            )
+        except Exception as exc:  # noqa: BLE001
+            payload = {
+                "schema": "totalsegmentator_wrapper_mac.dentalsegmentator_model_setup.v1",
+                "status": "failed",
+                "model_state": "failed",
+                "error_code": "model_prepare_failed",
+                "safe_reason": "DentalSegmentator model preparation did not complete.",
+                "mps_state": "not_applicable",
+                "occurred_at": datetime.now(UTC).isoformat(),
+            }
+            with args.progress_log.open("a", encoding="utf-8") as handle:
+                handle.write("DENTALSEG_PROGRESS status=failed\n")
+            print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+            write_json(args.json, payload)
+            return 1
+        with args.progress_log.open("a", encoding="utf-8") as handle:
+            handle.write("DENTALSEG_PROGRESS status=success\n")
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        write_json(args.json, payload)
+        return 0
 
     if args.command == "dicom-audit":
         from totalsegmentator_wrapper_mac.dicom_audit import audit_dicom_directory, write_audit_json
@@ -377,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output,
             task=args.task,
             requested_device=args.device,
+            execution_profile=args.execution_profile,
+            require_mps=args.require_mps,
             backend=args.backend,
             totalseg_bin=args.totalseg_bin,
             totalseg_home=args.totalseg_home,
@@ -409,6 +497,18 @@ def main(argv: list[str] | None = None) -> int:
             teeth_force_split=args.teeth_force_split,
             teeth_robust_craniofacial_preflight=args.teeth_robust_craniofacial_preflight,
         )
+        if args.result_json is not None:
+            safe_payload = {
+                "schema": "totalsegmentator_wrapper_mac.safe_run_result.v1",
+                "status": result.status,
+                "feature": args.backend,
+                "task": args.task,
+                "error_code": result.error_code,
+                "safe_reason": result.safe_reason,
+                "mps_state": result.mps_state,
+                "occurred_at": result.occurred_at,
+            }
+            write_json(args.result_json, safe_payload)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.status == "success" else result.returncode or 1
 

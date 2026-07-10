@@ -324,6 +324,7 @@ def run_setup(
     skip_install: bool = False,
     skip_mps_check: bool = False,
     use_existing_env: bool = False,
+    skip_dentalseg_model: bool = False,
     progress_log: Path | None = None,
     home: Path | None = None,
     runner: CommandRunner | None = None,
@@ -515,40 +516,54 @@ def run_setup(
             return _finalize_result(result, write_state=not dry_run)
         _write_progress(progress_log, "download_totalseg_weights", weights_step.status, "モデルの取得が完了しました。")
 
-        _write_progress(
-            progress_log,
-            "download_dentalseg_weights",
-            "running",
-            "DentalSegmentatorモデルを取得しています。数分かかることがあります。",
-        )
-        dentalseg_weights_step = _execute_step(
-            "download_dentalseg_weights",
-            build_dentalseg_weights_command(
-                venv_python,
-                dentalsegmentator_model_root(paths),
-            ),
-            paths.logs_dir,
-            runner,
-            env=build_setup_environment(paths),
-            dry_run=dry_run or skip_install,
-        )
-        steps.append(dentalseg_weights_step)
-        if dentalseg_weights_step.status == "failed":
+        if skip_dentalseg_model:
+            dentalseg_weights_step = SetupStep(
+                name="download_dentalseg_weights",
+                status="skipped",
+                error="DentalSegmentator model preparation was deferred by --skip-dentalseg-model.",
+            )
+            steps.append(dentalseg_weights_step)
             _write_progress(
                 progress_log,
                 "download_dentalseg_weights",
-                "failed",
-                "DentalSegmentatorモデルの取得に失敗しました。",
+                "skipped",
+                "DentalSegmentatorモデルの準備は後で行います。",
             )
-            result.status = "failed"
-            result.reason = "dentalseg_weights_download_failed"
-            return _finalize_result(result, write_state=not dry_run)
-        _write_progress(
-            progress_log,
-            "download_dentalseg_weights",
-            dentalseg_weights_step.status,
-            "DentalSegmentatorモデルの取得が完了しました。",
-        )
+        else:
+            _write_progress(
+                progress_log,
+                "download_dentalseg_weights",
+                "running",
+                "DentalSegmentatorモデルを取得しています。数分かかることがあります。",
+            )
+            dentalseg_weights_step = _execute_step(
+                "download_dentalseg_weights",
+                build_dentalseg_weights_command(
+                    venv_python,
+                    dentalsegmentator_model_root(paths),
+                ),
+                paths.logs_dir,
+                runner,
+                env=build_setup_environment(paths),
+                dry_run=dry_run or skip_install,
+            )
+            steps.append(dentalseg_weights_step)
+            if dentalseg_weights_step.status == "failed":
+                _write_progress(
+                    progress_log,
+                    "download_dentalseg_weights",
+                    "failed",
+                    "DentalSegmentatorモデルの取得に失敗しました。",
+                )
+                result.status = "failed"
+                result.reason = "dentalseg_weights_download_failed"
+                return _finalize_result(result, write_state=not dry_run)
+            _write_progress(
+                progress_log,
+                "download_dentalseg_weights",
+                dentalseg_weights_step.status,
+                "DentalSegmentatorモデルの取得が完了しました。",
+            )
 
         doctor_json = paths.logs_dir / "doctor.json"
         _write_progress(progress_log, "doctor", "running", "MPSとCT確認用部品を確認しています。")

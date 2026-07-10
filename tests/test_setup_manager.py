@@ -431,6 +431,39 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(dentalseg_step.status, "failed")
             self.assertIn("fake dentalseg failure", dentalseg_step.error or "")
 
+    def test_skip_dentalseg_model_defers_only_dental_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wheel = home / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
+            constraints = home / "constraints.txt"
+            wheel.write_bytes(b"fake")
+            constraints.write_text("# pinned deps\n", encoding="utf-8")
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                allow_network=True,
+                skip_mps_check=True,
+                skip_dentalseg_model=True,
+                runner=recording_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "success")
+            step = next(item for item in result.steps if item.name == "download_dentalseg_weights")
+            self.assertEqual(step.status, "skipped")
+            self.assertFalse(any("dentalsegmentator_setup" in " ".join(command) for command in commands))
+
     def test_setup_records_installed_bundle_from_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

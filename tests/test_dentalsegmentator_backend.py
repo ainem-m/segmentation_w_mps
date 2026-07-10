@@ -163,6 +163,68 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertIn("individual tooth labels", result.stderr_tail)
 
+    def test_macos_app_profile_blocks_child_before_case_creation_when_mps_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.nii.gz"
+            input_path.write_bytes(b"fake")
+            dataset_root = root / "nnUNet_results" / "Dataset112_DentalSegmentator_v100"
+            dataset_root.mkdir(parents=True)
+            (dataset_root / "dataset.json").write_text("{}", encoding="utf-8")
+            (dataset_root / ".dentalsegmentator_model_ready.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1",
+                        "model_state": "ready",
+                        "expected_md5": "b71cd5230168d28a4f71b078265b76be",
+                        "dataset_id": "112",
+                        "dataset_name": "Dataset112_DentalSegmentator_v100",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            failed_mps = DeviceCheck(
+                status="fail",
+                requested_device="mps",
+                actual_device=None,
+                fallback_reason=None,
+                python=sys.version,
+                platform="test",
+                machine="arm64",
+                torch_version="test",
+                mps_built=True,
+                mps_available=False,
+                convtranspose3d_fp32="fail",
+                elapsed_seconds=0.0,
+                error="raw MPS failure details",
+            )
+
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg.resolve_device",
+                return_value=failed_mps,
+            ), patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg._run_command_streamed"
+            ) as child_runner:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    backend="dentalsegmentator",
+                    task="craniofacial_structures",
+                    requested_device="mps",
+                    execution_profile="macos-app",
+                    require_mps=True,
+                    dentalseg_nnunet_results=root / "nnUNet_results",
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.error_code, "mps_unavailable")
+            self.assertEqual(result.safe_reason, "MPS validation did not pass for this app run.")
+            self.assertEqual(result.mps_state, "unavailable")
+            self.assertIsNotNone(result.occurred_at)
+            self.assertNotIn(str(root), result.safe_reason or "")
+            self.assertFalse((root / "case").exists())
+            child_runner.assert_not_called()
+
 
 def _write_fake_nnunet_predict(path: Path) -> Path:
     path.write_text(
