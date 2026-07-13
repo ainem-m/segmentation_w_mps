@@ -221,6 +221,7 @@ struct AppPaths {
     var dentalsegPrepareResultJSON: URL { logs.appendingPathComponent("dentalsegmentator_prepare_result.json") }
     var dentalsegPrepareLog: URL { logs.appendingPathComponent("dentalsegmentator_prepare.log") }
     var runResultJSON: URL { logs.appendingPathComponent("latest_run_result.json") }
+    var appRunLog: URL { logs.appendingPathComponent("app_run.log") }
     var dentalsegInstalledModel: URL {
         dentalsegResults
             .appendingPathComponent("Dataset112_DentalSegmentator_v100", isDirectory: true)

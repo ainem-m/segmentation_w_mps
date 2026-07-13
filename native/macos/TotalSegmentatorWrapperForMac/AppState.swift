@@ -120,7 +120,7 @@ struct ViewerExportCandidate: Identifiable, Equatable {
         guard hasSparseSliceDirection else {
             return ""
         }
-        return "slice方向は面内より粗い場合があります。3D結果が階段状に見えることがあります。研究・教育・検証用のプレビューとして確認してください。"
+        return "画像の間隔が粗いため、3Dプレビューが段々に見えることがあります。"
     }
 }
 
@@ -136,9 +136,6 @@ struct CTPreviewSlice: Identifiable, Equatable {
 
     var id: String { plane }
 
-    var detailText: String {
-        "\(width)×\(height) / min \(formatNumber(minValue)) / max \(formatNumber(maxValue))"
-    }
 }
 
 struct RunReadinessItem: Identifiable, Equatable {
@@ -171,8 +168,10 @@ private enum UserSettingKey {
 final class AppState: ObservableObject {
     let paths: AppPaths
     private let runner = ProcessRunner()
+    private let dentalPreparationRunner = ProcessRunner()
     private var logTimer: Timer?
     private var dentalPreparationTimer: Timer?
+    private var dentalPreparationCancellationRequested = false
     private var startedAt: Date?
     private var lastLogText = ""
     private var activeLogURL: URL?
@@ -296,14 +295,6 @@ final class AppState: ObservableObject {
         return inputURL?.lastPathComponent ?? "入力が選択されていません"
     }
 
-    var sampleInputButtonTitle: String {
-        isSampleInputSelected ? "CTを選ぶ（Sample選択済み）" : "CTを選ぶ（Sample）"
-    }
-
-    var sampleInputButtonIcon: String {
-        isSampleInputSelected ? "checkmark.circle" : "folder.badge.plus"
-    }
-
     var ownDataPrimaryButtonTitle: String {
         "3Dプレビューを作成"
     }
@@ -356,6 +347,9 @@ final class AppState: ObservableObject {
     }
 
     var runPreflightBlockingReason: String {
+        if dentalPreparationRunning {
+            return "DentalSegmentatorの準備が終了するまでお待ちください。"
+        }
         if segmentationBackend == .dentalSegmentator && runMode == .individualTeeth {
             return "DentalSegmentatorは歯列・顎骨の5ラベルpreview用です。個別歯ベータはTotalSegmentator backendを選んでください。"
         }
@@ -851,10 +845,11 @@ final class AppState: ObservableObject {
         dentalPreparationStartedAt = Date()
         dentalPreparationElapsed = formatElapsed(0)
         dentalPreparationMessage = "DentalSegmentatorのモデルを準備しています。"
-        runner.resetTerminationRequest()
+        dentalPreparationCancellationRequested = false
+        dentalPreparationRunner.resetTerminationRequest()
         startDentalPreparationTimer()
         let environment = CommandBuilder.launchEnvironment(paths: paths)
-        let runner = self.runner
+        let runner = dentalPreparationRunner
         let python = paths.venvPython
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let statusCommand = CommandBuilder.dentalsegStatusCommand(python: python, paths: self?.paths ?? AppPaths.current())
@@ -867,6 +862,12 @@ final class AppState: ObservableObject {
                 self.dentalPreparationTimer?.invalidate()
                 self.dentalPreparationTimer = nil
                 self.dentalPreparationElapsed = formatElapsed(self.dentalPreparationStartedAt.map { Date().timeIntervalSince($0) } ?? 0)
+                if self.dentalPreparationCancellationRequested {
+                    self.dentalPreparationCancellationRequested = false
+                    self.dentalPreparationMessage = "モデル準備をキャンセルしました。"
+                    self.creationChoice = .standardArchJaw
+                    return
+                }
                 let result = readJSON(self.paths.dentalsegPrepareResultJSON)
                 if rc == 0 && result?["model_state"] as? String == "ready" && self.isDentalSegmentatorModelReady {
                     self.creationChoice = .dentalSegmentatorExperimental
@@ -885,11 +886,11 @@ final class AppState: ObservableObject {
             creationChoice = .standardArchJaw
             return
         }
-        runner.terminate(graceSeconds: 2.0)
+        dentalPreparationCancellationRequested = true
+        dentalPreparationRunner.terminate(graceSeconds: 2.0)
         dentalPreparationTimer?.invalidate()
         dentalPreparationTimer = nil
-        dentalPreparationRunning = false
-        dentalPreparationMessage = "モデル準備をキャンセルしました。"
+        dentalPreparationMessage = "モデル準備を終了しています。"
         showDentalPreparationSheet = false
         creationChoice = .standardArchJaw
     }
@@ -1218,8 +1219,8 @@ final class AppState: ObservableObject {
                     self?.resultMessage = "救済データを作成しました。プレビュー作成の前にsliceを確認してください。"
                     self?.screen = .ctPreview
                     self?.selectedStep = 1
-                    self?.statusText = "CT確認プレビュー"
-                    self?.progressText = "中央sliceを確認してから3Dプレビューへ進みます。"
+                    self?.statusText = "CT画像を確認"
+                    self?.progressText = "歯や顎が3枚とも見えているか確認してください。"
                 } else {
                     self?.resultOutcome = .failure
                     self?.failureReasonText = "断面群を準備できませんでした。"
@@ -1262,9 +1263,10 @@ final class AppState: ObservableObject {
         }
         let output = nextCaseOutput()
         outputURL = output
-        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        writeInputProvenance(to: output)
-        let logURL = output.appendingPathComponent("logs/run.log")
+        let caseLogURL = output.appendingPathComponent("logs/run.log")
+        let appRunLogURL = paths.appRunLog
+        let provenance = inputProvenancePayload()
+        try? FileManager.default.removeItem(at: appRunLogURL)
         try? FileManager.default.removeItem(at: paths.runResultJSON)
         logText = ""
         summaryText = ""
@@ -1285,9 +1287,9 @@ final class AppState: ObservableObject {
             ? "DentalSegmentatorで3Dプレビューを作成中"
             : "3Dプレビューを作成中"
         if segmentationBackend == .dentalSegmentator {
-            progressText = "歯列と顎骨を5つの領域に分けています。"
+            progressText = "CTデータを処理しています。"
         } else {
-            progressText = runMode == .individualTeeth ? "歯を1本ずつ分けています。" : "歯列と顎骨をまとめて表示する結果を作成しています。"
+            progressText = runMode == .individualTeeth ? "歯を1本ずつ分けています。" : "CTデータを処理しています。"
         }
         resetRunProgressTracking()
         runProgressFraction = nil
@@ -1295,7 +1297,7 @@ final class AppState: ObservableObject {
         stopRequested = false
         screen = .running
         selectedStep = 2
-        activeLogURL = logURL
+        activeLogURL = appRunLogURL
         resultLogURL = nil
         runner.resetTerminationRequest()
         startRunTimer()
@@ -1318,7 +1320,14 @@ final class AppState: ObservableObject {
         let deviceForRun = effectiveRunDevice
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let rc = runner.run(command, environment: environment, logURL: logURL)
+            let rc = runner.run(command, environment: environment, logURL: appRunLogURL)
+            let caseWasCreated = FileManager.default.fileExists(atPath: output.path)
+            if caseWasCreated {
+                writeJSON(provenance, to: output.appendingPathComponent("input_provenance.json"))
+            }
+            let finalLogURL = caseWasCreated && FileManager.default.fileExists(atPath: caseLogURL.path)
+                ? caseLogURL
+                : appRunLogURL
             var surfacePreviewRC: Int32? = nil
             if rc == 0 && self?.stopRequested != true {
                 let previewLabel = backendForRun == .dentalSegmentator ? "DentalSegmentator" : (modeForRun == .individualTeeth ? "個別歯" : "歯列・顎骨")
@@ -1331,11 +1340,11 @@ final class AppState: ObservableObject {
                 surfacePreviewRC = runner.run(
                     CommandBuilder.surfacePreviewCommand(python: venvPython, caseDir: output),
                     environment: environment,
-                    logURL: logURL
+                    logURL: caseLogURL
                 )
             }
             let stoppedBeforeSummary = runner.isTerminationRequested || self?.stopRequested == true
-            let summary = stoppedBeforeSummary
+            let summary = stoppedBeforeSummary || rc != 0
                 ? ""
                 : runner.runCapturing(
                     CommandBuilder.summaryCommand(python: venvPython, caseDir: output),
@@ -1346,9 +1355,12 @@ final class AppState: ObservableObject {
                 let stopped = self?.stopRequested == true
                 self?.isRunning = false
                 self?.stopRequested = false
-                self?.refreshLog(from: logURL)
+                self?.refreshLog(from: finalLogURL)
                 self?.activeLogURL = nil
-                self?.resultLogURL = logURL
+                self?.resultLogURL = finalLogURL
+                if !caseWasCreated {
+                    self?.outputURL = nil
+                }
                 self?.runHeartbeatText = ""
                 self?.activeRunBackend = backendForRun
                 self?.activeRunMode = modeForRun
@@ -1375,7 +1387,7 @@ final class AppState: ObservableObject {
                 } else if rc == 0 && surfacePreviewRC != nil {
                     self?.setSafeError(code: "preview_generation_failed", reason: "The 3D preview could not be generated.", mpsState: "validated")
                     self?.resultOutcome = .failure
-                    let reason = runFailureReason(from: logURL)
+                    let reason = runFailureReason(from: finalLogURL)
                     self?.failureReasonText = reason.isEmpty ? "3D preview生成だけが完了できませんでした。詳細ログを確認してください。" : reason
                     self?.surfacePreviewFailed = true
                     self?.statusText = "完了（3Dプレビュー未作成）"
@@ -1392,7 +1404,7 @@ final class AppState: ObservableObject {
                         self?.setSafeError(code: "backend_failed", reason: "The segmentation backend did not complete.", mpsState: "unknown")
                     }
                     self?.resultOutcome = .failure
-                    let reason = runFailureReason(from: logURL)
+                    let reason = runFailureReason(from: finalLogURL)
                     self?.failureReasonText = reason.isEmpty ? "実行コマンドが完了できませんでした。詳細ログを確認してください。" : reason
                     self?.statusText = "処理を完了できませんでした"
                     self?.progressText = self?.failureReasonText ?? "入力は変更されていません。もう一度実行するか、詳細ログを確認してください。"
@@ -1418,7 +1430,7 @@ final class AppState: ObservableObject {
         safeErrorOccurredAt = ISO8601DateFormatter().string(from: Date())
     }
 
-    private func writeInputProvenance(to output: URL) {
+    private func inputProvenancePayload() -> [String: Any] {
         let sourceKind: String
         if !dicomCleanCandidates.isEmpty {
             sourceKind = "dicom"
@@ -1439,7 +1451,7 @@ final class AppState: ObservableObject {
             payload["series_description"] = candidate.description
             payload["selection_basis"] = dicomSelectionWasChanged ? "user_selected" : "first_geometry_ok"
         }
-        writeJSON(payload, to: output.appendingPathComponent("input_provenance.json"))
+        return payload
     }
 
     func stopRun() {
@@ -1459,7 +1471,7 @@ final class AppState: ObservableObject {
 
     func acceptPreparedCTPreview() {
         guard canAcceptCTPreview, let pendingPreparedInputURL else {
-            resultMessage = "slice previewを確認できないため、3Dプレビューへ進めません。断面群を選び直してください。"
+            resultMessage = "3枚の画像を確認できないため、3Dプレビューへ進めません。別の画像を確認してください。"
             return
         }
         let acceptedInputURL = pendingPreparedInputURL
@@ -2221,10 +2233,10 @@ func makeCTPreviewWarning(slices: [CTPreviewSlice]) -> String {
     let expectedPlanes = Set(["axial", "coronal", "sagittal"])
     let availablePlanes = Set(slices.map(\.plane))
     if !expectedPlanes.isSubset(of: availablePlanes) {
-        return "slice previewを作成できませんでした。別の断面群または元CTを確認してください。"
+        return "3枚の画像を作れませんでした。別の画像か別のCTを選んでください。"
     }
     if slices.allSatisfy(\.uniformOrEmpty) {
-        return "画像がほぼ空に見えます。別の断面群または元CTを確認してください。"
+        return "画像がほとんど見えません。別の画像か別のCTを選んでください。"
     }
     return ""
 }

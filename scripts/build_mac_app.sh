@@ -10,6 +10,13 @@ MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 SWIFT_APP_SOURCE_DIR="${ROOT}/native/macos/TotalSegmentatorWrapperForMac"
+SWIFT_SOURCE_FILES=(
+  "${SWIFT_APP_SOURCE_DIR}/CommandBuilder.swift"
+  "${SWIFT_APP_SOURCE_DIR}/ProcessSupport.swift"
+  "${SWIFT_APP_SOURCE_DIR}/AppState.swift"
+  "${SWIFT_APP_SOURCE_DIR}/Views.swift"
+  "${SWIFT_APP_SOURCE_DIR}/TotalSegmentatorWrapperForMacApp.swift"
+)
 SWIFT_MODULE_CACHE_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_SWIFT_MODULE_CACHE_PATH:-${DIST_DIR}/swift_module_cache}"
 PYTHON_RUNTIME_SOURCE="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_PYTHON_RUNTIME_DIR:-${PYTHON_RUNTIME_DIR:-}}"
 PYTHON_RUNTIME_STRATEGY="external_python312_required"
@@ -109,14 +116,7 @@ build_swiftui_frontend() {
     echo "SwiftUI app source directory not found: ${SWIFT_APP_SOURCE_DIR}" >&2
     exit 2
   fi
-  local swift_sources=(
-    "${SWIFT_APP_SOURCE_DIR}/CommandBuilder.swift"
-    "${SWIFT_APP_SOURCE_DIR}/ProcessSupport.swift"
-    "${SWIFT_APP_SOURCE_DIR}/AppState.swift"
-    "${SWIFT_APP_SOURCE_DIR}/Views.swift"
-    "${SWIFT_APP_SOURCE_DIR}/TotalSegmentatorWrapperForMacApp.swift"
-  )
-  for source in "${swift_sources[@]}"; do
+  for source in "${SWIFT_SOURCE_FILES[@]}"; do
     if [[ ! -f "${source}" ]]; then
       echo "SwiftUI app source missing: ${source}" >&2
       exit 2
@@ -137,7 +137,7 @@ build_swiftui_frontend() {
     -framework Combine \
     -framework CryptoKit \
     -o "${MACOS_DIR}/TotalSegmentatorWrapperForMac" \
-    "${swift_sources[@]}"
+    "${SWIFT_SOURCE_FILES[@]}"
   chmod 755 "${MACOS_DIR}/TotalSegmentatorWrapperForMac"
 }
 
@@ -246,10 +246,11 @@ CONSTRAINTS_SHA256="$(sha256_file "${CONSTRAINTS_PATH}")"
 NORMALIZER_SHA256="$(sha256_file "${NORMALIZER_PATH}")"
 SAMPLE1_MANIFEST_SHA256="$(sha256_file "${SAMPLE1_MANIFEST_PATH}")"
 DCM2NIIX_SHA256="$(sha256_file "${DCM2NIIX_PATH}")"
+SWIFT_SOURCE_SHA256="$(cat "${SWIFT_SOURCE_FILES[@]}" | shasum -a 256 | awk '{print $1}')"
 DCM2NIIX_VERSION_JSON="$("${DCM2NIIX_PATH}" -h 2>&1 | awk 'BEGIN{fallback=""} /version|dcm2niix/{print; found=1; exit} NF && fallback==""{fallback=$0} END{if (!found) print fallback}' | first_json_line)"
 DCM2NIIX_SOURCE_JSON="$(json_string "$(basename "${DCM2NIIX_PATH}")")"
 if [[ -z "${BUILD_ID}" ]]; then
-  BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}"
+  BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}-${SWIFT_SOURCE_SHA256:0:12}"
 fi
 UPDATE_MANIFEST_URL_JSON="$(json_string "${UPDATE_MANIFEST_URL}")"
 UPDATE_ALLOWED_HOSTS_JSON="$(json_string_list "${UPDATE_ALLOWED_HOSTS}")"
@@ -385,6 +386,7 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
   "dcm2niix_version": ${DCM2NIIX_VERSION_JSON},
   "dcm2niix_source": ${DCM2NIIX_SOURCE_JSON},
   "sample1_manifest_sha256": "${SAMPLE1_MANIFEST_SHA256}",
+  "swift_source_sha256": "${SWIFT_SOURCE_SHA256}",
   "python_runtime": {
     "strategy": "${PYTHON_RUNTIME_STRATEGY}",
     "env": "TOTALSEGMENTATOR_WRAPPER_MAC_PYTHON_312",

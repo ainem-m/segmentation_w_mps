@@ -50,7 +50,13 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("InputAndCreationView()", root)
         self.assertIn("struct InputAndCreationView", VIEWS)
         self.assertIn("Sample 1", VIEWS)
-        self.assertIn("chooseCTInput", body(VIEWS, "struct InputAndCreationView"))
+        shared_input = body(VIEWS, "struct InputAndCreationView")
+        self.assertIn("chooseCTInput", shared_input)
+        self.assertNotIn("openSampleViewer", shared_input)
+        self.assertNotIn("useSampleInput", shared_input)
+        self.assertIn("手元のCTを選ぶ", shared_input)
+        self.assertIn("別のCTを選ぶ", shared_input)
+        self.assertIn("NextPhaseButton(", shared_input)
 
     def test_creation_choices_are_exactly_three_and_map_to_existing_modes(self):
         creation = body(STATE, "enum CreationChoice")
@@ -77,6 +83,8 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("準備を始める", setup)
         self.assertIn("DisclosureGroup(\"データの扱い\")", setup)
         self.assertIn("if state.setupRunning", setup)
+        self.assertNotIn("openSampleViewer", setup)
+        self.assertNotIn("3Dサンプルを開く", setup)
         self.assertIn("このMacのGPUを使用", VIEWS)
         self.assertIn("保存先", body(VIEWS, "struct InputAndCreationView"))
 
@@ -94,6 +102,68 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         progress_model = body(STATE, "struct RunLogProgress")
         self.assertNotIn("(\\(percent)%)", progress_model)
         self.assertNotIn("\\(percent)%", progress_model)
+        self.assertIn("CTデータを処理しています。", STATE)
+        self.assertNotIn("歯列と顎骨をまとめて表示する結果", STATE)
+        self.assertNotIn("歯列と顎骨を5つの領域に分けています。", STATE)
+
+    def test_forward_actions_share_one_prominent_full_width_component(self):
+        component = body(VIEWS, "struct NextPhaseButton")
+        self.assertIn("frame(maxWidth: .infinity, minHeight: 44)", component)
+        self.assertIn("Color.accentColor", component)
+        self.assertIn('Image(systemName: "arrow.right")', component)
+        self.assertIn("disabled(!isEnabled)", component)
+
+        for view_name in (
+            "SetupView",
+            "InputAndCreationView",
+            "DentalPreparationConfirmationSheet",
+            "DicomSeriesSelectionSheet",
+            "CTPreviewView",
+            "ResultView",
+        ):
+            with self.subTest(view=view_name):
+                self.assertIn("NextPhaseButton", body(VIEWS, f"struct {view_name}"))
+
+        expected_labels = (
+            "準備を始める",
+            "CTデータを選ぶ",
+            "Sampleで3Dプレビューを作る",
+            "このCTで3Dプレビューを作る",
+            "この撮影を使う",
+            "表示中の撮影で3Dプレビュー作成へ進む",
+            "3Dプレビューを開く",
+        )
+        for label in expected_labels:
+            with self.subTest(label=label):
+                self.assertIn(label, VIEWS)
+
+    def test_every_phase_uses_the_component_matching_its_navigation_role(self):
+        self.assertEqual(VIEWS.count("NextPhaseButton("), 8)
+
+        setup = body(VIEWS, "struct SetupView")
+        start = body(VIEWS, "struct StartChoiceView")
+        input_and_creation = body(VIEWS, "struct InputAndCreationView")
+        running = body(VIEWS, "struct RunProgressView")
+        ct_preview = body(VIEWS, "struct CTPreviewView")
+        result = body(VIEWS, "struct ResultView")
+
+        self.assertIn("NextPhaseButton", setup)
+        self.assertIn("PhaseChoiceCard", start)
+        self.assertNotIn("NextPhaseButton", start)
+        self.assertIn("NextPhaseButton", input_and_creation)
+        self.assertNotIn("NextPhaseButton", running)
+        self.assertIn("state.stopRun()", running)
+        self.assertIn("NextPhaseButton", ct_preview)
+        self.assertIn("NextPhaseButton", result)
+
+        dental_confirmation = body(VIEWS, "struct DentalPreparationConfirmationSheet")
+        dental_preparation = body(VIEWS, "struct DentalPreparationSheet")
+        dicom_selection = body(VIEWS, "struct DicomSeriesSelectionSheet")
+        self.assertIn("NextPhaseButton", dental_confirmation)
+        self.assertNotIn("NextPhaseButton", dental_preparation)
+        self.assertIn("NextPhaseButton", dicom_selection)
+
+        self.assertNotIn("struct ChoiceCard", VIEWS)
 
     def test_dental_confirmation_preparation_and_cancel(self):
         self.assertIn("showDentalPreparationConfirmation", STATE)
@@ -101,13 +171,14 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("dentalsegStatusCommand", STATE)
         self.assertIn("dentalsegPrepareCommand", STATE)
         self.assertIn("choice == .dentalSegmentatorExperimental, !isDentalSegmentatorModelReady", body(STATE, "func requestCreationChoice"))
-        self.assertIn("runner.resetTerminationRequest()", body(STATE, "func confirmDentalPreparation"))
+        self.assertIn("dentalPreparationRunner.resetTerminationRequest()", body(STATE, "func confirmDentalPreparation"))
         self.assertIn("func cancelDentalPreparation", STATE)
         shared = body(VIEWS, "struct InputAndCreationView")
         self.assertIn("DentalPreparationConfirmationSheet", shared)
         self.assertIn("DentalPreparationSheet", shared)
         confirmation = body(VIEWS, "struct DentalPreparationConfirmationSheet")
-        self.assertIn("CPUやTotalSegmentatorへ切り替えません", confirmation)
+        self.assertIn("追加モデルデータを取得するので少し時間がかかります。", confirmation)
+        self.assertNotIn("CPUやTotalSegmentator", confirmation)
         self.assertIn("キャンセル", body(VIEWS, "struct DentalPreparationSheet"))
 
     def test_dicom_defaults_first_candidate_and_preview_actions(self):
@@ -116,16 +187,51 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("startDicomCleanConversion", audit)
         self.assertNotIn("cleanCandidates.count > 1", audit)
         preview = body(VIEWS, "struct CTPreviewView")
-        self.assertIn("中央断面を確認", body(VIEWS, "struct HeaderView"))
-        self.assertIn("このCTを使う", preview)
-        self.assertIn("断面群を選び直す", preview)
-        self.assertIn("別のCTを選ぶ", preview)
+        self.assertIn("CT画像を確認", body(VIEWS, "struct HeaderView"))
+        self.assertIn("表示中の撮影で3Dプレビュー作成へ進む", preview)
+        self.assertIn("同じフォルダのほかの撮影を見る", preview)
+        self.assertIn("別のDICOMフォルダを選ぶ", preview)
+        self.assertIn("chooseDicomFolderAndAudit", preview)
+        self.assertIn("上から", preview)
+        self.assertIn("正面から", preview)
+        self.assertIn("横から", preview)
+        self.assertNotIn("slice.detailText", preview)
+        self.assertIn("複数の撮影データがあります。", preview)
+        self.assertIn("Set(state.dicomViewerExportCandidates.map(\\.seriesKey)).count", preview)
         self.assertNotIn("詳細ログを表示", preview)
-        provenance = body(STATE, "private func writeInputProvenance")
+        provenance = body(STATE, "private func inputProvenancePayload")
         self.assertIn('"first_geometry_ok"', provenance)
         self.assertIn('"user_selected"', provenance)
         self.assertIn('"series_description"', provenance)
         self.assertNotIn("inputURL", provenance)
+
+    def test_dental_cancel_waits_for_its_dedicated_runner_before_enabling_runs(self):
+        confirmation = body(STATE, "func confirmDentalPreparation")
+        cancel = body(STATE, "func cancelDentalPreparation")
+
+        self.assertIn("let runner = dentalPreparationRunner", confirmation)
+        self.assertIn("dentalPreparationCancellationRequested = true", cancel)
+        self.assertIn("dentalPreparationRunner.terminate", cancel)
+        self.assertNotIn("dentalPreparationRunning = false", cancel)
+        self.assertIn("self.dentalPreparationRunning = false", confirmation)
+        self.assertLess(
+            confirmation.index("self.dentalPreparationRunning = false"),
+            confirmation.index("if self.dentalPreparationCancellationRequested"),
+        )
+        self.assertIn("if dentalPreparationRunning", body(STATE, "var runPreflightBlockingReason"))
+
+    def test_app_does_not_create_case_output_before_strict_cli_preflight(self):
+        start_run = body(STATE, "func startRun")
+        run_call = "let rc = runner.run(command, environment: environment, logURL: appRunLogURL)"
+        provenance_write = "writeJSON(provenance, to: output.appendingPathComponent(\"input_provenance.json\"))"
+
+        self.assertIn("let appRunLogURL = paths.appRunLog", start_run)
+        self.assertNotIn("createDirectory(at: output", start_run)
+        self.assertIn(run_call, start_run)
+        self.assertIn("let caseWasCreated = FileManager.default.fileExists(atPath: output.path)", start_run)
+        self.assertIn(provenance_write, start_run)
+        self.assertLess(start_run.index(run_call), start_run.index(provenance_write))
+        self.assertIn("stoppedBeforeSummary || rc != 0", start_run)
 
     def test_success_failure_actions_and_safe_error_copy(self):
         result = body(VIEWS, "struct ResultView")

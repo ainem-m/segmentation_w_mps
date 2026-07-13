@@ -164,7 +164,7 @@ struct HeaderView: View {
         case .start: return "最初はSampleで流れを確認"
         case .inputAndCreation: return "入力と作成内容"
         case .running: return "処理中"
-        case .ctPreview: return "中央断面を確認"
+        case .ctPreview: return "CT画像を確認"
         case .result: return "結果"
         }
     }
@@ -175,7 +175,7 @@ struct HeaderView: View {
         case .start: return "入力から結果確認までを先に試せます。"
         case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
         case .running: return "現在の処理と経過時間を表示します。"
-        case .ctPreview: return "歯列と確認したい範囲が3方向すべてに写っているか確認してください。"
+        case .ctPreview: return "歯や顎が3枚とも見えていれば、このCTを使えます。"
         case .result: return "作成したファイルと次の操作を確認できます。"
         }
     }
@@ -226,23 +226,12 @@ struct SetupView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack {
-                Button {
-                    state.startSetup()
-                } label: {
-                    Label("準備を始める", systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(state.setupRunning)
-
-                Button {
-                    state.openSampleViewer()
-                } label: {
-                    Label("3Dサンプルを開く", systemImage: "cube.transparent")
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
+            NextPhaseButton(
+                title: "準備を始める",
+                systemImage: "play.fill",
+                isEnabled: !state.setupRunning
+            ) {
+                state.startSetup()
             }
         }
     }
@@ -253,7 +242,7 @@ struct StartChoiceView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            ChoiceCardContent(
+            PhaseChoiceCard(
                 title: "Sampleから始める",
                 subtitle: "入力から結果確認までの流れを先に試します。",
                 icon: "sparkles",
@@ -274,7 +263,7 @@ struct StartChoiceView: View {
                     .controlSize(.small)
                 }
             }
-            ChoiceCardContent(
+            PhaseChoiceCard(
                 title: "手元のCTデータを使う",
                 subtitle: "CTファイルまたは撮影フォルダを選びます。必要な確認と取り込み準備はアプリ内で行います。",
                 icon: "folder",
@@ -294,23 +283,32 @@ struct InputAndCreationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Button {
-                        state.useSampleInput()
-                    } label: {
-                        Label(state.isSampleInputSelected ? "Sample 1（選択済み）" : "Sample 1を選ぶ", systemImage: state.sampleInputButtonIcon)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("入力")
+                        .font(.headline)
+                    if state.inputSource == .none {
+                        Text(state.inputDisplayName)
+                            .font(.headline)
+                        NextPhaseButton(
+                            title: "CTデータを選ぶ",
+                            systemImage: "folder.badge.plus"
+                        ) {
+                            state.chooseCTInput()
+                        }
+                    } else {
+                        HStack {
+                            Text(state.inputDisplayName)
+                                .font(.headline)
+                            Spacer()
+                            Button {
+                                state.chooseCTInput()
+                            } label: {
+                                Label(state.inputSource == .sample ? "手元のCTを選ぶ" : "別のCTを選ぶ", systemImage: "folder.badge.plus")
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    Button {
-                        state.chooseCTInput()
-                    } label: {
-                        Label(state.inputSource == .sample ? "CTデータを選ぶ" : (state.inputURL?.lastPathComponent ?? "CTデータを選ぶ"), systemImage: "folder.badge.plus")
-                    }
-                    .buttonStyle(.bordered)
                 }
-
-                Text(state.inputDisplayName)
-                    .font(.headline)
                 if let candidate = state.selectedDicomSeries, state.dicomCleanCandidates.count > 1 {
                     HStack {
                         Text("使用する撮影: \(candidate.displayTitle)")
@@ -319,15 +317,6 @@ struct InputAndCreationView: View {
                             .buttonStyle(.bordered)
                     }
                 }
-                if state.inputSource == .sample {
-                    Button {
-                        state.openSampleViewer()
-                    } label: {
-                        Label("Sample 1の3Dプレビューを開く", systemImage: "cube.transparent")
-                    }
-                    .buttonStyle(.bordered)
-                }
-
                 VStack(alignment: .leading, spacing: 10) {
                     Text("作成する3Dプレビュー")
                         .font(.headline)
@@ -398,15 +387,12 @@ struct InputAndCreationView: View {
                         .foregroundStyle(.orange)
                 }
 
-                HStack {
-                    Button {
-                        state.startRun()
-                    } label: {
-                        Label(primaryTitle, systemImage: "play.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canStart)
-                    Spacer()
+                NextPhaseButton(
+                    title: primaryTitle,
+                    systemImage: "play.fill",
+                    isEnabled: canStart
+                ) {
+                    state.startRun()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -439,18 +425,12 @@ struct DentalPreparationConfirmationSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("DentalSegmentator（実験的）")
                 .font(.title2.weight(.semibold))
-            Text("歯列と顎骨を5つの領域に分けます。")
+            Text("追加モデルデータを取得するので少し時間がかかります。")
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 8) {
-                Label("追加モデルデータを取得します", systemImage: "arrow.down.circle")
-                Label("このMacのアプリ専用フォルダへ保存します", systemImage: "internaldrive")
-                Label("推論はこのMacのGPUを使用します", systemImage: "cpu")
-                Label("CPUやTotalSegmentatorへ切り替えません", systemImage: "arrow.triangle.branch")
+            NextPhaseButton(title: "準備を始める", systemImage: "arrow.down.circle") {
+                state.confirmDentalPreparation()
             }
-            .font(.callout)
             HStack {
-                Button("準備を始める") { state.confirmDentalPreparation() }
-                    .buttonStyle(.borderedProminent)
                 Button("キャンセル") {
                     state.showDentalPreparationConfirmation = false
                     state.creationChoice = .standardArchJaw
@@ -521,10 +501,14 @@ struct DicomSeriesSelectionSheet: View {
                     }
                 }
             }
+            NextPhaseButton(
+                title: "この撮影を使う",
+                systemImage: "checkmark.circle.fill",
+                isEnabled: state.canUseSelectedDicomSeries
+            ) {
+                state.useSelectedDicomSeries()
+            }
             HStack {
-                Button("この撮影を使う") { state.useSelectedDicomSeries() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!state.canUseSelectedDicomSeries)
                 Button("閉じる") { state.showDicomSeriesSelection = false }
                     .buttonStyle(.bordered)
                 Spacer()
@@ -587,24 +571,30 @@ struct CTPreviewView: View {
     @EnvironmentObject var state: AppState
 
     private let planeOrder = [
-        ("axial", "軸位"),
-        ("coronal", "冠状"),
-        ("sagittal", "矢状"),
+        ("axial", "上から"),
+        ("coronal", "正面から"),
+        ("sagittal", "横から"),
     ]
 
     var body: some View {
         let slicesByPlane = Dictionary(uniqueKeysWithValues: state.ctPreviewSlices.map { ($0.plane, $0) })
         let candidateWarning = state.pendingViewerExportCandidate?.sparseSliceWarningText ?? ""
         let warning = state.ctPreviewWarning.isEmpty ? candidateWarning : state.ctPreviewWarning
-        VStack(alignment: .leading, spacing: 16) {
-            Text("軸位・冠状・矢状のすべてに、確認したい範囲が写っていることを確認してください。")
-                .foregroundStyle(.secondary)
-            if let candidate = state.pendingViewerExportCandidate {
-                Text("\(candidate.displayTitle) / \(candidate.displayDetail)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            if let multipleSeriesNotice {
+                HStack {
+                    Label(multipleSeriesNotice, systemImage: "square.stack.3d.up")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        state.returnToViewerExportSelection()
+                    } label: {
+                        Label("同じフォルダのほかの撮影を見る", systemImage: "square.stack.3d.up")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
-
             if !warning.isEmpty {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -616,32 +606,35 @@ struct CTPreviewView: View {
                 }
             }
 
+            NextPhaseButton(
+                title: "表示中の撮影で3Dプレビュー作成へ進む",
+                systemImage: "checkmark.circle.fill",
+                isEnabled: state.canAcceptCTPreview
+            ) {
+                state.acceptPreparedCTPreview()
+            }
+
+            Divider()
             HStack {
+                Text("入力を変える")
+                    .font(.callout.weight(.semibold))
                 Button {
-                    state.acceptPreparedCTPreview()
+                    state.chooseDicomFolderAndAudit()
                 } label: {
-                    Label("このCTを使う", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!state.canAcceptCTPreview)
-
-                Button {
-                    state.returnToViewerExportSelection()
-                } label: {
-                    Label("断面群を選び直す", systemImage: "square.stack.3d.up")
+                    Label("別のDICOMフォルダを選ぶ", systemImage: "folder.badge.plus")
                 }
                 .buttonStyle(.bordered)
-
-                Button {
-                    state.goToInput()
-                } label: {
-                    Label("別のCTを選ぶ", systemImage: "arrow.left")
-                }
-                .buttonStyle(.bordered)
-
                 Spacer()
             }
         }
+    }
+
+    private var multipleSeriesNotice: String? {
+        let seriesCount = Set(state.dicomViewerExportCandidates.map(\.seriesKey)).count
+        guard seriesCount > 1 else { return nil }
+        let current = state.pendingViewerExportCandidate?.seriesNumber.map { "表示中: 撮影 \($0)" }
+            ?? "選択した撮影を表示中"
+        return "複数の撮影データがあります。\(current)"
     }
 }
 
@@ -676,9 +669,6 @@ struct SlicePreviewCard: View {
                     .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
             )
             if let slice {
-                Text(slice.detailText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 if slice.uniformOrEmpty {
                     Text("画像がほぼ空に見えます")
                         .font(.caption)
@@ -711,7 +701,7 @@ struct ResultView: View {
                         } label: {
                             Label("エラー情報をコピー", systemImage: "doc.on.doc")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         Button {
                             state.showDetailedLog()
                         } label: {
@@ -729,32 +719,28 @@ struct ResultView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    NextPhaseButton(title: "3Dプレビューを開く", systemImage: "cube.transparent") {
+                        state.openResultPreview()
+                    }
                     HStack {
-                        Button {
-                            state.openResultPreview()
-                        } label: {
-                            Label("3Dプレビューを開く", systemImage: "cube.transparent")
-                        }
-                        .buttonStyle(.borderedProminent)
                         Button {
                             state.exportForSlicer()
                         } label: {
                             Label("3D Slicer用に書き出す", systemImage: "square.and.arrow.up")
                         }
                         .buttonStyle(.bordered)
-                        Spacer()
-                    }
-                    HStack {
                         Button {
                             state.openOutputFolder()
                         } label: {
-                            Label("結果フォルダを開く", systemImage: "folder")
-                        }
+                                Label("結果フォルダを開く", systemImage: "folder")
+                            }
+                        .buttonStyle(.bordered)
                         Button {
                             state.showDetailedLog()
                         } label: {
-                            Label("詳細ログを見る", systemImage: "terminal")
-                        }
+                                Label("詳細ログを見る", systemImage: "terminal")
+                            }
+                        .buttonStyle(.bordered)
                         Spacer()
                     }
                     if !state.resultLocationItems.isEmpty {
@@ -800,9 +786,13 @@ struct ResultView: View {
                             }
                             .buttonStyle(.bordered)
                         }
-                        Button("この断面群を確認する") { state.useSelectedViewerExportCandidate() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!state.canUseSelectedViewerExportCandidate)
+                        NextPhaseButton(
+                            title: "選択した画像を確認して次へ",
+                            systemImage: "square.stack.3d.up",
+                            isEnabled: state.canUseSelectedViewerExportCandidate
+                        ) {
+                            state.useSelectedViewerExportCandidate()
+                        }
                     }
                     navigationActions
                 }
@@ -1000,6 +990,32 @@ struct LogSheetView: View {
     }
 }
 
+struct NextPhaseButton: View {
+    let title: String
+    let systemImage: String
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: systemImage)
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Image(systemName: "arrow.right")
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(isEnabled ? Color.accentColor : Color.secondary.opacity(0.18))
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+}
+
 struct StatusPill: View {
     let text: String
 
@@ -1029,35 +1045,7 @@ struct InfoCard<Content: View>: View {
     }
 }
 
-struct ChoiceCard: View {
-    let title: String
-    let subtitle: String
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: icon)
-                    .font(.largeTitle)
-                Text(title)
-                    .font(.title2.weight(.semibold))
-                Text(subtitle)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 220, alignment: .leading)
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct ChoiceCardContent<Controls: View>: View {
+struct PhaseChoiceCard<Controls: View>: View {
     let title: String
     let subtitle: String
     let icon: String
