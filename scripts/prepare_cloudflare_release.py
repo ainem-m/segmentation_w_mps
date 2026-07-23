@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,12 +25,18 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
     version = args.version
+    if args.channel == "stable" and not args.minimum_supported_version:
+        raise SystemExit("--minimum-supported-version is required for stable releases")
+    if args.channel == "stable" and not args.notarized:
+        raise SystemExit("stable releases require a notarized DMG")
     dmg = args.dmg
     if dmg is None:
-        dmg = repo_root / "dist" / f"{APP_NAME}-{version}-20260708-modelsetup-arm64.dmg"
+        dmg = repo_root / "dist" / f"{APP_NAME}-{version}-20260722-gdcm-toothseg-arm64.dmg"
     dmg = dmg.expanduser()
     if not dmg.is_file():
         raise SystemExit(f"DMG not found: {dmg}")
+    if args.channel == "stable":
+        verify_stable_notarized_dmg(dmg)
 
     download_origin = normalize_https_origin(args.download_origin)
     object_prefix = normalize_object_prefix(args.object_prefix)
@@ -61,7 +68,7 @@ def main() -> int:
     )
     write_text(
         release_dir / "RELEASE_NOTES.txt",
-        release_notes(version),
+        release_notes(version, notarized=args.notarized),
     )
     write_json(
         release_dir / "release.json",
@@ -142,7 +149,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Cloudflare R2 release metadata.")
-    parser.add_argument("--version", default="0.1.2")
+    parser.add_argument("--version", default="0.2.0")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--minimum-supported-version", default=None)
     parser.add_argument("--dmg", type=Path, default=None)
@@ -159,8 +166,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--published-at", default=None)
     parser.add_argument("--r2-root", type=Path, default=Path("cloudflare/r2"))
     parser.add_argument("--bucket", default="lacramy-downloads")
-    parser.add_argument("--notarized", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--notarized", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args()
+
+
+def verify_stable_notarized_dmg(dmg: Path) -> None:
+    checks = (
+        ("codesign", "--verify", "--verbose=2", str(dmg)),
+        ("xcrun", "stapler", "validate", str(dmg)),
+        (
+            "spctl",
+            "--assess",
+            "--type",
+            "open",
+            "--context",
+            "context:primary-signature",
+            "--verbose=4",
+            str(dmg),
+        ),
+    )
+    for command in checks:
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            raise SystemExit(
+                f"stable DMG failed notarization verification ({command[0]}): {detail.strip()}"
+            ) from exc
 
 
 def normalize_https_origin(value: str) -> str:
@@ -193,8 +231,6 @@ def object_key(prefix: str, suffix: str) -> str:
 
 
 def default_minimum_supported(version: str, channel: str) -> str:
-    if channel == "stable" and version == "0.1.2":
-        return "0.1.1"
     return version
 
 
@@ -234,15 +270,26 @@ def display_path(path: Path, repo_root: Path) -> str:
         return str(resolved)
 
 
-def release_notes(version: str) -> str:
+def release_notes(version: str, *, notarized: bool) -> str:
+    distribution_status = (
+        "- Developer ID signed and Apple notarized DMG for Apple Silicon Macs."
+        if notarized
+        else "- Candidate metadata only: this DMG has not been verified as Developer ID signed and Apple notarized, and must not be published as the stable build."
+    )
     return f"""TotalSegmentator Wrapper for Mac {version} alpha
 
-- Developer ID signed and Apple notarized DMG for Apple Silicon Macs.
+{distribution_status}
 - Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
-- Bundled dcm2niix and native DICOM normalizer for local CT intake.
+- Bundled dcm2niix and GDCM 3.2.7 DICOM normalizer for local CT intake.
+- Native JPEG, JPEG-LS, JPEG 2000, and RLE DICOM decoding with lossless transcoding before dcm2niix conversion.
+- Invalid compressed DICOM data now fails explicitly instead of silently falling back; Enhanced CT remains blocked until per-frame geometry can be verified.
 - Bundled Sample 1 non-clinical preview data and offline 3D preview HTML.
 - First setup now prepares the craniofacial, robust crop, and teeth model weights.
 - Craniofacial app previews now use the robust crop path by default for local CBCT inputs.
+- High-resolution ToothSeg refinement can be explicitly prepared and run after a successful TotalSegmentator result with detected teeth.
+- The first ToothSeg preparation downloads approximately 920 MB; it never starts refinement automatically after the download.
+- Model-specific stages show measured progress when available and an honest indeterminate range otherwise.
+- On the tested M1 Mac with 16 GB unified memory, the bundled 12 mm ROI sample took 34 minutes 27 seconds; other scans may take longer or exceed available memory.
 - Update checks run only after the user presses the update button.
 
 Non-clinical limitation:

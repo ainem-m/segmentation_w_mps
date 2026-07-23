@@ -20,12 +20,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "gdcm_import.h"
+
 namespace fs = std::filesystem;
 
 namespace {
 
-constexpr std::string_view kVersion = "0.1.0";
-constexpr std::size_t kReadLimitBytes = 4 * 1024 * 1024;
+constexpr std::string_view kVersion = "0.2.0";
 constexpr std::size_t kDicomdirReadLimitBytes = 64 * 1024 * 1024;
 constexpr std::size_t kPreviewReadLimitBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kMinVolumeSlices = 32;
@@ -76,6 +77,7 @@ struct DicomMeta {
     bool parsed = false;
     fs::path source_path;
     std::string error;
+    std::string parser_backend;
     bool has_dicm_prefix = false;
     bool has_file_meta = false;
     std::string transfer_syntax_uid;
@@ -102,6 +104,11 @@ struct DicomMeta {
     std::array<double, 3> image_position_patient{0.0, 0.0, 0.0};
     std::array<double, 6> image_orientation_patient{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     bool has_pixel_data = false;
+    bool pixel_decode_attempted = false;
+    bool pixel_decode_ok = false;
+    bool geometry_from_functional_groups = false;
+    std::uint64_t decoded_bytes = 0;
+    std::uint64_t decoded_fnv1a64 = 0;
     std::string slice_thickness;
     std::string burned_in_annotation;
 };
@@ -316,6 +323,12 @@ std::string json_bool(bool value) {
     return value ? "true" : "false";
 }
 
+std::string hex_u64(std::uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << value;
+    return out.str();
+}
+
 std::string json_path_optional(const std::optional<fs::path>& path) {
     return path.has_value() ? json_string(path->string()) : "null";
 }
@@ -432,74 +445,11 @@ float read_f32_le(const std::vector<uint8_t>& data, std::size_t offset) {
     return value;
 }
 
-uint16_t read_u16_be(const std::vector<uint8_t>& data, std::size_t offset) {
-    if (offset + 2 > data.size()) {
-        throw std::out_of_range("u16 beyond buffer");
-    }
-    return static_cast<uint16_t>(data[offset + 1]) | (static_cast<uint16_t>(data[offset]) << 8U);
-}
-
-uint32_t read_u32_be(const std::vector<uint8_t>& data, std::size_t offset) {
-    if (offset + 4 > data.size()) {
-        throw std::out_of_range("u32 beyond buffer");
-    }
-    return static_cast<uint32_t>(data[offset + 3])
-        | (static_cast<uint32_t>(data[offset + 2]) << 8U)
-        | (static_cast<uint32_t>(data[offset + 1]) << 16U)
-        | (static_cast<uint32_t>(data[offset]) << 24U);
-}
-
 bool long_vr(const std::string& vr) {
     static const std::vector<std::string> values = {
         "OB", "OD", "OF", "OL", "OW", "SQ", "UC", "UR", "UT", "UN"
     };
     return std::find(values.begin(), values.end(), vr) != values.end();
-}
-
-std::vector<uint8_t> read_prefix(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("cannot open file");
-    }
-    std::vector<uint8_t> buffer(kReadLimitBytes);
-    in.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-    buffer.resize(static_cast<std::size_t>(in.gcount()));
-    return buffer;
-}
-
-std::string value_bytes_to_string(
-    const std::vector<uint8_t>& data,
-    std::size_t offset,
-    uint32_t length
-) {
-    if (length == 0 || length == 0xFFFFFFFFU || offset + length > data.size()) {
-        return {};
-    }
-    return trim_nulls(
-        std::string(reinterpret_cast<const char*>(data.data() + offset), length));
-}
-
-std::optional<int> parse_int_text(const std::string& text) {
-    if (text.empty()) {
-        return std::nullopt;
-    }
-    try {
-        return std::stoi(text);
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::vector<double> parse_double_list(const std::string& text) {
-    std::vector<double> values;
-    for (const auto& part : split_backslash(text)) {
-        try {
-            values.push_back(std::stod(part));
-        } catch (...) {
-            return {};
-        }
-    }
-    return values;
 }
 
 std::string rounded_double_key(double value, int decimals = 4) {
@@ -604,276 +554,50 @@ bool is_compressed_transfer_syntax(const std::string& uid) {
         || uid.rfind("1.2.840.10008.1.2.4.", 0) == 0;
 }
 
-void assign_value(
-    DicomMeta& meta,
-    uint16_t group,
-    uint16_t element,
-    const std::string& vr,
-    const std::vector<uint8_t>& data,
-    std::size_t value_offset,
-    uint32_t length,
-    bool big_endian
-) {
-    const std::string text = value_bytes_to_string(data, value_offset, length);
-    const uint32_t tag = (static_cast<uint32_t>(group) << 16U) | element;
-    switch (tag) {
-        case 0x00020002:
-            if (meta.sop_class_uid.empty()) {
-                meta.sop_class_uid = text;
-                meta.sop_class_name = sop_class_name(text);
-            }
-            break;
-        case 0x00020010:
-            meta.transfer_syntax_uid = text;
-            break;
-        case 0x00080008:
-            meta.image_type = split_backslash(text);
-            break;
-        case 0x00080016:
-            meta.sop_class_uid = text;
-            meta.sop_class_name = sop_class_name(text);
-            break;
-        case 0x00080018:
-            meta.sop_instance_uid = text;
-            break;
-        case 0x00080060:
-            meta.modality = text;
-            break;
-        case 0x0008103E:
-            meta.series_description = text;
-            break;
-        case 0x00180050:
-            meta.slice_thickness = text;
-            break;
-        case 0x0020000E:
-            meta.series_instance_uid = text;
-            break;
-        case 0x00200011:
-            meta.series_number = parse_int_text(text);
-            break;
-        case 0x00200013:
-            meta.instance_number = parse_int_text(text);
-            break;
-        case 0x00200032:
-            if (const auto values = parse_double_list(text); values.size() == 3) {
-                meta.has_image_position_patient = true;
-                meta.image_position_patient = {values[0], values[1], values[2]};
-            } else {
-                meta.has_image_position_patient = !text.empty();
-            }
-            break;
-        case 0x00200037:
-            if (const auto values = parse_double_list(text); values.size() == 6) {
-                meta.has_image_orientation_patient = true;
-                meta.image_orientation_patient = {
-                    values[0], values[1], values[2], values[3], values[4], values[5]};
-            } else {
-                meta.has_image_orientation_patient = !text.empty();
-            }
-            break;
-        case 0x00280002:
-            if (length >= 2 && value_offset + 2 <= data.size()) {
-                meta.samples_per_pixel = big_endian ? read_u16_be(data, value_offset) : read_u16_le(data, value_offset);
-            } else {
-                meta.samples_per_pixel = parse_int_text(text);
-            }
-            break;
-        case 0x00280004:
-            meta.photometric_interpretation = text;
-            break;
-        case 0x00280008:
-            meta.number_of_frames = parse_int_text(text);
-            break;
-        case 0x00280010:
-            if (length >= 2 && value_offset + 2 <= data.size()) {
-                meta.rows = big_endian ? read_u16_be(data, value_offset) : read_u16_le(data, value_offset);
-            } else {
-                meta.rows = parse_int_text(text);
-            }
-            break;
-        case 0x00280011:
-            if (length >= 2 && value_offset + 2 <= data.size()) {
-                meta.columns = big_endian ? read_u16_be(data, value_offset) : read_u16_le(data, value_offset);
-            } else {
-                meta.columns = parse_int_text(text);
-            }
-            break;
-        case 0x00280301:
-            meta.burned_in_annotation = text;
-            break;
-        case 0x00280030:
-            if (const auto values = parse_double_list(text); values.size() == 2) {
-                meta.has_pixel_spacing = true;
-                meta.pixel_spacing = {values[0], values[1]};
-            } else {
-                meta.has_pixel_spacing = !text.empty();
-            }
-            break;
-        case 0x00280100:
-            if (length >= 2 && value_offset + 2 <= data.size()) {
-                meta.bits_allocated = big_endian ? read_u16_be(data, value_offset) : read_u16_le(data, value_offset);
-            } else {
-                meta.bits_allocated = parse_int_text(text);
-            }
-            break;
-        case 0x00280103:
-            if (length >= 2 && value_offset + 2 <= data.size()) {
-                meta.pixel_representation = big_endian ? read_u16_be(data, value_offset) : read_u16_le(data, value_offset);
-            } else {
-                meta.pixel_representation = parse_int_text(text);
-            }
-            break;
-        default:
-            (void)vr;
-            break;
-    }
-}
-
-void parse_dataset(
-    DicomMeta& meta,
-    const std::vector<uint8_t>& data,
-    std::size_t offset,
-    bool explicit_vr,
-    bool big_endian
-) {
-    while (offset + 8 <= data.size()) {
-        const uint16_t group = big_endian ? read_u16_be(data, offset) : read_u16_le(data, offset);
-        const uint16_t element = big_endian ? read_u16_be(data, offset + 2) : read_u16_le(data, offset + 2);
-        if (group == 0x7FE0 && (element == 0x0008 || element == 0x0009 || element == 0x0010)) {
-            meta.has_pixel_data = true;
-            return;
-        }
-
-        uint32_t length = 0;
-        std::string vr = "UN";
-        std::size_t value_offset = 0;
-
-        if (explicit_vr) {
-            vr = std::string(reinterpret_cast<const char*>(data.data() + offset + 4), 2);
-            if (long_vr(vr)) {
-                if (offset + 12 > data.size()) {
-                    return;
-                }
-                length = big_endian ? read_u32_be(data, offset + 8) : read_u32_le(data, offset + 8);
-                value_offset = offset + 12;
-            } else {
-                if (offset + 8 > data.size()) {
-                    return;
-                }
-                length = big_endian ? read_u16_be(data, offset + 6) : read_u16_le(data, offset + 6);
-                value_offset = offset + 8;
-            }
-        } else {
-            length = big_endian ? read_u32_be(data, offset + 4) : read_u32_le(data, offset + 4);
-            value_offset = offset + 8;
-        }
-
-        if (length == 0xFFFFFFFFU) {
-            return;
-        }
-        if (value_offset + length > data.size()) {
-            return;
-        }
-        assign_value(meta, group, element, vr, data, value_offset, length, big_endian);
-        offset = value_offset + length;
-        if (offset % 2 != 0) {
-            ++offset;
-        }
-    }
-}
-
 DicomMeta parse_dicom_file(const fs::path& path) {
+    const auto probe = dicom_normalizer::probe_dicom_file(path);
     DicomMeta meta;
+    meta.parsed = probe.parsed;
     meta.source_path = path;
-    try {
-        const auto data = read_prefix(path);
-        if (data.size() < 8) {
-            meta.error = "file_too_small";
-            return meta;
-        }
-
-        std::size_t offset = 0;
-        if (data.size() >= 132
-            && data[128] == 'D'
-            && data[129] == 'I'
-            && data[130] == 'C'
-            && data[131] == 'M') {
-            meta.has_dicm_prefix = true;
-            offset = 132;
-        } else if (data.size() >= 140 && read_u16_le(data, 132) == 0x0002) {
-            // Some files omit the DICM prefix but still contain PS3.10-like
-            // file meta information after a 128 byte preamble.
-            offset = 132;
-        }
-
-        // File meta group is explicit VR little endian even when the main
-        // dataset uses another transfer syntax.
-        if (offset + 8 <= data.size() && read_u16_le(data, offset) == 0x0002) {
-            meta.has_file_meta = true;
-            while (offset + 8 <= data.size()) {
-                const uint16_t group = read_u16_le(data, offset);
-                if (group != 0x0002) {
-                    break;
-                }
-                const uint16_t element = read_u16_le(data, offset + 2);
-                const std::string vr(reinterpret_cast<const char*>(data.data() + offset + 4), 2);
-                uint32_t length = 0;
-                std::size_t value_offset = 0;
-                if (long_vr(vr)) {
-                    if (offset + 12 > data.size()) {
-                        break;
-                    }
-                    length = read_u32_le(data, offset + 8);
-                    value_offset = offset + 12;
-                } else {
-                    length = read_u16_le(data, offset + 6);
-                    value_offset = offset + 8;
-                }
-                if (value_offset + length > data.size()) {
-                    break;
-                }
-                assign_value(meta, group, element, vr, data, value_offset, length, false);
-                offset = value_offset + length;
-                if (offset % 2 != 0) {
-                    ++offset;
-                }
-            }
-        }
-
-        bool explicit_vr = true;
-        bool big_endian = false;
-        if (meta.transfer_syntax_uid == "1.2.840.10008.1.2") {
-            explicit_vr = false;
-        } else if (meta.transfer_syntax_uid == "1.2.840.10008.1.2.2") {
-            explicit_vr = true;
-            big_endian = true;
-        }
-
-        parse_dataset(meta, data, offset, explicit_vr, big_endian);
-        if (meta.sop_class_name.empty()) {
-            meta.sop_class_name = sop_class_name(meta.sop_class_uid);
-        }
-        meta.parsed = !meta.sop_class_uid.empty() || !meta.series_instance_uid.empty();
-        if (!meta.parsed && !meta.has_file_meta) {
-            DicomMeta implicit_meta;
-            implicit_meta.source_path = path;
-            implicit_meta.has_dicm_prefix = meta.has_dicm_prefix;
-            parse_dataset(implicit_meta, data, meta.has_dicm_prefix ? 132 : 0, false, false);
-            if (implicit_meta.sop_class_name.empty()) {
-                implicit_meta.sop_class_name = sop_class_name(implicit_meta.sop_class_uid);
-            }
-            implicit_meta.parsed = !implicit_meta.sop_class_uid.empty()
-                || !implicit_meta.series_instance_uid.empty();
-            if (implicit_meta.parsed) {
-                meta = std::move(implicit_meta);
-            }
-        }
-        if (!meta.parsed) {
-            meta.error = "missing_dicom_identity_tags";
-        }
-    } catch (const std::exception& exc) {
+    meta.error = probe.error;
+    meta.parser_backend = "gdcm";
+    meta.has_dicm_prefix = probe.has_dicm_prefix;
+    meta.has_file_meta = probe.has_file_meta;
+    meta.transfer_syntax_uid = probe.transfer_syntax_uid;
+    meta.series_instance_uid = probe.series_instance_uid;
+    meta.sop_instance_uid = probe.sop_instance_uid;
+    meta.series_number = probe.series_number;
+    meta.instance_number = probe.instance_number;
+    meta.series_description = probe.series_description;
+    meta.modality = probe.modality;
+    meta.sop_class_uid = probe.sop_class_uid;
+    meta.sop_class_name = probe.sop_class_name.empty()
+        ? sop_class_name(probe.sop_class_uid) : probe.sop_class_name;
+    meta.image_type = probe.image_type;
+    meta.rows = probe.rows;
+    meta.columns = probe.columns;
+    meta.number_of_frames = probe.number_of_frames;
+    meta.samples_per_pixel = probe.samples_per_pixel;
+    meta.photometric_interpretation = probe.photometric_interpretation;
+    meta.bits_allocated = probe.bits_allocated;
+    meta.pixel_representation = probe.pixel_representation;
+    meta.has_pixel_spacing = probe.has_pixel_spacing;
+    meta.has_image_position_patient = probe.has_image_position_patient;
+    meta.has_image_orientation_patient = probe.has_image_orientation_patient;
+    meta.pixel_spacing = probe.pixel_spacing;
+    meta.image_position_patient = probe.image_position_patient;
+    meta.image_orientation_patient = probe.image_orientation_patient;
+    meta.has_pixel_data = probe.has_pixel_data;
+    meta.pixel_decode_attempted = probe.pixel_decode_attempted;
+    meta.pixel_decode_ok = probe.pixel_decode_ok;
+    meta.geometry_from_functional_groups = probe.geometry_from_functional_groups;
+    meta.decoded_bytes = probe.decoded_bytes;
+    meta.decoded_fnv1a64 = probe.decoded_fnv1a64;
+    meta.slice_thickness = probe.slice_thickness;
+    meta.burned_in_annotation = probe.burned_in_annotation;
+    if (meta.parsed && meta.sop_class_uid.empty() && meta.series_instance_uid.empty()) {
         meta.parsed = false;
-        meta.error = exc.what();
+        meta.error = "missing_dicom_identity_tags";
     }
     return meta;
 }
@@ -1114,6 +838,7 @@ bool same_array6(const std::array<double, 6>& lhs, const std::array<double, 6>& 
 }
 
 Classification classify_series(const SeriesSummary& series, const OptionalTools& tools) {
+    (void)tools;
     const DicomMeta& first = series.files.front();
     const int file_count = static_cast<int>(series.files.size());
 
@@ -1139,12 +864,14 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
     int orientation_count = 0;
     int max_number_of_frames = 0;
     int compressed_count = 0;
+    int pixel_decode_failure_count = 0;
     for (const auto& item : series.files) {
         pixel_spacing_count += item.has_pixel_spacing ? 1 : 0;
         position_count += item.has_image_position_patient ? 1 : 0;
         orientation_count += item.has_image_orientation_patient ? 1 : 0;
         max_number_of_frames = std::max(max_number_of_frames, item.number_of_frames.value_or(0));
         compressed_count += is_compressed_transfer_syntax(item.transfer_syntax_uid) ? 1 : 0;
+        pixel_decode_failure_count += item.has_pixel_data && !item.pixel_decode_ok ? 1 : 0;
     }
     const int effective_frame_count = std::max(file_count, max_number_of_frames);
 
@@ -1217,6 +944,18 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
             "Do not use for dental volume segmentation.");
     }
 
+    if (pixel_decode_failure_count > 0) {
+        return make(
+            "pixel_decode_failed",
+            "reject",
+            "none",
+            {"gdcm_pixel_decode_failed"},
+            "gdcm_pixel_decode_failed",
+            "inspect_decode_error_or_request_original_export",
+            false,
+            "GDCM could parse metadata but could not decode all pixel data. No fallback was used.");
+    }
+
     const bool is_secondary_capture =
         first.sop_class_uid.rfind("1.2.840.10008.5.1.4.1.1.7", 0) == 0
         || contains_word(sop_name_upper, "SECONDARY CAPTURE")
@@ -1228,25 +967,19 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         || contains_word(description_upper, "SAGITTAL");
 
     if (is_secondary_capture) {
-        if (compressed_count > 0) {
-            return make(
-                "compressed_pixel_data",
-                "B: transcode required",
-                "C: rescue only after transcode",
-                {"secondary_capture", "compressed_transfer_syntax"},
-                "",
-                tools.any_transcoder() ? "transcode_then_prepare_rescue_with_explicit_spacing"
-                                       : "install_gdcm_or_dcmtk_transcoder",
-                !tools.any_transcoder(),
-                "Compressed secondary-capture pixel data needs an external transcoder before rescue.");
-        }
         if (effective_frame_count >= kMinVolumeSlices && shape_consistent && axial_like && !non_axial_mpr) {
+            std::vector<std::string> reasons{
+                "secondary_capture", "geometry_not_trusted", "manual_spacing_required",
+                "not_segmentation_grade_original_ct"};
+            if (compressed_count > 0) {
+                reasons.push_back("compressed_transfer_syntax");
+                reasons.push_back("native_gdcm_decode_ok");
+            }
             return make(
                 "secondary_capture_rescue_candidate",
                 "C: rescue only",
                 "C: rescue only",
-                {"secondary_capture", "geometry_not_trusted", "manual_spacing_required",
-                 "not_segmentation_grade_original_ct"},
+                reasons,
                 "",
                 "prepare_rescue_with_explicit_spacing",
                 false,
@@ -1270,17 +1003,22 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         || contains_word(sop_name_upper, "ENHANCED CT");
 
     if (is_enhanced_ct || (modality_upper == "CT" && max_number_of_frames >= kMinVolumeSlices)) {
+        std::vector<std::string> reasons{"enhanced_or_multiframe_ct", "native_gdcm_decode_ok"};
+        if (compressed_count > 0) {
+            reasons.push_back("compressed_transfer_syntax");
+        }
+        if (first.geometry_from_functional_groups) {
+            reasons.push_back("functional_group_geometry_detected");
+        }
         return make(
-            "needs_dicom_library",
-            "needs_dicom_library",
+            "enhanced_ct_geometry_unverified",
+            "geometry validation required",
             "none",
-            compressed_count > 0
-                ? std::vector<std::string>{"enhanced_or_multiframe_ct", "compressed_transfer_syntax"}
-                : std::vector<std::string>{"enhanced_or_multiframe_ct"},
-            "enhanced_or_multiframe_ct",
-            "use_dicom_library_or_original_export",
-            true,
-            "Enhanced or multi-frame CT requires a DICOM library path with per-frame functional groups.");
+            reasons,
+            "per_frame_geometry_not_fully_validated",
+            "validate_all_per_frame_functional_groups_or_request_original_export",
+            false,
+            "GDCM decoded the image, but every per-frame position/orientation must be validated before clean conversion.");
     }
 
     const bool geometry_ok =
@@ -1293,23 +1031,11 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         && orientation_consistent;
 
     if (is_ct && geometry_ok) {
-        if (compressed_count > 0) {
-            std::vector<std::string> reasons{"ct_geometry_tags_present", "compressed_transfer_syntax"};
-            if (!image_type_original_or_unspecified) {
-                reasons.push_back("image_type_not_original_but_geometry_complete");
-            }
-            return make(
-                "compressed_pixel_data",
-                "B: transcode required",
-                "B: external transcode",
-                reasons,
-                "",
-                tools.any_transcoder() ? "transcode_then_convert_clean"
-                                       : "install_gdcm_or_dcmtk_transcoder",
-                !tools.any_transcoder(),
-                "Geometry looks usable, but compressed pixel data needs an external transcoder before clean conversion.");
-        }
         std::vector<std::string> reasons{"ct_geometry_tags_present"};
+        if (compressed_count > 0) {
+            reasons.push_back("compressed_transfer_syntax");
+            reasons.push_back("native_gdcm_decode_ok");
+        }
         if (!image_type_original_or_unspecified) {
             reasons.push_back("image_type_not_original_but_geometry_complete");
         }
@@ -1321,7 +1047,9 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
             "",
             "convert_clean",
             false,
-            "Convert with dcm2niix, review MPR/FOV, then run the NIfTI path.");
+            compressed_count > 0
+                ? "Transcode losslessly with embedded GDCM, convert with dcm2niix, then review MPR/FOV."
+                : "Convert with dcm2niix, review MPR/FOV, then run the NIfTI path.");
     }
 
     if (modality_upper == "CT") {
@@ -1656,6 +1384,9 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     int file_meta_count = 0;
     int pixel_data_count = 0;
     int compressed_transfer_syntax_count = 0;
+    int pixel_decode_attempted_count = 0;
+    int pixel_decode_ok_count = 0;
+    int functional_group_geometry_count = 0;
     int max_number_of_frames = 0;
     std::map<std::string, int> burned_in_counts;
     std::map<std::string, int> transfer_syntax_counts;
@@ -1678,6 +1409,9 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
         orientation_count += item.has_image_orientation_patient ? 1 : 0;
         pixel_data_count += item.has_pixel_data ? 1 : 0;
         compressed_transfer_syntax_count += is_compressed_transfer_syntax(item.transfer_syntax_uid) ? 1 : 0;
+        pixel_decode_attempted_count += item.pixel_decode_attempted ? 1 : 0;
+        pixel_decode_ok_count += item.pixel_decode_ok ? 1 : 0;
+        functional_group_geometry_count += item.geometry_from_functional_groups ? 1 : 0;
         max_number_of_frames = std::max(max_number_of_frames, item.number_of_frames.value_or(0));
         burned_in_counts[item.burned_in_annotation.empty() ? "unknown" : item.burned_in_annotation] += 1;
         transfer_syntax_counts[item.transfer_syntax_uid.empty() ? "unknown" : item.transfer_syntax_uid] += 1;
@@ -1698,6 +1432,16 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     out << pad2 << "\"transfer_syntax_uid\": " << json_optional_string(first.transfer_syntax_uid) << ",\n";
     out << pad2 << "\"transfer_syntax_name\": " << json_optional_string(transfer_syntax_name(first.transfer_syntax_uid)) << ",\n";
     out << pad2 << "\"compressed_transfer_syntax\": " << json_bool(is_compressed_transfer_syntax(first.transfer_syntax_uid)) << ",\n";
+    out << pad2 << "\"parser_backend\": " << json_string(first.parser_backend) << ",\n";
+    out << pad2 << "\"pixel_decode_attempted_count\": " << pixel_decode_attempted_count << ",\n";
+    out << pad2 << "\"pixel_decode_ok_count\": " << pixel_decode_ok_count << ",\n";
+    out << pad2 << "\"pixel_decode_failure_count\": "
+        << (pixel_decode_attempted_count - pixel_decode_ok_count) << ",\n";
+    out << pad2 << "\"decoded_bytes_first\": " << first.decoded_bytes << ",\n";
+    out << pad2 << "\"decoded_fnv1a64_first\": "
+        << json_optional_string(first.pixel_decode_ok ? hex_u64(first.decoded_fnv1a64) : std::string{}) << ",\n";
+    out << pad2 << "\"functional_group_geometry_file_count\": "
+        << functional_group_geometry_count << ",\n";
     out << pad2 << "\"image_type\": " << json_array_strings(first.image_type) << ",\n";
     out << pad2 << "\"file_count\": " << series.files.size() << ",\n";
     out << pad2 << "\"dicm_prefix_count\": " << dicm_prefix_count << ",\n";
@@ -1777,13 +1521,17 @@ std::string doctor_json(const OptionalTools& tools) {
     out << "  \"schema\": \"totalsegmentator_wrapper_mac.dicom_normalizer.doctor.v1\",\n";
     out << "  \"tool\": {\"name\": \"totalsegmentator-wrapper-dicom-normalizer\", \"version\": "
         << json_string(std::string(kVersion)) << "},\n";
+    out << "  \"dicom_backend\": {\"name\": \"GDCM\", \"version\": "
+        << json_string(dicom_normalizer::gdcm_version()) << "},\n";
     out << "  \"optional_tools\": " << optional_tools_json(tools, 2) << ",\n";
     out << "  \"capabilities\": {\n";
     out << "    \"audit\": true,\n";
     out << "    \"convert_clean\": true,\n";
     out << "    \"prepare_rescue\": true,\n";
     out << "    \"prepare_viewer_export\": true,\n";
-    out << "    \"native_compressed_pixel_decode\": false,\n";
+    out << "    \"native_compressed_pixel_decode\": true,\n";
+    out << "    \"native_lossless_transcode\": true,\n";
+    out << "    \"enhanced_ct_per_frame_geometry_validation\": false,\n";
     out << "    \"external_transcode_adapter_available\": "
         << json_bool(tools.any_transcoder()) << "\n";
     out << "  },\n";
@@ -1824,6 +1572,8 @@ std::string audit_json(
     out << "  \"schema\": \"totalsegmentator_wrapper_mac.dicom_normalizer.audit.v1\",\n";
     out << "  \"tool\": {\"name\": \"totalsegmentator-wrapper-dicom-normalizer\", \"version\": "
         << json_string(std::string(kVersion)) << "},\n";
+    out << "  \"dicom_backend\": {\"name\": \"GDCM\", \"version\": "
+        << json_string(dicom_normalizer::gdcm_version()) << "},\n";
     out << "  \"dicom_dir\": {\n";
     out << "    \"basename\": " << json_string(dicom_dir.filename().string()) << ",\n";
     out << "    \"path_hash_fnv1a64\": " << json_string(path_hash_fnv1a64(dicom_dir)) << "\n";
@@ -1853,8 +1603,8 @@ std::string audit_json(
     }
     out << "  ],\n";
     out << "  \"product_boundary\": {\n";
-    out << "    \"phase\": \"audit_only\",\n";
-    out << "    \"pixel_data_inspected\": false,\n";
+    out << "    \"phase\": \"gdcm_robust_intake\",\n";
+    out << "    \"pixel_data_inspected\": true,\n";
     out << "    \"volume_written\": false,\n";
     out << "    \"secondary_capture_rescue_written\": false\n";
     out << "  }\n";
@@ -2007,10 +1757,19 @@ std::vector<fs::path> isolate_series(const SeriesSummary& series, const fs::path
         std::ostringstream name;
         name << std::setw(6) << std::setfill('0') << index++ << ".dcm";
         fs::path destination = isolated_dir / name.str();
-        fs::copy_file(
-            file.source_path,
-            destination,
-            fs::copy_options::overwrite_existing);
+        if (is_compressed_transfer_syntax(file.transfer_syntax_uid)) {
+            std::string error;
+            if (!dicom_normalizer::transcode_to_explicit_little_endian(
+                    file.source_path, destination, error)) {
+                throw std::runtime_error(
+                    "GDCM lossless transcode failed for selected series: " + error);
+            }
+        } else {
+            fs::copy_file(
+                file.source_path,
+                destination,
+                fs::copy_options::overwrite_existing);
+        }
         copied.push_back(destination);
     }
     return copied;

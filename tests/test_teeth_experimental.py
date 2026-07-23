@@ -104,6 +104,61 @@ class TeethExperimentalTests(unittest.TestCase):
                     margin_mm=5.0,
                 )
 
+    def test_crop_allows_large_expanded_roi_when_raw_teeth_bbox_is_plausible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            affine = np.eye(4)
+            shape = (64, 64, 64)
+            input_path = root / "input.nii.gz"
+            nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.int16), affine), str(input_path))
+
+            upper = np.zeros(shape, dtype=np.uint8)
+            lower = np.zeros(shape, dtype=np.uint8)
+            upper[16:48, 16:48, 32:48] = 1
+            lower[16:48, 16:48, 16:32] = 1
+            upper_path = root / "teeth_upper.nii.gz"
+            lower_path = root / "teeth_lower.nii.gz"
+            nib.save(nib.Nifti1Image(upper, affine), str(upper_path))
+            nib.save(nib.Nifti1Image(lower, affine), str(lower_path))
+
+            metadata = crop_to_mask_bbox(
+                input_path=input_path,
+                mask_paths=[upper_path, lower_path],
+                output_path=root / "roi.nii.gz",
+                margin_mm=12.0,
+            )
+
+            self.assertEqual(metadata["margin_mm"], 12.0)
+            self.assertEqual(metadata["roi_shape"], [56, 56, 56])
+            self.assertGreater(metadata["voxel_volume_ratio"], 0.5)
+            self.assertFalse(metadata["near_whole_volume"])
+            self.assertTrue(metadata["expanded_near_whole_volume"])
+
+    def test_crop_rejects_near_whole_raw_teeth_bbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            affine = np.eye(4)
+            shape = (64, 64, 64)
+            input_path = root / "input.nii.gz"
+            nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.int16), affine), str(input_path))
+
+            upper = np.zeros(shape, dtype=np.uint8)
+            lower = np.zeros(shape, dtype=np.uint8)
+            upper[1:63, 1:63, 32:63] = 1
+            lower[1:63, 1:63, 1:32] = 1
+            upper_path = root / "teeth_upper.nii.gz"
+            lower_path = root / "teeth_lower.nii.gz"
+            nib.save(nib.Nifti1Image(upper, affine), str(upper_path))
+            nib.save(nib.Nifti1Image(lower, affine), str(lower_path))
+
+            with self.assertRaisesRegex(RuntimeError, "teeth mask bbox"):
+                crop_to_mask_bbox(
+                    input_path=input_path,
+                    mask_paths=[upper_path, lower_path],
+                    output_path=root / "roi.nii.gz",
+                    margin_mm=0.0,
+                )
+
     def test_reembed_labelmap_to_full_space_preserves_source_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

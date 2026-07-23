@@ -61,7 +61,7 @@ totalsegmentator-wrapper-mac
 Recommended local install during preview packaging:
 
 ```bash
-python -m pip install -e '.[dicom,mps,dentalseg]'
+python -m pip install -e '.[dicom,mps,dentalseg,toothseg]'
 ```
 
 Recommended local wheel build on Mac:
@@ -71,14 +71,16 @@ scripts/build_mac_wheel.sh
 ```
 
 The script builds `native/dicom_normalizer`, stages
-`totalsegmentator-wrapper-dicom-normalizer` into `totalsegmentator_wrapper_mac/bin/`, and writes the
-Python wheel to `dist/`. The runtime binary lookup order is:
+`totalsegmentator-wrapper-dicom-normalizer` into `totalsegmentator_wrapper_mac/bin/`, bundles its
+GDCM runtime under `totalsegmentator_wrapper_mac/bin/lib/`, and writes the Python
+wheel to `dist/`. Mach-O load commands use `@loader_path`; no Homebrew install is
+required on the destination Mac. The runtime binary lookup order is:
 
 The current thin-app alpha wheel is intentionally Python 3.12 / macOS arm64
 specific, for example:
 
 ```text
-totalsegmentator_wrapper_mac-0.1.2-cp312-cp312-macosx_11_0_arm64.whl
+totalsegmentator_wrapper_mac-0.2.0-cp312-cp312-macosx_11_0_arm64.whl
 ```
 
 This matches the app launcher’s Python 3.12 gate and avoids pretending the
@@ -108,9 +110,15 @@ dist/TotalSegmentator Wrapper for Mac.app/
   Contents/Resources/wheels/totalsegmentator_wrapper_mac-*.whl
   Contents/Resources/constraints/macos-arm64-py312.txt
   Contents/Resources/bin/totalsegmentator-wrapper-dicom-normalizer
+  Contents/Resources/bin/lib/*.dylib
   Contents/Resources/python/cpython-3.12/        optional
   Contents/Resources/setup_manifest.json
 ```
+
+The native DICOM helper, GDCM, JPEG codecs, OpenJPEG, CharLS, json-c, and
+OpenSSL are signed from the inner dylibs outward and included in the app's
+notarization boundary. Their license texts are copied into
+`Contents/Resources/licenses/`.
 
 `Contents/MacOS/TotalSegmentatorWrapperForMac` is now a SwiftUI executable. It owns both the
 Setup window and the main workflow, while invoking the existing Python backend
@@ -130,7 +138,7 @@ scripts/build_mac_dmg.sh
 This creates:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.2.0-20260722-gdcm-toothseg-arm64.dmg
 ```
 
 The DMG contains the app, an `/Applications` symlink, and a short README. Users
@@ -419,7 +427,7 @@ Do not write into Slicer directories.
 The preview should show its own version and backend versions:
 
 ```text
-TotalSegmentator Wrapper for Mac: 0.1.2
+TotalSegmentator Wrapper for Mac: 0.2.0
 Python: x.y.z
 Torch: x.y.z
 TotalSegmentator: x.y.z

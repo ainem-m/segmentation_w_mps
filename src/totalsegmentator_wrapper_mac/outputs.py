@@ -12,7 +12,9 @@ class CaseOutput:
     raw_segmentations_dir: Path
     teeth_experimental_dir: Path
     dentalsegmentator_dir: Path
+    toothseg_dir: Path
     logs_dir: Path
+    report_filename: str = "README_OUTPUT.md"
 
     @property
     def source_path(self) -> Path:
@@ -71,24 +73,77 @@ class CaseOutput:
         return self.dentalsegmentator_dir / "dentalsegmentator_multilabel.nii.gz"
 
     @property
+    def toothseg_input_dir(self) -> Path:
+        return self.input_dir / "toothseg_nnunet"
+
+    @property
+    def toothseg_roi_path(self) -> Path:
+        return self.logs_dir / "toothseg_roi.json"
+
+    @property
+    def toothseg_roi_input_path(self) -> Path:
+        return self.input_dir / "toothseg_roi.nii.gz"
+
+    @property
+    def toothseg_semantic_input_dir(self) -> Path:
+        return self.toothseg_input_dir / "semantic"
+
+    @property
+    def toothseg_instance_input_dir(self) -> Path:
+        return self.toothseg_input_dir / "instance_0p2mm"
+
+    @property
+    def toothseg_semantic_predictions_dir(self) -> Path:
+        return self.toothseg_dir / "semantic_predictions"
+
+    @property
+    def toothseg_instance_predictions_dir(self) -> Path:
+        return self.toothseg_dir / "instance_border_core_predictions"
+
+    @property
+    def toothseg_instances_dir(self) -> Path:
+        return self.toothseg_dir / "instances"
+
+    @property
+    def toothseg_multilabel_path(self) -> Path:
+        return self.toothseg_dir / "toothseg_fdi_multilabel.nii.gz"
+
+    @property
+    def toothseg_multilabel_roi_path(self) -> Path:
+        return self.toothseg_dir / "toothseg_fdi_multilabel_roi.nii.gz"
+
+    @property
     def readme_path(self) -> Path:
-        return self.root / "README_OUTPUT.md"
+        return self.root / self.report_filename
 
 
-def prepare_case_output(root: Path) -> CaseOutput:
+def prepare_case_output(
+    root: Path,
+    *,
+    diagnostics_subdir: str | None = None,
+    report_filename: str = "README_OUTPUT.md",
+) -> CaseOutput:
     root = root.resolve()
+    logs_dir = root / "logs"
+    if diagnostics_subdir is not None:
+        if not diagnostics_subdir or Path(diagnostics_subdir).name != diagnostics_subdir:
+            raise ValueError("diagnostics_subdir must be a single directory name")
+        logs_dir = logs_dir / diagnostics_subdir
     case = CaseOutput(
         root=root,
         input_dir=root / "input",
         raw_segmentations_dir=root / "segmentations" / "raw_totalseg",
         teeth_experimental_dir=root / "segmentations" / "teeth_experimental",
         dentalsegmentator_dir=root / "segmentations" / "dentalsegmentator",
-        logs_dir=root / "logs",
+        toothseg_dir=root / "segmentations" / "toothseg",
+        logs_dir=logs_dir,
+        report_filename=report_filename,
     )
     case.input_dir.mkdir(parents=True, exist_ok=True)
     case.raw_segmentations_dir.mkdir(parents=True, exist_ok=True)
     case.teeth_experimental_dir.mkdir(parents=True, exist_ok=True)
     case.dentalsegmentator_dir.mkdir(parents=True, exist_ok=True)
+    case.toothseg_dir.mkdir(parents=True, exist_ok=True)
     case.logs_dir.mkdir(parents=True, exist_ok=True)
     return case
 

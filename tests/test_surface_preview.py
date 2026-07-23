@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tempfile
@@ -11,9 +12,11 @@ import nibabel as nib
 import numpy as np
 
 from totalsegmentator_wrapper_mac.surface_preview import (
+    resolve_surface_preview_input,
     effective_smoothing_for_group,
     effective_smoothing_for_label,
     export_labelmap_surfaces,
+    is_dental_hard_tissue,
     mask_to_mesh,
     run_surface_preview,
     smoothing_config_from_options,
@@ -29,6 +32,75 @@ SYNTHETIC_LABELS = {
 
 
 class SurfacePreviewTests(unittest.TestCase):
+    def test_uppercase_fdi_labels_are_visible_as_dental_hard_tissue_by_default(self) -> None:
+        self.assertTrue(is_dental_hard_tissue("FDI 11"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = Path(tmp) / "case"
+            labelmap = case_dir / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            _write_toothseg_labelmap_with_sidecar(labelmap)
+
+            summary = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                smoothing=smoothing_config_from_options(preset="none"),
+            )
+
+            groups = {group["name"]: group["labels"] for group in summary["groups"]}
+            self.assertEqual(groups["dental_hard_tissue"], [11, 12])
+            preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
+            self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
+            html = (case_dir / "surface_preview" / "index.html").read_text(encoding="utf-8")
+            self.assertIn('"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true', html)
+            self.assertIn(
+                "const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));",
+                html,
+            )
+
+    def test_toothseg_smoothing_changes_mesh_without_changing_fdi_labelmap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = Path(tmp) / "case"
+            labelmap = case_dir / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            _write_toothseg_labelmap_with_sidecar(labelmap)
+            before = hashlib.sha256(labelmap.read_bytes()).hexdigest()
+
+            off = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                output_dir=case_dir / "preview_off",
+                smoothing=smoothing_config_from_options(preset="none"),
+            )
+            on = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                output_dir=case_dir / "preview_on",
+                smoothing=smoothing_config_from_options(preset="slicer_like"),
+            )
+
+            after = hashlib.sha256(labelmap.read_bytes()).hexdigest()
+            off_stl = Path(next(group for group in off["groups"] if group["name"] == "dental_hard_tissue")["stl"])
+            on_stl = Path(next(group for group in on["groups"] if group["name"] == "dental_hard_tissue")["stl"])
+            self.assertEqual(before, after)
+            self.assertNotEqual(hashlib.sha256(off_stl.read_bytes()).hexdigest(), hashlib.sha256(on_stl.read_bytes()).hexdigest())
+            self.assertNotEqual(
+                hashlib.sha256((case_dir / "preview_off" / "index.html").read_bytes()).hexdigest(),
+                hashlib.sha256((case_dir / "preview_on" / "index.html").read_bytes()).hexdigest(),
+            )
+            self.assertEqual(off["smoothing"]["preset"], "none")
+            self.assertEqual(on["smoothing"]["preset"], "slicer_like")
+
+    def test_resolve_prefers_toothseg_fdi_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            toothseg = case / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            toothseg.parent.mkdir(parents=True)
+            nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.uint8), np.eye(4)), str(toothseg))
+
+            resolved, metadata = resolve_surface_preview_input(case_dir=case, input_path=None)
+
+            self.assertEqual(resolved, toothseg)
+            self.assertEqual(metadata["source"], "toothseg_fdi_multilabel")
+
     def test_marching_cubes_stl_export_creates_non_empty_binary_stl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -340,6 +412,19 @@ def _write_synthetic_labelmap(path: Path) -> Path:
     data[10:13, 10:13, 10:14] = 51
     image = nib.Nifti1Image(data, np.eye(4))
     nib.save(image, str(path))
+    return path
+
+
+def _write_toothseg_labelmap_with_sidecar(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = np.zeros((36, 36, 36), dtype=np.uint8)
+    data[7:20, 8:21, 7:25] = 11
+    data[20:31, 15:29, 10:30] = 12
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(path))
+    path.with_name(path.name + ".labels.json").write_text(
+        json.dumps({"labels": {"11": "FDI 11", "12": "FDI 12"}}),
+        encoding="utf-8",
+    )
     return path
 
 

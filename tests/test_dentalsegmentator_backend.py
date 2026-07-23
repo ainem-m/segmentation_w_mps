@@ -5,6 +5,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from importlib import metadata
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,12 +59,25 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
             self.assertEqual(benchmark["run"]["backend"], "dentalsegmentator")
             self.assertEqual(benchmark["run"]["status"], "success")
             self.assertEqual(benchmark["dentalsegmentator"]["validation"]["non_empty_label_count"], 5)
-            self.assertEqual(benchmark["dentalsegmentator"]["versions"]["nnunetv2"], "not_installed")
+            try:
+                expected_nnunet_version = metadata.version("nnunetv2")
+            except metadata.PackageNotFoundError:
+                expected_nnunet_version = "not_installed"
+            self.assertEqual(
+                benchmark["dentalsegmentator"]["versions"]["nnunetv2"],
+                expected_nnunet_version,
+            )
             run_log = (case_dir / "logs" / "run.log").read_text(encoding="utf-8")
             self.assertIn("-i <input:dentalsegmentator_nnunet>", run_log)
             self.assertIn("-d 112", run_log)
             self.assertIn("-device cpu", run_log)
             self.assertNotIn(str(input_path.parent), run_log)
+            stage_ids = [
+                json.loads(line.removeprefix("RUN_STAGE "))["stage_id"]
+                for line in run_log.splitlines()
+                if line.startswith("RUN_STAGE ")
+            ]
+            self.assertEqual(stage_ids, ["prepare", "predict", "finalize"])
 
             preview = run_surface_preview(
                 case_dir=case_dir,
@@ -228,7 +242,7 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
 
 def _write_fake_nnunet_predict(path: Path) -> Path:
     path.write_text(
-        f"#!{sys.executable}\n"
+        "#!/usr/bin/env python3\n"
         "import argparse\n"
         "from pathlib import Path\n"
         "import nibabel as nib\n"

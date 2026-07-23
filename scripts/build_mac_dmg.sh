@@ -6,8 +6,8 @@ DIST_DIR="${ROOT}/dist"
 APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
 DMG_STAGING="${DIST_DIR}/dmg_staging"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"
-DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.0}"
+DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260722-gdcm-toothseg}"
 DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 
@@ -61,6 +61,7 @@ TotalSegmentator Wrapper for Mac alpha
 - 管理者権限、Homebrew、system Pythonの変更は不要です。
 - 初回Setupまたは明示的な依存更新時のみ、Pythonパッケージとモデルweight取得のためにネットワークを使用します。
 - 初回実行に必要なモデルweightはSetup時に準備します。
+- ToothSeg高精細化はTotalSegmentator結果で歯を検出した場合だけ明示実行できます。初回選択時に約920 MBの追加モデルを取得し、取得完了後も自動では推論を開始しません。
 - DICOM、CT、処理結果、3Dプレビュー出力は、セットアップ中もプレビュー作成中も送信しません。
 - 利用状況データの送信も、専用環境内で無効化します。
 - Setup中は「3Dサンプルを開く」から、同梱Sample 1のオフライン3Dプレビューをブラウザで操作できます。

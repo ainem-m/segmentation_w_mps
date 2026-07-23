@@ -36,6 +36,10 @@ DENTALSEGMENTATOR_MODEL_URL = (
     "Dataset112_DentalSegmentator_v100.zip/content"
 )
 DENTALSEGMENTATOR_ZENODO_DOI = "10.5281/zenodo.10829675"
+TOOTHSEG_MODEL_FILENAME = "ToothSeg.zip"
+TOOTHSEG_MODEL_MD5 = "5d8dd061cce9529943567aeba3271143"
+TOOTHSEG_MODEL_URL = "https://zenodo.org/records/14893540/files/ToothSeg.zip?download=1"
+TOOTHSEG_ZENODO_DOI = "10.5281/zenodo.14893540"
 
 
 CommandRunner = Callable[[list[str], Path | None, dict[str, str] | None], subprocess.CompletedProcess[str]]
@@ -161,6 +165,8 @@ def create_setup_directories(paths: SetupPaths, *, dry_run: bool) -> SetupStep:
         dentalsegmentator_model_root(paths) / "nnUNet_raw",
         dentalsegmentator_model_root(paths) / "nnUNet_preprocessed",
         dentalsegmentator_model_root(paths) / "nnUNet_results",
+        toothseg_model_root(paths),
+        toothseg_model_root(paths) / "nnUNet_results",
         paths.cases_dir,
         paths.logs_dir,
         paths.cache_dir,
@@ -184,7 +190,7 @@ def build_wheel_install_command(
 ) -> list[str]:
     target = str(wheel)
     if allow_network:
-        target = f"{target}[dicom,mps,dentalseg]"
+        target = f"{target}[dicom,mps,dentalseg,toothseg]"
         command = [str(venv_python), "-m", "pip", "install"]
         if constraints is not None:
             command.extend(["-c", str(constraints)])
@@ -244,6 +250,10 @@ def build_totalseg_weights_command(
 
 def dentalsegmentator_model_root(paths: SetupPaths) -> Path:
     return paths.models_dir / "dentalsegmentator"
+
+
+def toothseg_model_root(paths: SetupPaths) -> Path:
+    return paths.models_dir / "toothseg"
 
 
 def build_dentalseg_weights_command(

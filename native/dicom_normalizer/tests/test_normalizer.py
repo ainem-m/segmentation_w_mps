@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import struct
 import subprocess
@@ -67,11 +68,14 @@ def write_dicom(
     pixel_spacing: str = "0.5\\0.5",
     image_position: str | None = None,
     image_orientation: str | None = None,
+    malformed_encapsulated_pixel_data: bool = False,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = bytearray(b"\0" * 128 + b"DICM")
     data += elem_explicit(0x0002, 0x0002, "UI", sop)
+    data += elem_explicit(0x0002, 0x0003, "UI", sop_instance_uid or f"{series_uid}.{instance_number or 1}")
     data += elem_explicit(0x0002, 0x0010, "UI", transfer_syntax)
+    data += elem_explicit(0x0002, 0x0012, "UI", "1.2.826.0.1.3680043.10.543.999")
     data += elem_explicit(0x0008, 0x0016, "UI", sop)
     data += elem_explicit(0x0008, 0x0018, "UI", sop_instance_uid or f"{series_uid}.{instance_number or 1}")
     data += elem_explicit(0x0008, 0x0008, "CS", image_type)
@@ -87,6 +91,8 @@ def write_dicom(
     data += elem_explicit(0x0028, 0x0002, "US", 1)
     data += elem_explicit(0x0028, 0x0004, "CS", "MONOCHROME2")
     data += elem_explicit(0x0028, 0x0100, "US", 16)
+    data += elem_explicit(0x0028, 0x0101, "US", 16)
+    data += elem_explicit(0x0028, 0x0102, "US", 15)
     data += elem_explicit(0x0028, 0x0103, "US", 1)
     if number_of_frames is not None:
         data += elem_explicit(0x0028, 0x0008, "IS", str(number_of_frames))
@@ -96,7 +102,14 @@ def write_dicom(
         data += elem_explicit(0x0020, 0x0037, "DS", image_orientation or "1\\0\\0\\0\\1\\0")
     if secondary_capture:
         data += elem_explicit(0x0028, 0x0301, "CS", "YES")
-    data += elem_explicit(0x7FE0, 0x0010, "OW", b"\0\0")
+    if malformed_encapsulated_pixel_data:
+        data += struct.pack("<HH", 0x7FE0, 0x0010) + b"OB\0\0" + struct.pack("<I", 0xFFFFFFFF)
+        data += struct.pack("<HHI", 0xFFFE, 0xE000, 0)
+        data += struct.pack("<HHI", 0xFFFE, 0xE000, 8) + b"NOTJPEG"
+        data += struct.pack("<HHI", 0xFFFE, 0xE0DD, 0)
+    else:
+        frame_count = number_of_frames or 1
+        data += elem_explicit(0x7FE0, 0x0010, "OW", b"\0\0" * rows * columns * frame_count)
     path.write_bytes(data)
 
 
@@ -178,6 +191,21 @@ def series_by_status(payload: dict, status: str) -> dict:
     raise AssertionError(f"status not found: {status}")
 
 
+def series_by_uid(payload: dict, uid: str) -> dict:
+    for series in payload["series"]:
+        if series["series_instance_uid"] == uid:
+            return series
+    raise AssertionError(f"series UID not found: {uid}")
+
+
+def fnv1a64(data: bytes) -> str:
+    value = 1469598103934665603
+    for byte in data:
+        value ^= byte
+        value = (value * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:x}"
+
+
 def test_clean_ct(binary: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -217,7 +245,11 @@ def test_doctor(binary: Path) -> None:
     assert payload["capabilities"]["audit"] is True
     assert payload["capabilities"]["convert_clean"] is True
     assert payload["capabilities"]["prepare_rescue"] is True
-    assert payload["capabilities"]["native_compressed_pixel_decode"] is False
+    assert payload["capabilities"]["native_compressed_pixel_decode"] is True
+    assert payload["capabilities"]["native_lossless_transcode"] is True
+    assert payload["capabilities"]["enhanced_ct_per_frame_geometry_validation"] is False
+    assert payload["dicom_backend"]["name"] == "GDCM"
+    assert payload["dicom_backend"]["version"]
     assert "optional_tools" in payload
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -227,7 +259,7 @@ def test_doctor(binary: Path) -> None:
         assert json.loads(output.read_text(encoding="utf-8"))["status"] == "ok"
 
 
-def test_compressed_and_missing_geometry(binary: Path) -> None:
+def test_malformed_compressed_never_falls_back(binary: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         for index in range(32):
@@ -236,6 +268,7 @@ def test_compressed_and_missing_geometry(binary: Path) -> None:
                 transfer_syntax=JPEG_BASELINE,
                 series_number=8,
                 series_uid="1.2.3.compressed",
+                malformed_encapsulated_pixel_data=True,
             )
             write_dicom(
                 root / "missing" / f"ct_{index:04d}.dcm",
@@ -244,11 +277,104 @@ def test_compressed_and_missing_geometry(binary: Path) -> None:
                 series_uid="1.2.3.missing",
             )
         payload = load_audit(binary, root)
-        compressed = series_by_status(payload, "compressed_pixel_data")
-        assert compressed["classification"]["requires_external_tool"] is True
-        assert compressed["classification"]["next_action"] == "install_gdcm_or_dcmtk_transcoder"
+        compressed = series_by_uid(payload, "1.2.3.compressed")
+        assert compressed["classification"]["status"] == "pixel_decode_failed", compressed
+        assert compressed["classification"]["requires_external_tool"] is False
+        assert compressed["pixel_decode_failure_count"] == 32
+        assert compressed["parser_backend"] == "gdcm"
         missing = series_by_status(payload, "reject")
         assert missing["classification"]["reject_reason"]
+
+
+def test_enhanced_ct_decodes_but_stays_geometry_blocked(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_dicom(
+            root / "enhanced_ct.dcm",
+            sop=ENHANCED_CT_SOP,
+            series_number=90,
+            series_uid="1.2.3.enhanced",
+            number_of_frames=32,
+        )
+        payload = load_audit(binary, root)
+        series = series_by_uid(payload, "1.2.3.enhanced")
+        assert series["pixel_decode_ok_count"] == 1
+        assert series["classification"]["status"] == "enhanced_ct_geometry_unverified"
+        assert series["classification"]["requires_external_tool"] is False
+        assert series["classification"]["next_action"] == (
+            "validate_all_per_frame_functional_groups_or_request_original_export"
+        )
+
+
+def test_real_compressed_codecs_and_native_transcode(binary: Path, gdcmconv: Path) -> None:
+    codec_options = {
+        "jpeg": "-J",
+        "jpeg2000": "-K",
+        "jpegls": "-L",
+        "rle": "-R",
+    }
+    expected_bytes = 32 * 32 * 2
+    expected_checksum = fnv1a64(b"\0" * expected_bytes)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for series_number, (name, option) in enumerate(codec_options.items(), start=80):
+            uid = f"1.2.826.0.1.3680043.10.543.8{series_number}"
+            raw = root / f"{name}_raw.dcm"
+            compressed = root / f"{name}_compressed.dcm"
+            write_dicom(raw, series_number=series_number, series_uid=uid, instance_number=1)
+            proc = subprocess.run(
+                [str(gdcmconv), option, str(raw), str(compressed)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            assert proc.returncode == 0, f"{name}: {proc.stdout}\n{proc.stderr}"
+            raw.unlink()
+            series_dir = root / name
+            series_dir.mkdir()
+            for index in range(32):
+                shutil.copyfile(compressed, series_dir / f"slice_{index:04d}.dcm")
+            compressed.unlink()
+
+        payload = load_audit(binary, root)
+        assert payload["dicom_backend"]["name"] == "GDCM"
+        for series_number, name in enumerate(codec_options, start=80):
+            uid = f"1.2.826.0.1.3680043.10.543.8{series_number}"
+            series = series_by_uid(payload, uid)
+            assert series["classification"]["status"] == "original_ct_geometry_ok", name
+            assert series["classification"]["requires_external_tool"] is False
+            assert "native_gdcm_decode_ok" in series["classification"]["reasons"]
+            assert series["compressed_transfer_syntax_count"] == 32
+            assert series["pixel_decode_attempted_count"] == 32
+            assert series["pixel_decode_ok_count"] == 32
+            assert series["pixel_decode_failure_count"] == 0
+            assert series["decoded_bytes_first"] == expected_bytes
+            assert series["decoded_fnv1a64_first"] == expected_checksum
+
+        jpeg_uid = "1.2.826.0.1.3680043.10.543.880"
+        fake = root / "fake_dcm2niix.py"
+        write_fake_dcm2niix(fake, shape=(32, 32, 32), spacing=(0.5, 0.5, 1.0))
+        output = root / "converted"
+        proc = run(
+            binary,
+            "convert-clean",
+            "--dicom-dir",
+            str(root),
+            "--series-key",
+            jpeg_uid,
+            "--output",
+            str(output),
+            "--dcm2niix",
+            str(fake),
+        )
+        assert proc.returncode == 0, proc.stderr
+        isolated_payload = load_audit(binary, output / "isolated_series")
+        isolated = series_by_uid(isolated_payload, jpeg_uid)
+        assert isolated["compressed_transfer_syntax_count"] == 0
+        assert isolated["pixel_decode_ok_count"] == 32
+        assert isolated["decoded_bytes_first"] == expected_bytes
+        assert isolated["decoded_fnv1a64_first"] == expected_checksum
 
 
 def test_dicomdir_and_implicit(binary: Path) -> None:
@@ -530,15 +656,17 @@ def test_viewer_export_without_axial_group_is_not_ai_rescue_candidate(binary: Pa
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: test_normalizer.py <binary>", file=sys.stderr)
+    if len(sys.argv) != 3:
+        print("usage: test_normalizer.py <binary> <gdcmconv>", file=sys.stderr)
         return 2
     binary = Path(sys.argv[1])
+    gdcmconv = Path(sys.argv[2])
     tests = [
         test_doctor,
         test_clean_ct,
         test_ct_without_original_image_type_is_clean_when_geometry_is_complete,
-        test_compressed_and_missing_geometry,
+        test_malformed_compressed_never_falls_back,
+        test_enhanced_ct_decodes_but_stays_geometry_blocked,
         test_dicomdir_and_implicit,
         test_secondary_capture_variants,
         test_convert_clean_and_prepare_rescue,
@@ -548,6 +676,8 @@ def main() -> int:
     for test in tests:
         test(binary)
         print(f"ok {test.__name__}")
+    test_real_compressed_codecs_and_native_transcode(binary, gdcmconv)
+    print("ok test_real_compressed_codecs_and_native_transcode")
     return 0
 
 

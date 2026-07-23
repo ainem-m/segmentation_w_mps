@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SWIFT_APP_DIR = ROOT / "native" / "macos" / "TotalSegmentatorWrapperForMac"
 BUILD_SCRIPT = ROOT / "scripts" / "build_mac_app.sh"
 WHEEL_BUILD_SCRIPT = ROOT / "scripts" / "build_mac_wheel.sh"
+DICOM_RUNTIME_BUNDLE_SCRIPT = ROOT / "scripts" / "bundle_dicom_normalizer_runtime_macos.sh"
 DMG_BUILD_SCRIPT = ROOT / "scripts" / "build_mac_dmg.sh"
 NOTARIZE_SCRIPT = ROOT / "scripts" / "notarize_mac_dmg.sh"
 DMG_VERIFY_SCRIPT = ROOT / "scripts" / "verify_zero_env_mac_dmg.sh"
@@ -20,8 +21,17 @@ SAMPLE1_MANIFEST = SAMPLE1_ROOT / "sample_manifest.json"
 SAMPLE1_NOTICES = SAMPLE1_ROOT / "THIRD_PARTY_NOTICES.txt"
 TOTALSEGMENTATOR_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "TotalSegmentator-Apache-2.0.txt"
 DCM2NIIX_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "dcm2niix-license.txt"
+TOOTHSEG_NOTICE = ROOT / "resources" / "third_party" / "licenses" / "ToothSeg-NOTICE.txt"
 MANUAL_LICENSE_OVERRIDES = ROOT / "resources" / "third_party" / "licenses" / "manual-overrides.json"
 LICENSE_INVENTORY_SCRIPT = ROOT / "scripts" / "generate_third_party_license_inventory.py"
+DICOM_RUNTIME_LICENSES = (
+    "GDCM-BSD-3-Clause.txt",
+    "GDCM-IJG-JPEG-README.txt",
+    "OpenJPEG-BSD-2-Clause.txt",
+    "CharLS-BSD-3-Clause.txt",
+    "json-c-MIT.txt",
+    "OpenSSL-Apache-2.0.txt",
+)
 
 
 class MacAppPackagingTests(unittest.TestCase):
@@ -29,6 +39,7 @@ class MacAppPackagingTests(unittest.TestCase):
         text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
         self.assertIn('APP_NAME="TotalSegmentator Wrapper for Mac"', text)
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DIST_DIR", text)
         self.assertIn('APP_DIR="${DIST_DIR}/${APP_NAME}.app"', text)
         self.assertIn('MACOS_DIR="${CONTENTS_DIR}/MacOS"', text)
         self.assertIn('RESOURCES_DIR="${CONTENTS_DIR}/Resources"', text)
@@ -54,9 +65,17 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertNotIn("launcher/mac_app_" + "launcher.py", text)
         self.assertNotIn("mac_app_" + "launcher.py", text)
         self.assertIn("resources/sample1", text)
+        self.assertIn("resources/model_comparison", text)
+        self.assertIn('"${RESOURCES_DIR}/model_comparison"', text)
+        self.assertIn('"model_comparison": {', text)
+        self.assertIn('"toothseg": "model_comparison/toothseg.png"', text)
+        self.assertIn("non-clinical preview", text)
         self.assertIn("sample1/surface_preview/index.html", text)
         self.assertIn("sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz", text)
         self.assertIn("sample1/THIRD_PARTY_NOTICES.txt", text)
+        for image_name in ("totalseg", "dentalseg", "individual", "toothseg"):
+            with self.subTest(image_name=image_name):
+                self.assertTrue((ROOT / "resources" / "model_comparison" / f"{image_name}.png").is_file())
         self.assertIn("setup_manifest.json", text)
         self.assertIn('"ui_frontend": "swiftui"', text)
         self.assertNotIn("legacy_" + "tk_ui", text)
@@ -75,6 +94,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("codesign --force --deep --sign -", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY", text)
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DIST_DIR", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER", text)
         self.assertIn("require_developer_id_signing", text)
         self.assertIn("codesign_developer_id", text)
@@ -103,11 +123,17 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("dcm2niix_source", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX", text)
         self.assertIn('cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"', text)
+        self.assertIn('cp -R "${ROOT}/build/dicom_normalizer/lib" "${RESOURCES_DIR}/bin/lib"', text)
+        self.assertIn('"dicom_normalizer_libraries": "bin/lib"', text)
+        self.assertIn('find "${RESOURCES_DIR}/bin/lib" -type f -name "*.dylib"', text)
         self.assertIn('"dcm2niix": "bin/dcm2niix"', text)
         self.assertIn("TOTALSEGMENTATOR_LICENSE_PATH", text)
         self.assertIn("resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt", text)
         self.assertIn('cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"', text)
         self.assertIn('"totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt"', text)
+        self.assertIn('cp "${TOOTHSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/ToothSeg-NOTICE.txt"', text)
+        self.assertIn('"toothseg_notice": "licenses/ToothSeg-NOTICE.txt"', text)
+        self.assertIn("Separately downloaded model license: CC BY 4.0", text)
         self.assertIn("DCM2NIIX_LICENSE_PATH", text)
         self.assertIn("resources/third_party/licenses/dcm2niix-license.txt", text)
         self.assertIn('cp "${DCM2NIIX_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/dcm2niix-license.txt"', text)
@@ -118,7 +144,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("LICENSE_INVENTORY_ENV_DIR", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_LICENSE_SITE_PATH", text)
         self.assertIn("--site-path", text)
-        self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps,dentalseg]"', text)
+        self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps,dentalseg,toothseg]"', text)
         self.assertIn("--fail-on-unresolved", text)
         self.assertIn('"third_party_licenses": {', text)
         self.assertIn('"inventory": "licenses/third_party_license_inventory.json"', text)
@@ -135,18 +161,35 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertNotIn("See the upstream license.txt", text)
         self.assertIn("sample1_manifest_sha256", text)
         self.assertIn("dependency_set_id", text)
-        self.assertIn("pydicom3", text)
+        self.assertIn("pydicom3-gdcm3.2-toothseg-acvl0.2-scipy1", text)
         self.assertIn("update_manifest_url", text)
         self.assertIn("update_allowed_hosts", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_ALLOWED_HOSTS", text)
         self.assertNotIn("sudo", text)
         self.assertNotIn("brew install", text)
+        for license_name in DICOM_RUNTIME_LICENSES:
+            with self.subTest(license_name=license_name):
+                self.assertIn(license_name, text)
+                license_path = ROOT / "resources" / "third_party" / "licenses" / license_name
+                self.assertGreater(license_path.stat().st_size, 100)
+
+    def test_dicom_runtime_bundle_is_self_contained_and_resigned(self) -> None:
+        text = DICOM_RUNTIME_BUNDLE_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("otool -L", text)
+        self.assertIn("install_name_tool -change", text)
+        self.assertIn("@loader_path/lib", text)
+        self.assertIn("@loader_path/", text)
+        self.assertIn("/opt/homebrew", text)
+        self.assertIn("/usr/local", text)
+        self.assertIn('codesign --force --sign - "${library}"', text)
+        self.assertIn('codesign --force --sign - "${BINARY}"', text)
 
     def test_notarization_script_submits_staples_and_validates_dmg(self) -> None:
         text = NOTARIZE_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"', text)
-        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.0}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260722-gdcm-toothseg}"', text)
         self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE", text)
@@ -166,14 +209,19 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("spctl --assess --type open", text)
         self.assertIn("spctl --assess --type execute", text)
         self.assertIn("hdiutil attach", text)
+        self.assertIn("notarytool history", text)
+        self.assertLess(
+            text.index("notarytool history"),
+            text.index('TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE=developer-id'),
+        )
         self.assertNotIn("AuthKey_", text)
         self.assertNotIn("--password", text)
 
     def test_dmg_build_script_uses_configured_app_version_for_filename(self) -> None:
         text = DMG_BUILD_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"', text)
-        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.0}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260722-gdcm-toothseg}"', text)
         self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertNotIn('${APP_NAME}-0.1.0-arm64.dmg"', text)
@@ -241,6 +289,11 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("dentalsegPrepareCommand", texts["CommandBuilder.swift"])
         self.assertIn('"dentalseg-status"', texts["CommandBuilder.swift"])
         self.assertIn('"dentalseg-prepare"', texts["CommandBuilder.swift"])
+        self.assertIn("toothsegStatusCommand", texts["CommandBuilder.swift"])
+        self.assertIn("toothsegPrepareCommand", texts["CommandBuilder.swift"])
+        self.assertIn('"toothseg-status"', texts["CommandBuilder.swift"])
+        self.assertIn('"toothseg-prepare"', texts["CommandBuilder.swift"])
+        self.assertIn('"--toothseg-nnunet-results"', texts["CommandBuilder.swift"])
         self.assertIn('"--robust-crop"', texts["CommandBuilder.swift"])
         self.assertIn('"--higher-order-resampling"', texts["CommandBuilder.swift"])
         self.assertIn('"--teeth-robust-craniofacial-preflight"', texts["CommandBuilder.swift"])
@@ -318,6 +371,9 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("3Dプレビュー生成に失敗しました", texts["AppState.swift"])
         self.assertIn("runProgressFromLog", texts["AppState.swift"])
         self.assertIn("runProgressFraction", texts["AppState.swift"])
+        self.assertIn("toothSegPreparationProgressFromLog", texts["AppState.swift"])
+        self.assertIn("dentalPreparationFraction", texts["Views.swift"])
+        self.assertIn("残り約", texts["AppState.swift"])
         self.assertIn("RUN_PROGRESS ", texts["AppState.swift"])
         self.assertIn("LOG_TAIL_BYTES", texts["AppState.swift"])
         self.assertIn("readLogTail", texts["AppState.swift"])
@@ -336,8 +392,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("最終更新:", texts["AppState.swift"])
         self.assertIn("大きなデータではこの待ち時間が発生します", texts["AppState.swift"])
         self.assertIn("ProgressView()", texts["Views.swift"])
-        self.assertNotIn("ProgressView(value:", texts["Views.swift"])
-        self.assertIn("Text(state.runHeartbeatText)", texts["Views.swift"])
+        self.assertIn("ProgressView(value: fraction)", texts["Views.swift"])
+        self.assertIn("Text(heartbeatText)", texts["Views.swift"])
         self.assertIn("別のCTを選ぶ", texts["Views.swift"])
         self.assertNotIn("NIfTIへ変換して入力に使う", texts["Views.swift"])
         self.assertIn("もう一度作成", texts["Views.swift"])
@@ -407,6 +463,7 @@ class MacAppPackagingTests(unittest.TestCase):
 
     def test_static_third_party_license_files_are_present(self) -> None:
         dcm2niix_license = DCM2NIIX_LICENSE.read_text(encoding="utf-8")
+        toothseg_notice = TOOTHSEG_NOTICE.read_text(encoding="utf-8")
         manual_overrides = json.loads(MANUAL_LICENSE_OVERRIDES.read_text(encoding="utf-8"))
         inventory_script = LICENSE_INVENTORY_SCRIPT.read_text(encoding="utf-8")
         override_keys = {
@@ -416,6 +473,18 @@ class MacAppPackagingTests(unittest.TestCase):
 
         self.assertIn("Copyright (c) 2014-2025 Chris Rorden", dcm2niix_license)
         self.assertIn("Redistribution and use in source and binary forms", dcm2niix_license)
+        self.assertIn("10.5281/zenodo.14893540", toothseg_notice)
+        self.assertIn("CC BY 4.0", toothseg_notice)
+        for creator in (
+            "Fabian Isensee",
+            "Niels van Nistelrooij",
+            "Lars Krämer",
+            "Shankeeth Vinayahalingam",
+        ):
+            self.assertIn(creator, toothseg_notice)
+        self.assertIn("https://creativecommons.org/licenses/by/4.0/", toothseg_notice)
+        self.assertIn("Changes made by this project", toothseg_notice)
+        self.assertNotIn("Copyright (c) 2026", toothseg_notice)
         self.assertEqual(
             manual_overrides["schema"],
             "totalsegmentator_wrapper_mac.manual_license_overrides.v1",
@@ -429,7 +498,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn(("matplotlib", "3.11.0", "accepted"), override_keys)
         self.assertIn(("scipy", "1.17.1", "accepted"), override_keys)
         self.assertIn(("scipy", "1.18.0", "accepted"), override_keys)
-        self.assertIn(("totalsegmentator-wrapper-mac", "0.1.2", "accepted"), override_keys)
+        self.assertIn(("totalsegmentator-wrapper-mac", "0.2.0", "accepted"), override_keys)
         self.assertIn("third_party_license_inventory.v1", inventory_script)
         self.assertIn("attention_license_requires_review", inventory_script)
         self.assertIn("license_metadata_unknown", inventory_script)
@@ -451,6 +520,7 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_build_mac_wheel_uses_pep517_frontend(self) -> None:
         text = WHEEL_BUILD_SCRIPT.read_text(encoding="utf-8")
 
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DIST_DIR", text)
         self.assertIn("uv is required", text)
         self.assertIn("UV_CACHE_DIR", text)
         self.assertIn("SOURCE_DATE_EPOCH", text)
@@ -465,6 +535,12 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("--timestamp", text)
         self.assertIn("--options runtime", text)
         self.assertIn("src/totalsegmentator_wrapper_mac/bin/totalsegmentator-wrapper-dicom-normalizer", text)
+        self.assertIn('cp -R "${NATIVE_BUILD_DIR}/lib"', text)
+        self.assertIn('bin/lib"/*.dylib', text)
+        self.assertIn('src/totalsegmentator_wrapper_mac/licenses', text)
+        for license_name in DICOM_RUNTIME_LICENSES:
+            with self.subTest(license_name=license_name):
+                self.assertIn(license_name, text)
         self.assertNotIn("setup.py bdist_wheel", text)
         self.assertNotIn("from wheel.bdist_wheel", text)
 
@@ -542,8 +618,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_SHARED_EVIDENCE_DIR", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION", verify_text)
-        self.assertIn("0.1.2", verify_text)
-        self.assertIn("0.1.2-20260708-modelsetup-arm64.dmg", verify_text)
+        self.assertIn("0.2.0", verify_text)
+        self.assertIn("0.2.0-20260722-gdcm-toothseg-arm64.dmg", verify_text)
         self.assertIn("SharedEvidence/test_account_install_evidence.json", verify_text)
         self.assertNotIn("sudo", build_text + verify_text)
         self.assertNotIn("brew install", build_text + verify_text)

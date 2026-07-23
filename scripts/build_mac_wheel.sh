@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NATIVE_BUILD_DIR="${ROOT}/build/dicom_normalizer"
 STAGE_DIR="${ROOT}/build/mac_wheel_staging"
-DIST_DIR="${ROOT}/dist"
+DIST_DIR="${TOTALSEGMENTATOR_WRAPPER_MAC_DIST_DIR:-${ROOT}/dist}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 PLAT_NAME="${PLAT_NAME:-macosx_11_0_arm64}"
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
@@ -41,12 +41,33 @@ rsync -a \
 mkdir -p "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin"
 cp "${NATIVE_BUILD_DIR}/totalsegmentator-wrapper-dicom-normalizer" \
   "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/totalsegmentator-wrapper-dicom-normalizer"
+cp -R "${NATIVE_BUILD_DIR}/lib" \
+  "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/lib"
+mkdir -p "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/licenses"
+for license_name in \
+  GDCM-BSD-3-Clause.txt \
+  GDCM-IJG-JPEG-README.txt \
+  OpenJPEG-BSD-2-Clause.txt \
+  CharLS-BSD-3-Clause.txt \
+  json-c-MIT.txt \
+  OpenSSL-Apache-2.0.txt; do
+  cp "${ROOT}/resources/third_party/licenses/${license_name}" \
+    "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/licenses/${license_name}"
+done
 
 if [[ "${SIGNING_MODE}" == "developer-id" ]]; then
   if [[ -z "${CODESIGN_IDENTITY}" ]]; then
     echo "TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY is required when signing wheel binaries." >&2
     exit 2
   fi
+  for library in "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/lib"/*.dylib; do
+    codesign \
+      --force \
+      --timestamp \
+      --options runtime \
+      --sign "${CODESIGN_IDENTITY}" \
+      "${library}" >/dev/null
+  done
   codesign \
     --force \
     --timestamp \
@@ -56,6 +77,9 @@ if [[ "${SIGNING_MODE}" == "developer-id" ]]; then
     "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/totalsegmentator-wrapper-dicom-normalizer" >/dev/null
   codesign --verify --strict --verbose=2 \
     "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/totalsegmentator-wrapper-dicom-normalizer" >/dev/null
+  for library in "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/bin/lib"/*.dylib; do
+    codesign --verify --strict --verbose=2 "${library}" >/dev/null
+  done
 fi
 
 mkdir -p "${DIST_DIR}"

@@ -12,7 +12,11 @@ struct TotalSegmentatorWrapperForMacApp: App {
             let rc = SetupCoordinator.runSetup(paths: paths) { _, _ in }
             exit(rc)
         }
-        _state = StateObject(wrappedValue: AppState(paths: paths))
+        let appState = AppState(paths: paths)
+#if DEBUG
+        appState.applyUIPreview()
+#endif
+        _state = StateObject(wrappedValue: appState)
     }
 
     var body: some Scene {

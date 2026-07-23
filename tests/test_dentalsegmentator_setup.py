@@ -227,7 +227,7 @@ def _write_file(path: Path, content: bytes) -> Path:
 
 def _write_fake_installer(path: Path) -> Path:
     path.write_text(
-        f"#!{sys.executable}\n"
+        "#!/usr/bin/env python3\n"
         "import json\n"
         "import os\n"
         "import sys\n"

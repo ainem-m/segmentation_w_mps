@@ -24,6 +24,14 @@ struct RootView: View {
                 DicomSeriesSelectionSheet()
                     .environmentObject(state)
             }
+            .sheet(isPresented: $state.showDentalPreparationConfirmation) {
+                DentalPreparationConfirmationSheet()
+                    .environmentObject(state)
+            }
+            .sheet(isPresented: $state.showDentalPreparationSheet) {
+                DentalPreparationSheet()
+                    .environmentObject(state)
+            }
             .toolbar {
                 ToolbarItem {
                     Button {
@@ -154,6 +162,15 @@ struct HeaderView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if state.isUIPreviewMode {
+                Text("UI PREVIEW · \(state.uiPreviewScenario)")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.orange.opacity(0.16))
+                    .foregroundStyle(.orange)
+                    .clipShape(Capsule())
+            }
             StatusPill(text: state.statusText)
         }
     }
@@ -279,6 +296,7 @@ struct StartChoiceView: View {
 
 struct InputAndCreationView: View {
     @EnvironmentObject var state: AppState
+    @State private var isCreationComparisonPresented = false
 
     var body: some View {
         ScrollView {
@@ -320,29 +338,27 @@ struct InputAndCreationView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("作成する3Dプレビュー")
                         .font(.headline)
-                    ForEach(CreationChoice.allCases) { choice in
-                        Button {
-                            state.requestCreationChoice(choice)
-                        } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: state.creationChoice == choice ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(state.creationChoice == choice ? Color.accentColor : Color.secondary)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(choice.rawValue)
-                                        .font(.headline)
-                                    Text(choice.detail)
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                        .multilineTextAlignment(.leading)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.08))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    HStack(alignment: .top, spacing: 12) {
+                        CreationCategoryCard(
+                            title: "標準モデル",
+                            modelName: "TotalSegmentator",
+                            detail: "顎骨と歯列をまとめて作成します。最初におすすめの方法です。",
+                            badge: "おすすめ",
+                            systemImage: "cube.transparent",
+                            isSelected: state.creationChoice == .standardArchJaw
+                        ) {
+                            state.requestCreationChoice(.standardArchJaw)
                         }
-                        .buttonStyle(.plain)
+                        CreationCategoryCard(
+                            title: "その他のモデル",
+                            modelName: alternateModelName,
+                            detail: alternateModelDetail,
+                            badge: nil,
+                            systemImage: "square.grid.2x2",
+                            isSelected: state.creationChoice != .standardArchJaw
+                        ) {
+                            isCreationComparisonPresented = true
+                        }
                     }
                 }
 
@@ -358,15 +374,18 @@ struct InputAndCreationView: View {
                     Button("変更") { state.chooseOutputRoot() }
                         .buttonStyle(.bordered)
                 }
-                DisclosureGroup("追加機能") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("仕上がり")
+                        .font(.headline)
                     Toggle("境界を滑らかにする", isOn: $state.higherOrderResampling)
-                        .disabled(state.creationChoice == .dentalSegmentatorExperimental)
-                    Text("DentalSegmentatorでは使用できません。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .opacity(state.creationChoice == .dentalSegmentatorExperimental ? 1 : 0)
+                        .disabled(state.segmentationBackend != .totalSegmentator)
+                    if state.segmentationBackend != .totalSegmentator {
+                        Text("このモデルでは仕上がりが固定されています。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                DisclosureGroup("保存先と詳細") {
+                DisclosureGroup("入力・保存情報") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("入力: \(state.inputURL?.path ?? "未選択")")
                         Text("保存先: \(state.selectedOutputRootURL.path)")
@@ -398,13 +417,16 @@ struct InputAndCreationView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 12)
         }
-        .sheet(isPresented: $state.showDentalPreparationConfirmation) {
-            DentalPreparationConfirmationSheet()
-                .environmentObject(state)
+        .sheet(isPresented: $isCreationComparisonPresented) {
+            CreationMethodComparisonSheet(selectedChoice: state.creationChoice) { choice in
+                isCreationComparisonPresented = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    state.requestCreationChoice(choice)
+                }
+            }
         }
-        .sheet(isPresented: $state.showDentalPreparationSheet) {
-            DentalPreparationSheet()
-                .environmentObject(state)
+        .onAppear {
+            isCreationComparisonPresented = state.uiPreviewScenario == "input-comparison"
         }
     }
 
@@ -416,6 +438,266 @@ struct InputAndCreationView: View {
     private var primaryTitle: String {
         state.inputSource == .sample ? "Sampleで3Dプレビューを作る" : "このCTで3Dプレビューを作る"
     }
+
+    private var alternateModelName: String {
+        switch state.creationChoice {
+        case .dentalSegmentatorExperimental, .individualTeethBeta:
+            return "選択中：\(state.creationChoice.rawValue)"
+        default:
+            return "比較して選ぶ"
+        }
+    }
+
+    private var alternateModelDetail: String {
+        switch state.creationChoice {
+        case .dentalSegmentatorExperimental, .individualTeethBeta:
+            return "現在はこの方法を使用します。クリックすると結果画像と処理時間を比較できます。"
+        default:
+            return "結果画像と処理時間を見ながら、用途に合う方法を選べます。"
+        }
+    }
+}
+
+struct CreationCategoryCard: View {
+    let title: String
+    let modelName: String
+    let detail: String
+    let badge: String?
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    Text(title)
+                        .font(.headline)
+                    Spacer(minLength: 4)
+                    if let badge {
+                        Text(badge)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.14))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
+                Label(modelName, systemImage: systemImage)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+            .background(Color.secondary.opacity(0.07))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.22), lineWidth: isSelected ? 2 : 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)、\(modelName)")
+        .accessibilityValue(isSelected ? "選択中" : "未選択")
+    }
+}
+
+struct CreationMethodComparisonSheet: View {
+    let selectedChoice: CreationChoice
+    let onSelect: (CreationChoice) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("作成方法を比較")
+                        .font(.title2.weight(.semibold))
+                    Text("同じCT・同じ角度・同じ倍率の結果です。通常はTotalSegmentatorがおすすめです。")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("閉じる") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+
+            ScrollView {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+                    CreationMethodComparisonCard(
+                        title: "通常（TotalSegmentator）",
+                        badge: "おすすめ",
+                        imageName: "totalseg",
+                        estimatedDuration: "約3〜6分",
+                        summary: "顎骨と歯列をまとめて作成します。比較的速く、最初に試す方法です。",
+                        note: "完了後、歯が検出された場合はToothSegの高精細化を追加できます。",
+                        isSelected: selectedChoice == .standardArchJaw,
+                        actionTitle: "この方法を選ぶ"
+                    ) {
+                        onSelect(.standardArchJaw)
+                    }
+
+                    CreationMethodComparisonCard(
+                        title: "DentalSegmentator",
+                        badge: "実験的",
+                        imageName: "dentalseg",
+                        estimatedDuration: "約7〜12分",
+                        summary: "上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。",
+                        note: "初回のみ追加モデルの準備が必要です。通常経路より実行環境の検証が少ない機能です。",
+                        isSelected: selectedChoice == .dentalSegmentatorExperimental,
+                        actionTitle: "この方法を選ぶ"
+                    ) {
+                        onSelect(.dentalSegmentatorExperimental)
+                    }
+
+                    CreationMethodComparisonCard(
+                        title: "個別歯ベータ",
+                        badge: "ベータ",
+                        imageName: "individual",
+                        estimatedDuration: "約2〜7分",
+                        summary: "TotalSegmentatorの旧個別歯経路で、歯を1本ずつ表示します。",
+                        note: "検証用のベータ機能です。この比較画面から選択できます。",
+                        isSelected: selectedChoice == .individualTeethBeta,
+                        actionTitle: "この方法を選ぶ"
+                    ) {
+                        onSelect(.individualTeethBeta)
+                    }
+
+                    CreationMethodComparisonCard(
+                        title: "高精細歯（ToothSeg）",
+                        badge: "結果画面で追加",
+                        imageName: "toothseg",
+                        estimatedDuration: "追加で約15〜40分",
+                        summary: "歯を個別に分け、FDI歯式番号を付ける高精細な追加推論です。",
+                        note: "通常のTotalSegmentator完了後、歯が検出された結果画面から明示的に実行できます。ここでは選択しません。",
+                        isSelected: false,
+                        actionTitle: nil,
+                        action: nil
+                    )
+                }
+                Label(
+                    "処理時間はM1 Mac・メモリ16 GBでの実測目安です。CTの範囲、解像度、歯の検出範囲により変わります。",
+                    systemImage: "clock.badge.questionmark"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+            }
+        }
+        .padding(22)
+        .frame(minWidth: 940, idealWidth: 980, minHeight: 680, idealHeight: 740)
+    }
+}
+
+struct CreationMethodComparisonCard: View {
+    let title: String
+    let badge: String
+    let imageName: String
+    let estimatedDuration: String
+    let summary: String
+    let note: String
+    let isSelected: Bool
+    let actionTitle: String?
+    let action: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Text(badge)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background((isSelected ? Color.accentColor : Color.secondary).opacity(0.14))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .clipShape(Capsule())
+            }
+
+            ModelComparisonImage(name: imageName, accessibilityLabel: "\(title)の3D分割結果")
+
+            Label("処理時間の目安: \(estimatedDuration)", systemImage: "clock")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(summary)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let actionTitle, let action {
+                if isSelected {
+                    Button("選択中") { action() }
+                        .buttonStyle(.bordered)
+                        .disabled(true)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                } else {
+                    Button(actionTitle) { action() }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 445, alignment: .topLeading)
+        .background(Color.secondary.opacity(0.07))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+struct ModelComparisonImage: View {
+    let name: String
+    let accessibilityLabel: String
+
+    private var image: NSImage? {
+        NSImage(contentsOf: AppPaths.current().resources
+            .appendingPathComponent("model_comparison", isDirectory: true)
+            .appendingPathComponent("\(name).png"))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Color.black.opacity(0.82)
+                    Label("比較画像を読み込めません", systemImage: "photo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(579.0 / 440.0, contentMode: .fit)
+        .clipped()
+        .background(Color.black.opacity(0.82))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityLabel(accessibilityLabel)
+    }
 }
 
 struct DentalPreparationConfirmationSheet: View {
@@ -423,17 +705,18 @@ struct DentalPreparationConfirmationSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("DentalSegmentator（実験的）")
+            Text(state.pendingModelPreparationChoice == .toothSegExperimental ? "ToothSeg（個別歯・実験的）" : "DentalSegmentator（実験的）")
                 .font(.title2.weight(.semibold))
-            Text("追加モデルデータを取得するので少し時間がかかります。")
+            Text(state.pendingModelPreparationChoice == .toothSegExperimental
+                 ? "semantic/instance両branchの追加モデル（約920 MB）を取得します。通信環境により時間がかかります。"
+                 : "追加モデルデータを取得するので少し時間がかかります。")
                 .foregroundStyle(.secondary)
             NextPhaseButton(title: "準備を始める", systemImage: "arrow.down.circle") {
                 state.confirmDentalPreparation()
             }
             HStack {
                 Button("キャンセル") {
-                    state.showDentalPreparationConfirmation = false
-                    state.creationChoice = .standardArchJaw
+                    state.cancelModelPreparationConfirmation()
                 }
                 .buttonStyle(.bordered)
                 Spacer()
@@ -449,13 +732,23 @@ struct DentalPreparationSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("DentalSegmentatorの準備")
+            Text(state.pendingModelPreparationChoice == .toothSegExperimental ? "ToothSegの準備" : "DentalSegmentatorの準備")
                 .font(.title2.weight(.semibold))
             Text(state.dentalPreparationMessage)
                 .foregroundStyle(.secondary)
             if state.dentalPreparationRunning {
-                ProgressView()
-                    .progressViewStyle(.linear)
+                if let fraction = state.dentalPreparationFraction {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                }
+                if !state.dentalPreparationDetail.isEmpty {
+                    Text(state.dentalPreparationDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text(state.dentalPreparationElapsed)
                     .foregroundStyle(.secondary)
                 Button("キャンセル") { state.cancelDentalPreparation() }
@@ -535,10 +828,20 @@ struct RunProgressView: View {
                 Text(state.runElapsed)
                     .foregroundStyle(.secondary)
             }
-            ProgressView()
-                .progressViewStyle(.linear)
-            if !state.runHeartbeatText.isEmpty {
-                Text(state.runHeartbeatText)
+            if let stage = state.runStageEvent,
+               let weighted = state.runWeightedProgress {
+                structuredProgress(stage: stage, weighted: weighted)
+            } else if let fraction = state.runProgressFraction {
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .accessibilityLabel("処理の進捗")
+                    .accessibilityValue("約\(Int((fraction * 100).rounded()))パーセント")
+            } else {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            }
+            if let heartbeatText = visibleRunHeartbeatText {
+                Text(heartbeatText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -562,6 +865,149 @@ struct RunProgressView: View {
                 .buttonStyle(.bordered)
                 .disabled(!state.isRunning || state.stopRequested)
                 Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func structuredProgress(
+        stage: RunStageEvent,
+        weighted: RunWeightedProgress
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let estimate = weighted.estimate {
+                Text("全体の目安：約\(estimatePercentText(estimate))%")
+                    .font(.headline)
+            }
+
+            WeightedRunProgressBar(
+                weights: state.activeRunStageWeights,
+                currentIndex: stage.index,
+                currentFraction: weighted.stageFraction
+            )
+
+            Text("工程 \(stage.index) / \(stage.total)　\(stage.label)")
+                .font(.headline)
+
+            if let progress = state.runStageProgress,
+               progress.scope == "stage",
+               progress.route == stage.route,
+               progress.stageID == stage.stageID {
+                if let step = progress.step, let total = progress.total, let percent = progress.percent {
+                    Text("\(step) / \(total)（この工程 \(percent)%）")
+                } else if let percent = progress.percent {
+                    Text("この工程 \(percent)%")
+                }
+                if let eta = progress.etaSeconds, eta > 0 {
+                    Text("この工程の残り目安：約\(formatCompactDuration(eta))")
+                        .foregroundStyle(.secondary)
+                }
+            } else if let progress = state.runStageProgress, progress.scope == "subtask" {
+                Text(subtaskProgressText(progress))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("工程 \(stage.index) / \(stage.total)、\(stage.label)")
+        .accessibilityValue(accessibilityProgressValue(weighted))
+    }
+
+    private func estimatePercentText(_ fraction: Double) -> Int {
+        let rounded = Int((fraction * 100).rounded())
+        return fraction < 1 ? min(99, rounded) : 100
+    }
+
+    private func subtaskProgressText(_ progress: RunLogProgress) -> String {
+        var text = "内部処理"
+        if let step = progress.step, let total = progress.total, let percent = progress.percent {
+            text += " \(step) / \(total)（\(percent)%）"
+        } else if let percent = progress.percent {
+            text += " \(percent)%"
+        } else if let rawLabel = progress.stage?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawLabel.isEmpty,
+                  !["現在の処理", "現在の内部処理", "処理"].contains(rawLabel) {
+            text += "：\(rawLabel)"
+        }
+        if let eta = progress.etaSeconds, eta > 0 {
+            text += "・残り約\(formatCompactDuration(eta))"
+        }
+        return text
+    }
+
+    private func accessibilityProgressValue(_ weighted: RunWeightedProgress) -> String {
+        if let estimate = weighted.estimate {
+            return "全体の目安、約\(estimatePercentText(estimate))パーセント"
+        }
+        return "現在工程の進捗率は不定"
+    }
+
+    private var visibleRunHeartbeatText: String? {
+        let text = state.runHeartbeatText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              text != "進捗ログを受信しました。",
+              !text.contains("処理を継続しています"),
+              !text.contains("処理は継続中です") else {
+            return nil
+        }
+        return text
+    }
+}
+
+private struct WeightedRunProgressBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let weights: [Double]
+    let currentIndex: Int
+    let currentFraction: Double?
+    @State private var pulse = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 2) {
+                ForEach(Array(weights.enumerated()), id: \.offset) { offset, weight in
+                    let index = offset + 1
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.secondary.opacity(0.18))
+                        if index < currentIndex {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.accentColor)
+                        } else if index == currentIndex, let fraction = currentFraction {
+                            GeometryReader { segment in
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.accentColor)
+                                    .frame(width: segment.size.width * max(0, min(1, fraction)))
+                            }
+                        } else if index == currentIndex {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.accentColor.opacity(pulse ? 0.65 : 0.25))
+                        }
+                    }
+                    .frame(width: max(
+                        2,
+                        (geometry.size.width - CGFloat(max(0, weights.count - 1)) * 2) * CGFloat(weight)
+                    ))
+                }
+            }
+        }
+        .frame(height: 10)
+        .onAppear {
+            guard !reduceMotion, currentFraction == nil else { return }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .onChange(of: currentIndex) { _ in
+            pulse = false
+            guard !reduceMotion, currentFraction == nil else { return }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .onChange(of: currentFraction) { fraction in
+            pulse = false
+            guard !reduceMotion, fraction == nil else { return }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulse = true
             }
         }
     }
@@ -691,7 +1137,7 @@ struct ResultView: View {
                         .font(.title2.weight(.semibold))
                     Text("処理を停止しました。入力データは変更されていません。")
                         .foregroundStyle(.secondary)
-                    if state.activeRunBackend == .dentalSegmentator {
+                    if state.activeRunBackend != .totalSegmentator {
                         Text("CPUや別の機能には切り替えていません。")
                             .foregroundStyle(.secondary)
                     }
@@ -714,13 +1160,87 @@ struct ResultView: View {
                 } else if state.resultOutcome == .success {
                     Text("3Dプレビューを作成しました")
                         .font(.title2.weight(.semibold))
+                    if state.canRetryToothSegRefine {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("ToothSeg高精細化を完了できませんでした", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundStyle(.orange)
+                            Text("元の歯列・顎骨結果は利用できます。")
+                                .font(.callout.weight(.semibold))
+                            if !state.failureReasonText.isEmpty {
+                                Text(state.failureReasonText)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Button {
+                                    state.requestToothSegRefine()
+                                } label: {
+                                    Label("ToothSegを再実行", systemImage: "arrow.clockwise")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Button {
+                                    state.copySafeErrorInfo()
+                                } label: {
+                                    Label("エラー情報をコピー", systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(.bordered)
+                                Button {
+                                    state.showDetailedLog()
+                                } label: {
+                                    Label("詳細ログを見る", systemImage: "terminal")
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.orange.opacity(0.10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.orange.opacity(0.45), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
                     if let candidate = state.selectedDicomSeries {
                         Text("使用した撮影: \(candidate.displayTitle)")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    if state.canSwitchResultFlavor {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("結果表示対象")
+                                .font(.headline)
+                            Picker("結果表示対象", selection: Binding(
+                                get: { state.activeResultFlavor },
+                                set: { state.setActiveResultFlavor($0) }
+                            )) {
+                                ForEach(state.availableResultFlavors) { flavor in
+                                    Text(flavor.title).tag(flavor)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        .padding(10)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
                     NextPhaseButton(title: "3Dプレビューを開く", systemImage: "cube.transparent") {
                         state.openResultPreview()
+                    }
+                    if state.canShowToothSegRefine {
+                        NextPhaseButton(
+                            title: "高精細歯分割（ToothSeg）を実行",
+                            systemImage: "sparkles",
+                            isEnabled: state.canRunToothSegRefineAction
+                        ) {
+                            state.requestToothSegRefine()
+                        }
+                    } else if state.primaryRunBackend == .totalSegmentator
+                                && state.resultOutcome == .success
+                                && !state.primaryRunTeethDetected {
+                        Text("歯の初回抽出結果がありませんでした。ToothSeg高精細化は表示しません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     HStack {
                         Button {
@@ -739,7 +1259,7 @@ struct ResultView: View {
                             state.showDetailedLog()
                         } label: {
                                 Label("詳細ログを見る", systemImage: "terminal")
-                            }
+                        }
                         .buttonStyle(.bordered)
                         Spacer()
                     }

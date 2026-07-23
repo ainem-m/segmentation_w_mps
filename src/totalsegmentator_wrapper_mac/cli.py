@@ -19,7 +19,7 @@ from totalsegmentator_wrapper_mac.device import smoke_test_mps_convtranspose3d
 
 
 TASKS = ("craniofacial_structures", "teeth")
-BACKENDS = ("totalsegmentator", "dentalsegmentator")
+BACKENDS = ("totalsegmentator", "dentalsegmentator", "toothseg")
 DEVICES = ("auto", "mps", "cpu")
 SMOOTH_PRESET_NAMES = ("none", "slicer_like", "medium", "strong")
 
@@ -85,6 +85,21 @@ def build_parser() -> argparse.ArgumentParser:
     dentalseg_prepare.add_argument("--model-root", required=True, type=Path)
     dentalseg_prepare.add_argument("--json", required=True, type=Path)
     dentalseg_prepare.add_argument("--progress-log", required=True, type=Path)
+
+    toothseg_status = subparsers.add_parser(
+        "toothseg-status",
+        help="Report the machine-readable ToothSeg model preparation state.",
+    )
+    toothseg_status.add_argument("--model-root", required=True, type=Path)
+    toothseg_status.add_argument("--json", required=True, type=Path)
+
+    toothseg_prepare = subparsers.add_parser(
+        "toothseg-prepare",
+        help="Prepare both ToothSeg nnU-Net branches without running inference.",
+    )
+    toothseg_prepare.add_argument("--model-root", required=True, type=Path)
+    toothseg_prepare.add_argument("--json", required=True, type=Path)
+    toothseg_prepare.add_argument("--progress-log", required=True, type=Path)
 
     dicom_audit = subparsers.add_parser(
         "dicom-audit",
@@ -178,6 +193,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--dentalseg-npp", type=int, default=1)
     run.add_argument("--dentalseg-nps", type=int, default=1)
     run.add_argument("--dentalseg-timeout-sec", type=int, default=7200)
+    run.add_argument("--toothseg-bin", default="nnUNetv2_predict")
+    run.add_argument("--toothseg-nnunet-results", type=Path, default=None)
+    run.add_argument("--toothseg-timeout-sec", type=int, default=7200)
+    run.add_argument(
+        "--toothseg-refine",
+        action="store_true",
+        help="Run ToothSeg explicit refine path (second-stage only).",
+    )
     run.add_argument("--no-copy-input", action="store_true")
     run.add_argument(
         "--robust-crop",
@@ -384,6 +407,57 @@ def main(argv: list[str] | None = None) -> int:
         write_json(args.json, payload)
         return 0
 
+    if args.command in {"toothseg-status", "toothseg-prepare"}:
+        from totalsegmentator_wrapper_mac.setup_manager import (
+            TOOTHSEG_MODEL_FILENAME,
+            TOOTHSEG_MODEL_MD5,
+            TOOTHSEG_MODEL_URL,
+        )
+        from totalsegmentator_wrapper_mac.toothseg_setup import (
+            install_toothseg_model,
+            toothseg_model_status,
+        )
+
+        model_root = args.model_root.expanduser().resolve()
+        if args.command == "toothseg-status":
+            payload = toothseg_model_status(
+                model_root=model_root,
+                expected_md5=TOOTHSEG_MODEL_MD5,
+            )
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            write_json(args.json, payload)
+            return 0 if payload["status"] != "failed" else 1
+
+        args.progress_log.parent.mkdir(parents=True, exist_ok=True)
+        args.progress_log.write_text("TOOTHSEG_PROGRESS status=running\n", encoding="utf-8")
+        try:
+            payload = install_toothseg_model(
+                model_url=TOOTHSEG_MODEL_URL,
+                model_zip=model_root / TOOTHSEG_MODEL_FILENAME,
+                expected_md5=TOOTHSEG_MODEL_MD5,
+                nnunet_results=model_root / "nnUNet_results",
+            )
+        except Exception:  # noqa: BLE001
+            payload = {
+                "schema": "totalsegmentator_wrapper_mac.toothseg_model_setup.v1",
+                "status": "failed",
+                "model_state": "failed",
+                "error_code": "model_prepare_failed",
+                "safe_reason": "ToothSeg model preparation did not complete.",
+                "mps_state": "not_applicable",
+                "occurred_at": datetime.now(UTC).isoformat(),
+            }
+            with args.progress_log.open("a", encoding="utf-8") as handle:
+                handle.write("TOOTHSEG_PROGRESS status=failed\n")
+            print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+            write_json(args.json, payload)
+            return 1
+        with args.progress_log.open("a", encoding="utf-8") as handle:
+            handle.write("TOOTHSEG_PROGRESS status=success\n")
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        write_json(args.json, payload)
+        return 0
+
     if args.command == "dicom-audit":
         from totalsegmentator_wrapper_mac.dicom_audit import audit_dicom_directory, write_audit_json
 
@@ -458,6 +532,14 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 "--higher-order-resampling is only supported with --backend totalsegmentator."
             )
+        if args.backend == "toothseg" and args.task != "teeth":
+            parser.error("--backend toothseg requires --task teeth.")
+        if args.backend == "toothseg" and (args.robust_crop or args.higher_order_resampling):
+            parser.error("ToothSeg does not support TotalSegmentator resampling/crop flags.")
+        if args.toothseg_refine and args.backend != "toothseg":
+            parser.error("--toothseg-refine can be used only with --backend toothseg")
+        if args.toothseg_refine and args.task != "teeth":
+            parser.error("--toothseg-refine can be used only with --task teeth")
         result = run_totalsegmentator(
             input_path=args.input,
             output_root=args.output,
@@ -485,6 +567,9 @@ def main(argv: list[str] | None = None) -> int:
             dentalseg_npp=args.dentalseg_npp,
             dentalseg_nps=args.dentalseg_nps,
             dentalseg_timeout_sec=args.dentalseg_timeout_sec,
+            toothseg_bin=args.toothseg_bin,
+            toothseg_nnunet_results=args.toothseg_nnunet_results,
+            toothseg_timeout_sec=args.toothseg_timeout_sec,
             copy_input=not args.no_copy_input,
             skip_device_check=args.skip_device_check,
             robust_crop=args.robust_crop,
@@ -496,6 +581,7 @@ def main(argv: list[str] | None = None) -> int:
             teeth_craniofacial_case=args.teeth_craniofacial_case,
             teeth_force_split=args.teeth_force_split,
             teeth_robust_craniofacial_preflight=args.teeth_robust_craniofacial_preflight,
+            toothseg_refine=args.toothseg_refine,
         )
         if args.result_json is not None:
             safe_payload = {
@@ -507,6 +593,8 @@ def main(argv: list[str] | None = None) -> int:
                 "safe_reason": result.safe_reason,
                 "mps_state": result.mps_state,
                 "occurred_at": result.occurred_at,
+                "teeth_detected": result.teeth_detected,
+                "refine_available": result.refine_available,
             }
             write_json(args.result_json, safe_payload)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))

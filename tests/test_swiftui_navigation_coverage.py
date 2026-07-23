@@ -11,6 +11,7 @@ STATE = (APP / "AppState.swift").read_text(encoding="utf-8")
 VIEWS = (APP / "Views.swift").read_text(encoding="utf-8")
 COMMANDS = (APP / "CommandBuilder.swift").read_text(encoding="utf-8")
 PROCESS = (APP / "ProcessSupport.swift").read_text(encoding="utf-8")
+APP_ENTRY = (APP / "TotalSegmentatorWrapperForMacApp.swift").read_text(encoding="utf-8")
 
 
 def body(source: str, declaration: str) -> str:
@@ -58,15 +59,62 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("別のCTを選ぶ", shared_input)
         self.assertIn("NextPhaseButton(", shared_input)
 
-    def test_creation_choices_are_exactly_three_and_map_to_existing_modes(self):
+    def test_creation_choices_offer_equal_default_and_other_routes_without_toothseg(self):
         creation = body(STATE, "enum CreationChoice")
         self.assertEqual(
             set(re.findall(r"case ([A-Za-z][A-Za-z0-9_]*)", creation)),
-            {"standardArchJaw", "individualTeethBeta", "dentalSegmentatorExperimental"},
+            {"standardArchJaw", "individualTeethBeta", "dentalSegmentatorExperimental", "toothSegExperimental"},
         )
+        self.assertIn("static let primaryChoices", creation)
+        self.assertIn("static let advancedChoices", creation)
+        primary = creation[creation.index("static let primaryChoices"):creation.index("static let advancedChoices")]
+        advanced = creation[creation.index("static let advancedChoices"):creation.index("var runMode")]
+        self.assertNotIn("toothSegExperimental", primary)
+        self.assertNotIn("individualTeethBeta", primary)
+        self.assertIn("individualTeethBeta", advanced)
+        self.assertNotIn("toothSegExperimental", advanced)
         self.assertIn("var runMode: RunMode", creation)
         self.assertIn("var backend: SegmentationBackend", creation)
         self.assertIn("creationChoice = .standardArchJaw", STATE)
+        shared_input = body(VIEWS, "struct InputAndCreationView")
+        self.assertEqual(shared_input.count("CreationCategoryCard("), 2)
+        self.assertIn('title: "標準モデル"', shared_input)
+        self.assertIn('title: "その他のモデル"', shared_input)
+        self.assertIn('modelName: "TotalSegmentator"', shared_input)
+        self.assertNotIn("CreationChoice.advancedChoices", shared_input)
+        self.assertNotIn("CreationChoice.allCases", shared_input)
+        self.assertIn("CreationMethodComparisonSheet", shared_input)
+        self.assertIn("state.creationChoice != .standardArchJaw", shared_input)
+        self.assertIn("alternateModelName", shared_input)
+        category_card = body(VIEWS, "struct CreationCategoryCard")
+        self.assertIn('"checkmark.circle.fill"', category_card)
+        self.assertIn('accessibilityValue(isSelected ? "選択中" : "未選択")', category_card)
+
+    def test_creation_comparison_sheet_uses_fixed_result_images_and_gated_choices(self):
+        comparison = body(VIEWS, "struct CreationMethodComparisonSheet")
+        card = body(VIEWS, "struct CreationMethodComparisonCard")
+        image = body(VIEWS, "struct ModelComparisonImage")
+
+        self.assertIn("同じCT・同じ角度・同じ倍率", comparison)
+        for image_name in ("totalseg", "dentalseg", "individual", "toothseg"):
+            with self.subTest(image_name=image_name):
+                self.assertIn(f'imageName: "{image_name}"', comparison)
+        self.assertIn("onSelect(.standardArchJaw)", comparison)
+        self.assertIn("onSelect(.dentalSegmentatorExperimental)", comparison)
+        self.assertIn("onSelect(.individualTeethBeta)", comparison)
+        self.assertNotIn("onSelect(.toothSegExperimental)", comparison)
+        self.assertIn("この比較画面から選択できます", comparison)
+        self.assertIn("結果画面から明示的に実行", comparison)
+        for duration in ("約3〜6分", "約7〜12分", "約2〜7分", "追加で約15〜40分"):
+            with self.subTest(duration=duration):
+                self.assertIn(f'estimatedDuration: "{duration}"', comparison)
+        self.assertIn("M1 Mac・メモリ16 GB", comparison)
+        self.assertIn("処理時間の目安", card)
+        self.assertIn("selectedChoice == .standardArchJaw", comparison)
+        self.assertIn("selectedChoice == .dentalSegmentatorExperimental", comparison)
+        self.assertIn("selectedChoice == .individualTeethBeta", comparison)
+        self.assertIn("borderedProminent", card)
+        self.assertIn('appendingPathComponent("model_comparison"', image)
 
     def test_no_technical_picker_or_cpu_restore_remains(self):
         shared = body(VIEWS, "struct InputAndCreationView")
@@ -77,6 +125,22 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn('device = "mps"', restore)
         self.assertIn('defaults.set("mps", forKey: UserSettingKey.device)', body(STATE, "private func saveUserSettings"))
 
+    def test_debug_ui_preview_mode_is_explicit_and_release_safe(self):
+        app = body(APP_ENTRY, "struct TotalSegmentatorWrapperForMacApp")
+        preview = body(STATE, "func applyUIPreview")
+        shared_input = body(VIEWS, "struct InputAndCreationView")
+        self.assertIn("#if DEBUG", APP_ENTRY)
+        self.assertIn("appState.applyUIPreview()", app)
+        self.assertIn('arguments.firstIndex(of: "--ui-preview")', preview)
+        self.assertIn('"input-advanced"', preview)
+        self.assertIn('"input-comparison"', preview)
+        self.assertIn('scenario == "input-advanced"', preview)
+        self.assertIn("creationChoice = .individualTeethBeta", preview)
+        self.assertIn('guard !isUIPreviewMode else { return }', body(STATE, "private func saveUserSettings"))
+        self.assertNotIn('state.uiPreviewScenario == "input-advanced"', shared_input)
+        self.assertIn('state.uiPreviewScenario == "input-comparison"', shared_input)
+        self.assertIn("UI PREVIEW", body(VIEWS, "struct HeaderView"))
+
     def test_setup_idle_and_shared_input_details(self):
         setup = body(VIEWS, "struct SetupView")
         self.assertIn("はじめの準備", body(VIEWS, "struct HeaderView"))
@@ -86,25 +150,51 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertNotIn("openSampleViewer", setup)
         self.assertNotIn("3Dサンプルを開く", setup)
         self.assertIn("このMacのGPUを使用", VIEWS)
-        self.assertIn("保存先", body(VIEWS, "struct InputAndCreationView"))
+        shared_input = body(VIEWS, "struct InputAndCreationView")
+        self.assertIn("保存先", shared_input)
+        self.assertIn('Text("仕上がり")', shared_input)
+        self.assertIn('Toggle("境界を滑らかにする"', shared_input)
+        self.assertNotIn('DisclosureGroup("詳細設定"', shared_input)
+        self.assertIn('DisclosureGroup("入力・保存情報")', shared_input)
 
         refresh_launch = body(STATE, "func refreshLaunchState")
         self.assertNotIn("startSetup()", refresh_launch)
         self.assertIn("準備を始めるまで通信しません", refresh_launch)
 
-    def test_running_is_indeterminate_and_shows_identity_elapsed_and_destination(self):
+    def test_running_uses_parsed_progress_with_indeterminate_fallback(self):
         running = body(VIEWS, "struct RunProgressView")
         self.assertIn("ProgressView()", running)
-        self.assertNotIn("ProgressView(value:", running)
+        self.assertIn("ProgressView(value: fraction)", running)
         self.assertIn("runElapsed", running)
         self.assertIn("使用機能", running)
         self.assertIn("保存先", running)
         progress_model = body(STATE, "struct RunLogProgress")
-        self.assertNotIn("(\\(percent)%)", progress_model)
-        self.assertNotIn("\\(percent)%", progress_model)
+        self.assertIn("\\(percent)%", progress_model)
+        self.assertIn("etaSeconds", progress_model)
         self.assertIn("CTデータを処理しています。", STATE)
         self.assertNotIn("歯列と顎骨をまとめて表示する結果", STATE)
         self.assertNotIn("歯列と顎骨を5つの領域に分けています。", STATE)
+
+    def test_indeterminate_stage_distinguishes_internal_subtask_progress(self):
+        running = body(VIEWS, "struct RunProgressView")
+        progress_bar = body(VIEWS, "private struct WeightedRunProgressBar")
+        self.assertIn('var text = "内部処理"', running)
+        self.assertIn('text += " \\(step) / \\(total)（\\(percent)%）"', running)
+        self.assertIn('text += "・残り約\\(formatCompactDuration(eta))"', running)
+        self.assertNotIn("工程全体の進捗率は取得できません", running)
+        self.assertNotIn("工程全体の進捗率は算出できません", running)
+        self.assertNotIn("処理は継続しています", running)
+        self.assertNotIn("全体の進捗範囲", running)
+        self.assertNotIn("この工程の進捗率は取得できません", running)
+        self.assertNotIn('var text = "現在の処理：\\(label)"', running)
+        self.assertIn('["現在の処理", "現在の内部処理", "処理"]', running)
+        self.assertIn("index == currentIndex", progress_bar)
+        self.assertIn("currentFraction == nil", progress_bar)
+        self.assertIn(".onChange(of: currentFraction)", progress_bar)
+        self.assertIn("repeatForever(autoreverses: true)", progress_bar)
+        self.assertIn('text != "進捗ログを受信しました。"', running)
+        self.assertIn('!text.contains("処理を継続しています")', running)
+        self.assertIn('!text.contains("処理は継続中です")', running)
 
     def test_forward_actions_share_one_prominent_full_width_component(self):
         component = body(VIEWS, "struct NextPhaseButton")
@@ -132,13 +222,14 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
             "この撮影を使う",
             "表示中の撮影で3Dプレビュー作成へ進む",
             "3Dプレビューを開く",
+            "高精細歯分割（ToothSeg）を実行",
         )
         for label in expected_labels:
             with self.subTest(label=label):
                 self.assertIn(label, VIEWS)
 
     def test_every_phase_uses_the_component_matching_its_navigation_role(self):
-        self.assertEqual(VIEWS.count("NextPhaseButton("), 8)
+        self.assertEqual(VIEWS.count("NextPhaseButton("), 9)
 
         setup = body(VIEWS, "struct SetupView")
         start = body(VIEWS, "struct StartChoiceView")
@@ -170,16 +261,41 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("showDentalPreparationSheet", STATE)
         self.assertIn("dentalsegStatusCommand", STATE)
         self.assertIn("dentalsegPrepareCommand", STATE)
-        self.assertIn("choice == .dentalSegmentatorExperimental, !isDentalSegmentatorModelReady", body(STATE, "func requestCreationChoice"))
+        self.assertIn("choice == .dentalSegmentatorExperimental && !isDentalSegmentatorModelReady", body(STATE, "func requestCreationChoice"))
+        self.assertIn("choice == .toothSegExperimental && !isToothSegModelReady", body(STATE, "func requestCreationChoice"))
+        self.assertIn("toothsegStatusCommand", STATE)
+        self.assertIn("toothsegPrepareCommand", STATE)
         self.assertIn("dentalPreparationRunner.resetTerminationRequest()", body(STATE, "func confirmDentalPreparation"))
         self.assertIn("func cancelDentalPreparation", STATE)
         shared = body(VIEWS, "struct InputAndCreationView")
-        self.assertIn("DentalPreparationConfirmationSheet", shared)
-        self.assertIn("DentalPreparationSheet", shared)
+        root = body(VIEWS, "struct RootView")
+        self.assertNotIn("DentalPreparationConfirmationSheet", shared)
+        self.assertNotIn("DentalPreparationSheet", shared)
+        self.assertIn("DentalPreparationConfirmationSheet", root)
+        self.assertIn("DentalPreparationSheet", root)
         confirmation = body(VIEWS, "struct DentalPreparationConfirmationSheet")
         self.assertIn("追加モデルデータを取得するので少し時間がかかります。", confirmation)
+        self.assertIn("約920 MB", confirmation)
         self.assertNotIn("CPUやTotalSegmentator", confirmation)
         self.assertIn("キャンセル", body(VIEWS, "struct DentalPreparationSheet"))
+
+    def test_result_toothseg_preparation_is_explicit_and_preserves_primary_choice(self):
+        request = body(STATE, "func requestToothSegRefine")
+        preparation = body(STATE, "func confirmDentalPreparation")
+        result = body(VIEWS, "struct ResultView")
+
+        self.assertIn("if isToothSegModelReady", request)
+        self.assertIn("canShowToothSegRefine || canRetryToothSegRefine", request)
+        self.assertIn("startToothSegRefineRun()", request)
+        self.assertIn("modelPreparationPurpose = .toothSegRefine", request)
+        self.assertIn("showDentalPreparationConfirmation = true", request)
+        self.assertIn("modelPreparationPurpose == .creationSelection", preparation)
+        self.assertIn("self.creationChoice = pendingChoice", preparation)
+        self.assertIn("結果画面のボタンをもう一度押す", preparation)
+        self.assertNotIn("startToothSegRefineRun()", preparation)
+        self.assertIn("state.requestToothSegRefine()", result)
+        self.assertIn("元の歯列・顎骨結果は利用できます。", result)
+        self.assertIn("state.failureReasonText", result)
 
     def test_dicom_defaults_first_candidate_and_preview_actions(self):
         audit = body(STATE, "func runDicomAudit")
@@ -238,6 +354,11 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("3Dプレビューを開く", result)
         self.assertIn("3D Slicer用に書き出す", result)
         self.assertIn("エラー情報をコピー", result)
+        self.assertIn("結果表示対象", result)
+        self.assertIn("ToothSegを再実行", result)
+        self.assertIn("state.canRetryToothSegRefine", result)
+        self.assertIn("state.canShowToothSegRefine", result)
+        self.assertIn("!state.primaryRunTeethDetected", result)
         self.assertIn("func copySafeErrorInfo", STATE)
         safe = body(STATE, "var safeErrorCopyText")
         self.assertIn("app_version", safe)
@@ -245,6 +366,11 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("mps_state", safe)
         self.assertIn("timestamp", safe)
         self.assertIn("error_code", safe)
+        self.assertIn("safeErrorFeatureText", safe)
+        self.assertNotIn("creationChoice.rawValue", safe)
+        feature = body(STATE, "var safeErrorFeatureText")
+        self.assertIn('safeErrorCode.hasPrefix("toothseg_")', feature)
+        self.assertIn("ToothSeg高精細化", feature)
         self.assertNotIn("inputURL", safe)
         self.assertNotIn("outputURL", safe)
         self.assertIn("enum ResultOutcome", STATE)
@@ -375,6 +501,8 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("UserSettingKey.runMode", restore)
         self.assertIn("creationChoice = .dentalSegmentatorExperimental", restore)
         self.assertIn("creationChoice = .individualTeethBeta", restore)
+        self.assertIn("restoredChoice == .toothSegExperimental ? .standardArchJaw", restore)
+        self.assertNotIn("creationChoice = .toothSegExperimental", restore)
         self.assertIn('device = "mps"', restore)
         self.assertNotIn("UserSettingKey.device", restore)
 
@@ -391,6 +519,60 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn('"--require-mps"', run_command)
         self.assertIn("backend.cliValue", run_command)
         self.assertIn("mode.task", run_command)
+
+    def test_toothseg_refine_command_uses_fixed_12mm_margin(self):
+        refine = body(COMMANDS, "static func toothSegRefineCommand")
+        start_refine = body(STATE, "func startToothSegRefineRun")
+        self.assertIn('"--toothseg-refine"', refine)
+        self.assertIn('"--teeth-crop-margin-mm"', refine)
+        self.assertIn("toothsegRefineMarginMM", refine)
+        self.assertIn('let toothsegRefineMarginMM = "12"', COMMANDS)
+        self.assertIn('"--teeth-craniofacial-case"', refine)
+        self.assertIn("craniofacialCase.path", refine)
+        self.assertNotIn('"--teeth-robust-craniofacial-preflight"', refine)
+        self.assertIn("craniofacialCase: outputURL", start_refine)
+
+    def test_toothseg_preview_is_separate_and_selected_by_result_flavor(self):
+        preview_output = body(STATE, "private func expectedSurfacePreviewOutputURL")
+        preview_url = body(STATE, "private func expectedSurfacePreviewURL")
+        open_preview = body(STATE, "func openResultPreview")
+        regenerate = body(STATE, "func regenerateSurfacePreview")
+        refine = body(STATE, "func startToothSegRefineRun")
+
+        self.assertIn('case .toothSeg:', preview_output)
+        self.assertIn('"surface_preview/toothseg"', preview_output)
+        self.assertIn("expectedSurfacePreviewOutputURL", preview_url)
+        self.assertIn("expectedSurfacePreviewURL", open_preview)
+        self.assertIn("expectedSurfacePreviewOutputURL", regenerate)
+        self.assertIn("outputDir: previewOutput", regenerate)
+        self.assertIn("smoothSurfaces: higherOrderResampling", regenerate)
+        self.assertIn("expectedSurfacePreviewOutputURL", refine)
+        self.assertIn("outputDir: previewOutput", refine)
+        self.assertIn("smoothSurfaces: smoothSurfacesForRun", refine)
+        self.assertGreaterEqual(
+            refine.count("self?.activeResultFlavor = .craniofacial"),
+            2,
+            "stopped and failed ToothSeg runs must restore the primary result viewer",
+        )
+
+        start_run = body(STATE, "func startRun")
+        self.assertIn("let smoothSurfacesForRun = higherOrderResampling", start_run)
+        self.assertIn("smoothSurfaces: smoothSurfacesForRun", start_run)
+
+        surface_command = body(COMMANDS, "static func surfacePreviewCommand")
+        self.assertIn('command.append("--smooth-preset")', surface_command)
+        self.assertIn('smoothSurfaces ? "slicer_like" : "none"', surface_command)
+
+    def test_specific_toothseg_failure_classes_precede_generic_markers(self):
+        failure = body(STATE, "func runFailureReason")
+        marker_index = failure.index("let markers")
+        self.assertLess(failure.index("mps backend out of memory"), marker_index)
+        self.assertLess(failure.index("ダウンロード関連で失敗しました"), marker_index)
+        self.assertLess(failure.index('lower.contains("no teeth")'), marker_index)
+        refine_failure = body(STATE, "func toothSegRefineFailureReason")
+        self.assertIn('case "toothseg_mps_oom"', refine_failure)
+        self.assertIn('case "toothseg_input_invalid"', refine_failure)
+        self.assertIn('case "toothseg_download_failed", "toothseg_model_preparation_failed"', refine_failure)
 
     def test_sidebar_and_running_screen_keep_navigation_boundary(self):
         sidebar = body(VIEWS, "struct SidebarView")

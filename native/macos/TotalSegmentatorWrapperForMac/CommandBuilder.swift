@@ -5,7 +5,11 @@ import Darwin
 let appSupportName = "TotalSegmentatorWrapperMac"
 let appTitle = "TotalSegmentator Wrapper for Mac"
 let defaultTeethMarginMM = "5.0"
+let toothsegRefineMarginMM = "12"
 let dentalsegExpectedMD5 = "b71cd5230168d28a4f71b078265b76be"
+let toothsegExpectedMD5 = "5d8dd061cce9529943567aeba3271143"
+let toothsegPairDistributionsSHA256 = "82ab04892277d36013be5ba9763ac334ea073fca7ebe8679086f1e33ed64ff29"
+let toothsegSemanticMPSPatchSize = [192, 192, 192]
 
 enum SetupStep: String {
     case idle
@@ -98,6 +102,7 @@ enum RunMode: String, CaseIterable, Identifiable {
 enum SegmentationBackend: String, CaseIterable, Identifiable {
     case totalSegmentator = "TotalSegmentator"
     case dentalSegmentator = "DentalSegmentator"
+    case toothSeg = "ToothSeg"
 
     var id: String { rawValue }
 
@@ -105,6 +110,7 @@ enum SegmentationBackend: String, CaseIterable, Identifiable {
         switch self {
         case .totalSegmentator: return "totalsegmentator"
         case .dentalSegmentator: return "dentalsegmentator"
+        case .toothSeg: return "toothseg"
         }
     }
 
@@ -114,6 +120,8 @@ enum SegmentationBackend: String, CaseIterable, Identifiable {
             return "既定のTotalSegmentator backendです。"
         case .dentalSegmentator:
             return "nnU-Net版DentalSegmentatorを使う実験的backendです。セットアップ済みのZenodoモデルをMPS指定で使います。"
+        case .toothSeg:
+            return "歯列ROIを自動抽出してToothSegのsemantic/instance両branchを実行し、個別歯をFDI番号付きで分ける実験的backendです。"
         }
     }
 }
@@ -220,6 +228,25 @@ struct AppPaths {
     var dentalsegStatusJSON: URL { logs.appendingPathComponent("dentalsegmentator_status.json") }
     var dentalsegPrepareResultJSON: URL { logs.appendingPathComponent("dentalsegmentator_prepare_result.json") }
     var dentalsegPrepareLog: URL { logs.appendingPathComponent("dentalsegmentator_prepare.log") }
+    var toothsegRoot: URL { support.appendingPathComponent("models/toothseg", isDirectory: true) }
+    var toothsegResults: URL { toothsegRoot.appendingPathComponent("nnUNet_results", isDirectory: true) }
+    var toothsegStatusJSON: URL { logs.appendingPathComponent("toothseg_status.json") }
+    var toothsegPrepareResultJSON: URL { logs.appendingPathComponent("toothseg_prepare_result.json") }
+    var toothsegPrepareLog: URL { logs.appendingPathComponent("toothseg_prepare.log") }
+    var toothsegReadyMarker: URL { toothsegResults.appendingPathComponent(".toothseg_model_ready.json") }
+    var toothsegPairDistributions: URL { toothsegRoot.appendingPathComponent("fdi_pair_distrs.json") }
+    var toothsegSemanticModel: URL {
+        toothsegResults
+            .appendingPathComponent("Dataset121_ToothFairy2_Teeth", isDirectory: true)
+            .appendingPathComponent("nnUNetTrainer_onlyMirror01_DASegOrd0__nnUNetPlans__3d_fullres_resample_torch_256_bs8_ctnorm", isDirectory: true)
+            .appendingPathComponent("fold_5/checkpoint_final.pth")
+    }
+    var toothsegInstanceModel: URL {
+        toothsegResults
+            .appendingPathComponent("Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px", isDirectory: true)
+            .appendingPathComponent("nnUNetTrainer__nnUNetPlans__3d_fullres_resample_torch_192_bs8_ctnorm", isDirectory: true)
+            .appendingPathComponent("fold_5/checkpoint_final.pth")
+    }
     var runResultJSON: URL { logs.appendingPathComponent("latest_run_result.json") }
     var appRunLog: URL { logs.appendingPathComponent("app_run.log") }
     var dentalsegInstalledModel: URL {
@@ -390,6 +417,12 @@ struct CommandBuilder {
             command.append("--dentalseg-fold")
             command.append("0")
             command.append("--dentalseg-disable-tta")
+        } else if backend == .toothSeg {
+            command.append("--toothseg-nnunet-results")
+            command.append(paths.toothsegResults.path)
+            command.append("--teeth-crop-margin-mm")
+            command.append(defaultTeethMarginMM)
+            command.append("--teeth-robust-craniofacial-preflight")
         } else if mode == .individualTeeth {
             command.append("--experimental-teeth")
             command.append("--teeth-crop-margin-mm")
@@ -401,6 +434,49 @@ struct CommandBuilder {
         if backend == .totalSegmentator && higherOrderResampling {
             command.append("--higher-order-resampling")
         }
+        return command
+    }
+
+    static func toothSegRefineCommand(
+        python: URL,
+        input: URL,
+        output: URL,
+        craniofacialCase: URL,
+        paths: AppPaths
+    ) -> [String] {
+        let command = [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "run",
+            "--input",
+            input.path,
+            "--output",
+            output.path,
+            "--backend",
+            SegmentationBackend.toothSeg.cliValue,
+            "--task",
+            RunMode.individualTeeth.task,
+            "--device",
+            "mps",
+            "--execution-profile",
+            "macos-app",
+            "--require-mps",
+            "--result-json",
+            craniofacialCase
+                .appendingPathComponent("logs/toothseg_refine/result.json")
+                .path,
+            "--totalseg-bin",
+            paths.totalsegBinary.path,
+            "--toothseg-refine",
+            "--toothseg-nnunet-results",
+            paths.toothsegResults.path,
+            "--teeth-crop-margin-mm",
+            toothsegRefineMarginMM,
+            "--teeth-craniofacial-case",
+            craniofacialCase.path,
+            "--no-copy-input",
+        ]
         return command
     }
 
@@ -429,6 +505,34 @@ struct CommandBuilder {
             paths.dentalsegPrepareResultJSON.path,
             "--progress-log",
             paths.dentalsegPrepareLog.path,
+        ]
+    }
+
+    static func toothsegStatusCommand(python: URL, paths: AppPaths) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "toothseg-status",
+            "--model-root",
+            paths.toothsegRoot.path,
+            "--json",
+            paths.toothsegStatusJSON.path,
+        ]
+    }
+
+    static func toothsegPrepareCommand(python: URL, paths: AppPaths) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "toothseg-prepare",
+            "--model-root",
+            paths.toothsegRoot.path,
+            "--json",
+            paths.toothsegPrepareResultJSON.path,
+            "--progress-log",
+            paths.toothsegPrepareLog.path,
         ]
     }
 
@@ -505,8 +609,14 @@ struct CommandBuilder {
         [python.path, "-m", "totalsegmentator_wrapper_mac", "summary", "--case", caseDir.path, "--format", "text"]
     }
 
-    static func surfacePreviewCommand(python: URL, caseDir: URL) -> [String] {
-        [
+    static func surfacePreviewCommand(
+        python: URL,
+        caseDir: URL,
+        sourceInput: URL? = nil,
+        outputDir: URL? = nil,
+        smoothSurfaces: Bool
+    ) -> [String] {
+        var command = [
             python.path,
             "-m",
             "totalsegmentator_wrapper_mac",
@@ -514,6 +624,17 @@ struct CommandBuilder {
             "--case",
             caseDir.path,
         ]
+        if let sourceInput {
+            command.append("--input")
+            command.append(sourceInput.path)
+        }
+        if let outputDir {
+            command.append("--output")
+            command.append(outputDir.path)
+        }
+        command.append("--smooth-preset")
+        command.append(smoothSurfaces ? "slicer_like" : "none")
+        return command
     }
 
     static func slicerExportCommand(python: URL, caseDir: URL, source: URL?) -> [String] {
@@ -586,7 +707,7 @@ func formatElapsed(_ seconds: TimeInterval) -> String {
 func currentAppVersion() -> String {
     let paths = AppPaths.current()
     let manifest = readJSON(paths.manifest) ?? [:]
-    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.2"
+    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.0"
 }
 
 func setupReasonToJapanese(_ reason: String?) -> String {

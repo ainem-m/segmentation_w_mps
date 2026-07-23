@@ -15,19 +15,49 @@ enum AppScreen {
     case result
 }
 
+enum ResultOutputFlavor: String, CaseIterable, Identifiable {
+    case craniofacial
+    case toothSeg
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .craniofacial:
+            return "歯列・顎骨"
+        case .toothSeg:
+            return "高精細歯（ToothSeg）"
+        }
+    }
+}
+
 enum CreationChoice: String, CaseIterable, Identifiable {
     case standardArchJaw = "歯列と顎骨の3Dプレビュー"
     case individualTeethBeta = "歯を1本ずつ分ける（ベータ）"
     case dentalSegmentatorExperimental = "DentalSegmentator（実験的）"
+    case toothSegExperimental = "ToothSeg（個別歯・実験的）"
 
     var id: String { rawValue }
 
+    static let primaryChoices: [CreationChoice] = [
+        .standardArchJaw,
+        .dentalSegmentatorExperimental,
+    ]
+
+    static let advancedChoices: [CreationChoice] = [
+        .individualTeethBeta,
+    ]
+
     var runMode: RunMode {
-        self == .individualTeethBeta ? .individualTeeth : .archPreview
+        self == .individualTeethBeta || self == .toothSegExperimental ? .individualTeeth : .archPreview
     }
 
     var backend: SegmentationBackend {
-        self == .dentalSegmentatorExperimental ? .dentalSegmentator : .totalSegmentator
+        switch self {
+        case .dentalSegmentatorExperimental: return .dentalSegmentator
+        case .toothSegExperimental: return .toothSeg
+        default: return .totalSegmentator
+        }
     }
 
     var detail: String {
@@ -38,6 +68,8 @@ enum CreationChoice: String, CaseIterable, Identifiable {
             return "歯を1本ずつ分けて表示します。処理に時間がかかります。"
         case .dentalSegmentatorExperimental:
             return "歯列と顎骨を5つの領域に分けます。"
+        case .toothSegExperimental:
+            return "歯を1本ずつ分け、FDI歯式番号を付けます。初回に約920 MBを取得します。"
         }
     }
 }
@@ -52,6 +84,11 @@ enum ResultOutcome: Equatable {
     case none
     case success
     case failure
+}
+
+enum ModelPreparationPurpose: Equatable {
+    case creationSelection
+    case toothSegRefine
 }
 
 enum InputSource: Equatable {
@@ -198,6 +235,10 @@ final class AppState: ObservableObject {
     @Published var dentalPreparationRunning = false
     @Published var dentalPreparationElapsed = "経過時間: 0秒"
     @Published var dentalPreparationMessage = "DentalSegmentatorのモデルを準備します。"
+    @Published var dentalPreparationFraction: Double?
+    @Published var dentalPreparationDetail = ""
+    @Published var pendingModelPreparationChoice: CreationChoice = .dentalSegmentatorExperimental
+    @Published var modelPreparationPurpose: ModelPreparationPurpose = .creationSelection
     private var dentalPreparationStartedAt: Date?
 
     @Published var inputURL: URL?
@@ -233,6 +274,9 @@ final class AppState: ObservableObject {
     @Published var progressText = "まだ実行していません。"
     @Published var runHeartbeatText = ""
     @Published var runProgressFraction: Double?
+    @Published var runStageEvent: RunStageEvent?
+    @Published var runStageProgress: RunLogProgress?
+    @Published var runStageStartedAt: Date?
     @Published var runElapsed = "経過時間: 0秒"
     @Published var isRunning = false
     @Published var stopRequested = false
@@ -245,6 +289,14 @@ final class AppState: ObservableObject {
     @Published var activeRunBackend: SegmentationBackend = .totalSegmentator
     @Published var activeRunMode: RunMode = .archPreview
     @Published var activeRunDevice = "mps"
+    @Published var primaryRunBackend: SegmentationBackend = .totalSegmentator
+    @Published var primaryRunMode: RunMode = .archPreview
+    @Published var activeResultFlavor: ResultOutputFlavor = .craniofacial
+    @Published var canRunToothSegRefine = false
+    @Published var teethDetected = false
+    @Published var refineAvailable = false
+    @Published var primaryRunTeethDetected = false
+    @Published var toothSegRefineFailed = false
     @Published var resultMessage = ""
     @Published var summaryText = ""
     @Published var dicomSummaryText = ""
@@ -267,6 +319,11 @@ final class AppState: ObservableObject {
     @Published var showingUpdateConfirmation = false
     @Published var updateCheckRunning = false
     @Published var updateInstallRunning = false
+    @Published private(set) var uiPreviewScenario = ""
+
+    var isUIPreviewMode: Bool {
+        !uiPreviewScenario.isEmpty
+    }
 
     var retryButtonTitle: String {
         resultKind == .dicomAudit ? "もう一度確認" : "もう一度実行"
@@ -305,7 +362,11 @@ final class AppState: ObservableObject {
     }
 
     var creationChoiceNeedsPreparation: Bool {
-        !isDentalSegmentatorModelReady
+        switch creationChoice {
+        case .dentalSegmentatorExperimental: return !isDentalSegmentatorModelReady
+        case .toothSegExperimental: return !isToothSegModelReady
+        default: return false
+        }
     }
 
     var canStartOwnDataRun: Bool {
@@ -325,11 +386,29 @@ final class AppState: ObservableObject {
         if activeRunBackend == .dentalSegmentator {
             return "DentalSegmentator（実験的）"
         }
+        if activeRunBackend == .toothSeg {
+            return "ToothSeg（個別歯・実験的）"
+        }
         return activeRunMode == .individualTeeth ? "TotalSegmentator（個別歯ベータ）" : "TotalSegmentator"
     }
 
+    var runWeightedProgress: RunWeightedProgress? {
+        guard let runStageEvent else { return nil }
+        return RunWeightedProgress.calculate(stage: runStageEvent, progress: runStageProgress)
+    }
+
+    var activeRunStageWeights: [Double] {
+        guard let route = runStageEvent?.route else { return [] }
+        return RunProgressProfile.profiles[route]?.weights ?? []
+    }
+
+    var runStageElapsedText: String {
+        guard let runStageStartedAt else { return "この工程の経過時間: 0秒" }
+        return "この工程の経過時間: \(formatCompactDuration(max(0, Int(Date().timeIntervalSince(runStageStartedAt)))))"
+    }
+
     var activeRunDeviceText: String {
-        activeRunBackend == .dentalSegmentator ? "mps（CPUへ自動切替しません）" : activeRunDevice
+        activeRunBackend == .totalSegmentator ? activeRunDevice : "mps（CPUへ自動切替しません）"
     }
 
     var canRunSelectedSettings: Bool {
@@ -343,18 +422,24 @@ final class AppState: ObservableObject {
         if segmentationBackend == .dentalSegmentator {
             return "DentalSegmentatorは実験的な追加機能です。"
         }
+        if segmentationBackend == .toothSeg {
+            return "ToothSegは実験的な追加機能です。"
+        }
         return ""
     }
 
     var runPreflightBlockingReason: String {
         if dentalPreparationRunning {
-            return "DentalSegmentatorの準備が終了するまでお待ちください。"
+            return "追加モデルの準備が終了するまでお待ちください。"
         }
         if segmentationBackend == .dentalSegmentator && runMode == .individualTeeth {
             return "DentalSegmentatorは歯列・顎骨の5ラベルpreview用です。個別歯ベータはTotalSegmentator backendを選んでください。"
         }
         if segmentationBackend == .dentalSegmentator && !isDentalSegmentatorModelReady {
             return "DentalSegmentatorの初回準備を完了してから実行してください。"
+        }
+        if segmentationBackend == .toothSeg && !isToothSegModelReady {
+            return "ToothSegの初回準備を完了してから実行してください。"
         }
         return ""
     }
@@ -381,6 +466,33 @@ final class AppState: ObservableObject {
         return "モデル未準備"
     }
 
+    var isToothSegModelReady: Bool {
+        guard let marker = readJSON(paths.toothsegReadyMarker) else {
+            return false
+        }
+        return marker["schema"] as? String == "totalsegmentator_wrapper_mac.toothseg_model_status.v1"
+            && marker["model_state"] as? String == "ready"
+            && marker["expected_md5"] as? String == toothsegExpectedMD5
+            && marker["pair_distributions_sha256"] as? String == toothsegPairDistributionsSHA256
+            && marker["semantic_mps_patch_size"] as? [Int] == toothsegSemanticMPSPatchSize
+            && FileManager.default.fileExists(atPath: paths.toothsegSemanticModel.path)
+            && FileManager.default.fileExists(atPath: paths.toothsegInstanceModel.path)
+            && FileManager.default.fileExists(atPath: paths.toothsegPairDistributions.path)
+    }
+
+    var toothSegModelStatusText: String {
+        if dentalPreparationRunning && pendingModelPreparationChoice == .toothSegExperimental {
+            return "モデル準備中"
+        }
+        return isToothSegModelReady ? "モデル準備済み" : "モデル未準備"
+    }
+
+    var toothSegModelDetailText: String {
+        isToothSegModelReady
+            ? paths.toothsegResults.path
+            : "ToothSegを初めて選んだときに追加モデルを準備します。"
+    }
+
     var dentalSegmentatorModelDetailText: String {
         if isDentalSegmentatorModelReady {
             return paths.dentalsegInstalledModel.path
@@ -392,12 +504,18 @@ final class AppState: ObservableObject {
         if segmentationBackend == .dentalSegmentator {
             return dentalSegmentatorModelStatusText
         }
+        if segmentationBackend == .toothSeg {
+            return toothSegModelStatusText
+        }
         return FileManager.default.fileExists(atPath: paths.totalsegBinary.path) ? "セットアップ済み" : "セットアップ未完了"
     }
 
     var selectedModelDetailText: String {
         if segmentationBackend == .dentalSegmentator {
             return dentalSegmentatorModelDetailText
+        }
+        if segmentationBackend == .toothSeg {
+            return toothSegModelDetailText
         }
         return "TotalSegmentatorモデルをApp Support配下から使います。"
     }
@@ -408,7 +526,8 @@ final class AppState: ObservableObject {
 
     var runReadinessItems: [RunReadinessItem] {
         let inputSelected = inputURL != nil && (inputSource == .sample || inputSource == .nifti)
-        let modelBlocked = segmentationBackend == .dentalSegmentator && !isDentalSegmentatorModelReady
+        let modelBlocked = (segmentationBackend == .dentalSegmentator && !isDentalSegmentatorModelReady)
+            || (segmentationBackend == .toothSeg && !isToothSegModelReady)
         let taskBlocked = segmentationBackend == .dentalSegmentator && runMode == .individualTeeth
         let deviceValue = "mps（固定）"
         return [
@@ -424,7 +543,7 @@ final class AppState: ObservableObject {
                 id: "backend",
                 title: "Backend",
                 value: segmentationBackend.rawValue,
-                detail: segmentationBackend == .dentalSegmentator ? "明示opt-inの実験的backendです。TotalSegmentatorの代替fallbackではありません。" : "既定のTotalSegmentator backendです。",
+                detail: segmentationBackend == .totalSegmentator ? "既定のTotalSegmentator backendです。" : "明示opt-inの実験的backendです。別モデルへ自動fallbackしません。",
                 systemImage: "switch.2",
                 state: "ok"
             ),
@@ -440,7 +559,7 @@ final class AppState: ObservableObject {
                 id: "device",
                 title: "Device",
                 value: deviceValue,
-                detail: segmentationBackend == .dentalSegmentator ? "MPS固定。CPUへ自動切替しません。" : "TotalSegmentatorへ渡す処理方法です。",
+                detail: segmentationBackend == .totalSegmentator ? "TotalSegmentatorへ渡す処理方法です。" : "MPS固定。CPUへ自動切替しません。",
                 systemImage: "cpu",
                 state: "ok"
             ),
@@ -477,7 +596,7 @@ final class AppState: ObservableObject {
                 id: "backend",
                 title: "Backend",
                 value: activeRunBackend.rawValue,
-                detail: activeRunBackend == .dentalSegmentator ? "MPSで実行中。CPUやTotalSegmentatorへ自動切替しません。" : "TotalSegmentator backendで実行中です。",
+                detail: activeRunBackend == .totalSegmentator ? "TotalSegmentator backendで実行中です。" : "MPSで実行中。CPUや別モデルへ自動切替しません。",
                 systemImage: "switch.2",
                 state: "ok"
             ),
@@ -520,10 +639,16 @@ final class AppState: ObservableObject {
         guard resultKind == .inference, let outputURL else {
             return []
         }
-        let labelmap = expectedResultLabelmapURL(caseDir: outputURL)
-        let preview = outputURL.appendingPathComponent("surface_preview/index.html")
-        let log = outputURL.appendingPathComponent("logs/run.log")
-        return [
+        let activeLabelmap = expectedResultLabelmapURL(caseDir: outputURL, flavor: activeResultFlavor)
+        let secondaryLabelmap = alternativeResultLabelmapURL(
+            caseDir: outputURL,
+            forFlavor: activeResultFlavor
+        )
+        let preview = expectedSurfacePreviewURL(caseDir: outputURL, flavor: activeResultFlavor)
+        let log = activeResultFlavor == .toothSeg
+            ? outputURL.appendingPathComponent("logs/toothseg_refine/run.log")
+            : outputURL.appendingPathComponent("logs/run.log")
+        var items: [RunLocationItem] = [
             RunLocationItem(
                 id: "output",
                 title: "結果フォルダ",
@@ -533,12 +658,12 @@ final class AppState: ObservableObject {
                 exists: FileManager.default.fileExists(atPath: outputURL.path)
             ),
             RunLocationItem(
-                id: "labelmap",
+                id: "active_labelmap",
                 title: "3D preview用labelmap",
-                path: labelmap.path,
-                detail: activeRunBackend == .dentalSegmentator ? "DentalSegmentatorの5ラベル出力です。" : "3D preview生成に使うlabelmapです。",
+                path: activeLabelmap.path,
+                detail: "現在表示対象: \(activeResultFlavor.title)",
                 systemImage: "square.stack.3d.up",
-                exists: FileManager.default.fileExists(atPath: labelmap.path)
+                exists: FileManager.default.fileExists(atPath: activeLabelmap.path)
             ),
             RunLocationItem(
                 id: "preview",
@@ -557,6 +682,19 @@ final class AppState: ObservableObject {
                 exists: FileManager.default.fileExists(atPath: log.path)
             ),
         ]
+        if let secondaryLabelmap {
+            items.append(
+                RunLocationItem(
+                    id: "alternative_labelmap",
+                    title: "代替labelmap",
+                    path: secondaryLabelmap.path,
+                    detail: secondaryResultLabelDescription(current: activeResultFlavor),
+                    systemImage: "square.stack.3d.up.fill",
+                    exists: FileManager.default.fileExists(atPath: secondaryLabelmap.path)
+                )
+            )
+        }
+        return items
     }
 
     var canRegenerateSurfacePreview: Bool {
@@ -565,6 +703,77 @@ final class AppState: ObservableObject {
 
     var canExportForSlicer: Bool {
         !isRunning && resultKind == .inference && outputURL != nil
+    }
+
+    var availableResultFlavors: [ResultOutputFlavor] {
+        guard let outputURL else { return [] }
+        var flavors: [ResultOutputFlavor] = [.craniofacial]
+        let craniofacial = expectedResultLabelmapURL(caseDir: outputURL, flavor: .craniofacial)
+        if FileManager.default.fileExists(atPath: craniofacial.path) {
+            if !flavors.contains(.craniofacial) { flavors.append(.craniofacial) }
+        } else {
+            flavors = flavors.filter { $0 != .craniofacial }
+        }
+        let toothSeg = expectedResultLabelmapURL(caseDir: outputURL, flavor: .toothSeg)
+        if FileManager.default.fileExists(atPath: toothSeg.path), !flavors.contains(.toothSeg) {
+            flavors.append(.toothSeg)
+        }
+        if flavors.isEmpty {
+            flavors = [.craniofacial]
+        }
+        return flavors
+    }
+
+    var canSwitchResultFlavor: Bool {
+        availableResultFlavors.count > 1
+    }
+
+    private func alternativeResultLabelmapURL(caseDir: URL, forFlavor flavor: ResultOutputFlavor) -> URL? {
+        let alternativeFlavor: ResultOutputFlavor = flavor == .craniofacial ? .toothSeg : .craniofacial
+        let candidate = expectedResultLabelmapURL(caseDir: caseDir, flavor: alternativeFlavor)
+        guard FileManager.default.fileExists(atPath: candidate.path) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private func secondaryResultLabelDescription(current: ResultOutputFlavor) -> String {
+        switch current {
+        case .craniofacial:
+            return "高精細ToothSeg（未表示）"
+        case .toothSeg:
+            return "歯列・顎骨"
+        }
+    }
+
+    var canShowToothSegRefine: Bool {
+        toothSegRefinePrerequisitesMet && !toothSegRefineFailed && !isToothSegRefineSuccessful
+    }
+
+    var canRunToothSegRefineAction: Bool {
+        canShowToothSegRefine
+    }
+
+    var canRetryToothSegRefine: Bool {
+        toothSegRefinePrerequisitesMet && toothSegRefineFailed
+    }
+
+    private var toothSegRefinePrerequisitesMet: Bool {
+        resultOutcome == .success && !isRunning && primaryRunBackend == .totalSegmentator && primaryRunTeethDetected
+    }
+
+    private var isToothSegRefineSuccessful: Bool {
+        guard !toothSegRefineFailed else { return false }
+        if isUIPreviewMode && activeResultFlavor == .toothSeg {
+            return true
+        }
+        guard let outputURL else { return false }
+        let labelmap = expectedResultLabelmapURL(caseDir: outputURL, flavor: .toothSeg)
+        return FileManager.default.fileExists(atPath: labelmap.path)
+    }
+
+    var isToothSegRefinePreparation: Bool {
+        modelPreparationPurpose == .toothSegRefine
     }
 
     var canUseSelectedDicomSeries: Bool {
@@ -623,7 +832,14 @@ final class AppState: ObservableObject {
         let reason = safeErrorReason.isEmpty ? "The requested operation did not complete." : safeErrorReason
         let code = safeErrorCode.isEmpty ? "operation_failed" : safeErrorCode
         let occurredAt = safeErrorOccurredAt.isEmpty ? ISO8601DateFormatter().string(from: Date()) : safeErrorOccurredAt
-        return "app_version=\(currentAppVersion())\nfeature=\(creationChoice.rawValue)\nmps_state=\(safeMPSState)\nreason=\(reason)\ntimestamp=\(occurredAt)\nerror_code=\(code)"
+        return "app_version=\(currentAppVersion())\nfeature=\(safeErrorFeatureText)\nmps_state=\(safeMPSState)\nreason=\(reason)\ntimestamp=\(occurredAt)\nerror_code=\(code)"
+    }
+
+    var safeErrorFeatureText: String {
+        if toothSegRefineFailed || safeErrorCode.hasPrefix("toothseg_") {
+            return "ToothSeg高精細化"
+        }
+        return creationChoice.rawValue
     }
 
     init(paths: AppPaths = .current()) {
@@ -640,6 +856,124 @@ final class AppState: ObservableObject {
         refreshLaunchState()
     }
 
+#if DEBUG
+    func applyUIPreview(arguments: [String] = CommandLine.arguments) {
+        guard let flagIndex = arguments.firstIndex(of: "--ui-preview"),
+              arguments.indices.contains(flagIndex + 1) else {
+            return
+        }
+        let scenario = arguments[flagIndex + 1]
+        let supported = [
+            "setup", "start", "input", "input-advanced", "input-comparison", "running",
+            "running-known", "running-unknown", "running-download", "running-stopped",
+            "ct-preview", "result", "result-toothseg", "result-toothseg-failure", "result-failure",
+        ]
+        guard supported.contains(scenario) else {
+            return
+        }
+
+        uiPreviewScenario = scenario
+        inputURL = paths.sampleInput
+        inputSource = .sample
+        creationChoice = .standardArchJaw
+        outputURL = paths.runs.appendingPathComponent("ui_preview_case", isDirectory: true)
+        statusText = "UIプレビュー"
+        progressText = "画面確認用の表示です。処理は実行しません。"
+        resultKind = .none
+        resultOutcome = .none
+        isRunning = false
+        runProgressFraction = nil
+        failureReasonText = ""
+        primaryRunBackend = .totalSegmentator
+        primaryRunMode = .archPreview
+        primaryRunTeethDetected = false
+        canRunToothSegRefine = false
+        activeResultFlavor = .craniofacial
+
+        switch scenario {
+        case "setup":
+            screen = .setup
+            selectedStep = 0
+            setupMessage = "このMacに必要な機能を準備します。"
+        case "start":
+            screen = .start
+            selectedStep = 0
+        case "input", "input-advanced", "input-comparison":
+            screen = .inputAndCreation
+            selectedStep = 1
+            statusText = "プレビュー作成準備完了"
+            if scenario == "input-advanced" {
+                creationChoice = .individualTeethBeta
+            }
+        case "running", "running-known", "running-unknown", "running-download", "running-stopped":
+            screen = .running
+            selectedStep = 2
+            isRunning = true
+            statusText = "歯列・顎骨を作成中"
+            progressText = "TotalSegmentatorでCTデータを処理しています。"
+            runElapsed = "経過時間: 11分42秒"
+            runStageStartedAt = Date().addingTimeInterval(-161)
+            if scenario == "running-known" {
+                activeRunBackend = .toothSeg
+                runStageEvent = RunStageEvent(
+                    route: "toothseg_refine", stageID: "instance", index: 3,
+                    total: 5, label: "ToothSeg instance枝"
+                )
+                runStageProgress = RunLogProgress(
+                    step: 40, total: 80, percent: 50, stage: "ToothSeg instance",
+                    etaSeconds: 613, route: "toothseg_refine", stageID: "instance", scope: "stage"
+                )
+                runHeartbeatText = "進捗ログを受信しました。"
+            } else {
+                runStageEvent = RunStageEvent(
+                    route: "totalsegmentator", stageID: "segment", index: 2,
+                    total: 4, label: "顎顔面を抽出中"
+                )
+                if scenario == "running-download" {
+                    runStageProgress = RunLogProgress(
+                        step: 58, total: 100, percent: 58, stage: "Downloading weights",
+                        etaSeconds: 60, route: "totalsegmentator", stageID: "segment", scope: "subtask"
+                    )
+                }
+                runHeartbeatText = scenario == "running-stopped"
+                    ? "最終更新: 48秒前。大きなデータではこの待ち時間が発生します。"
+                    : "処理を継続しています。"
+                stopRequested = scenario == "running-stopped"
+            }
+        case "ct-preview":
+            screen = .ctPreview
+            selectedStep = 1
+            statusText = "CT画像を確認"
+        case "result", "result-toothseg", "result-toothseg-failure":
+            screen = .result
+            selectedStep = 3
+            resultKind = .inference
+            resultOutcome = .success
+            resultMessage = "3Dプレビューを作成しました"
+            statusText = "作成完了"
+            primaryRunTeethDetected = true
+            canRunToothSegRefine = true
+            if scenario == "result-toothseg" {
+                activeResultFlavor = .toothSeg
+            } else if scenario == "result-toothseg-failure" {
+                toothSegRefineFailed = true
+                failureReasonText = "MPSメモリ不足（Out Of Memory）で失敗しました。他のアプリを終了するかMacを再起動してから再試行してください。"
+                statusText = "高精細化を完了できませんでした"
+                resultMessage = "ToothSeg高精細化に失敗しました"
+            }
+        case "result-failure":
+            screen = .result
+            selectedStep = 3
+            resultKind = .inference
+            resultOutcome = .failure
+            statusText = "処理を完了できませんでした"
+            failureReasonText = "MPSのメモリが不足しました。入力データは変更されていません。"
+        default:
+            break
+        }
+    }
+#endif
+
     deinit {
         logTimer?.invalidate()
         dentalPreparationTimer?.invalidate()
@@ -649,9 +983,11 @@ final class AppState: ObservableObject {
         let defaults = UserDefaults.standard
         if let rawChoice = defaults.string(forKey: UserSettingKey.creationChoice),
            let restoredChoice = CreationChoice(rawValue: rawChoice) {
-            creationChoice = restoredChoice
+            creationChoice = restoredChoice == .toothSegExperimental ? .standardArchJaw : restoredChoice
         } else if defaults.string(forKey: UserSettingKey.segmentationBackend) == SegmentationBackend.dentalSegmentator.rawValue {
             creationChoice = .dentalSegmentatorExperimental
+        } else if defaults.string(forKey: UserSettingKey.segmentationBackend) == SegmentationBackend.toothSeg.rawValue {
+            creationChoice = .standardArchJaw
         } else if defaults.string(forKey: UserSettingKey.runMode) == RunMode.individualTeeth.rawValue {
             creationChoice = .individualTeethBeta
         } else {
@@ -670,6 +1006,7 @@ final class AppState: ObservableObject {
     }
 
     private func saveUserSettings() {
+        guard !isUIPreviewMode else { return }
         let defaults = UserDefaults.standard
         defaults.set(creationChoice.rawValue, forKey: UserSettingKey.creationChoice)
         defaults.set(runMode.rawValue, forKey: UserSettingKey.runMode)
@@ -692,7 +1029,7 @@ final class AppState: ObservableObject {
             screen = .start
             selectedStep = 0
             setupError = ""
-            setupMessage = "このアプリを使う準備は完了しています。DentalSegmentatorは初めて選んだときに準備します。"
+            setupMessage = "このアプリを使う準備は完了しています。追加モデルは初めて選んだときに準備します。"
         } else if status.action == "resync_wheel" {
             screen = .setup
             setupMessage = "アプリ更新の反映が必要です。準備を始めるまで通信しません。"
@@ -831,11 +1168,33 @@ final class AppState: ObservableObject {
     }
 
     func requestCreationChoice(_ choice: CreationChoice) {
-        guard choice == .dentalSegmentatorExperimental, !isDentalSegmentatorModelReady else {
+        let requiresPreparation = (choice == .dentalSegmentatorExperimental && !isDentalSegmentatorModelReady)
+            || (choice == .toothSegExperimental && !isToothSegModelReady)
+        guard requiresPreparation else {
             creationChoice = choice
             return
         }
+        modelPreparationPurpose = .creationSelection
+        pendingModelPreparationChoice = choice
         showDentalPreparationConfirmation = true
+    }
+
+    func requestToothSegRefine() {
+        guard canShowToothSegRefine || canRetryToothSegRefine else { return }
+        if isToothSegModelReady {
+            startToothSegRefineRun()
+            return
+        }
+        modelPreparationPurpose = .toothSegRefine
+        pendingModelPreparationChoice = .toothSegExperimental
+        showDentalPreparationConfirmation = true
+    }
+
+    func cancelModelPreparationConfirmation() {
+        showDentalPreparationConfirmation = false
+        if modelPreparationPurpose == .creationSelection {
+            creationChoice = .standardArchJaw
+        }
     }
 
     func confirmDentalPreparation() {
@@ -844,7 +1203,11 @@ final class AppState: ObservableObject {
         dentalPreparationRunning = true
         dentalPreparationStartedAt = Date()
         dentalPreparationElapsed = formatElapsed(0)
-        dentalPreparationMessage = "DentalSegmentatorのモデルを準備しています。"
+        dentalPreparationFraction = nil
+        dentalPreparationDetail = ""
+        let pendingChoice = pendingModelPreparationChoice
+        let modelName = pendingChoice == .toothSegExperimental ? "ToothSeg" : "DentalSegmentator"
+        dentalPreparationMessage = "\(modelName)のモデルを準備しています。"
         dentalPreparationCancellationRequested = false
         dentalPreparationRunner.resetTerminationRequest()
         startDentalPreparationTimer()
@@ -852,10 +1215,18 @@ final class AppState: ObservableObject {
         let runner = dentalPreparationRunner
         let python = paths.venvPython
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let statusCommand = CommandBuilder.dentalsegStatusCommand(python: python, paths: self?.paths ?? AppPaths.current())
+            let activePaths = self?.paths ?? AppPaths.current()
+            let statusCommand = pendingChoice == .toothSegExperimental
+                ? CommandBuilder.toothsegStatusCommand(python: python, paths: activePaths)
+                : CommandBuilder.dentalsegStatusCommand(python: python, paths: activePaths)
             _ = runner.run(statusCommand, environment: environment, logURL: nil)
-            let prepareCommand = CommandBuilder.dentalsegPrepareCommand(python: python, paths: self?.paths ?? AppPaths.current())
-            let rc = runner.run(prepareCommand, environment: environment, logURL: self?.paths.dentalsegPrepareLog)
+            let prepareCommand = pendingChoice == .toothSegExperimental
+                ? CommandBuilder.toothsegPrepareCommand(python: python, paths: activePaths)
+                : CommandBuilder.dentalsegPrepareCommand(python: python, paths: activePaths)
+            let preparationLog = pendingChoice == .toothSegExperimental
+                ? self?.paths.toothsegPrepareLog
+                : self?.paths.dentalsegPrepareLog
+            let rc = runner.run(prepareCommand, environment: environment, logURL: preparationLog)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.dentalPreparationRunning = false
@@ -865,16 +1236,54 @@ final class AppState: ObservableObject {
                 if self.dentalPreparationCancellationRequested {
                     self.dentalPreparationCancellationRequested = false
                     self.dentalPreparationMessage = "モデル準備をキャンセルしました。"
-                    self.creationChoice = .standardArchJaw
+                    if self.modelPreparationPurpose == .creationSelection {
+                        self.creationChoice = .standardArchJaw
+                    } else {
+                        self.resultOutcome = .success
+                        self.statusText = "ToothSegモデル準備をキャンセルしました"
+                        self.progressText = "元の歯列・顎骨結果は引き続き利用できます。"
+                    }
                     return
                 }
-                let result = readJSON(self.paths.dentalsegPrepareResultJSON)
-                if rc == 0 && result?["model_state"] as? String == "ready" && self.isDentalSegmentatorModelReady {
-                    self.creationChoice = .dentalSegmentatorExperimental
-                    self.dentalPreparationMessage = "DentalSegmentatorのモデルを準備しました。"
+                let resultURL = pendingChoice == .toothSegExperimental
+                    ? self.paths.toothsegPrepareResultJSON
+                    : self.paths.dentalsegPrepareResultJSON
+                let result = readJSON(resultURL)
+                let modelReady = pendingChoice == .toothSegExperimental
+                    ? self.isToothSegModelReady
+                    : self.isDentalSegmentatorModelReady
+                if rc == 0 && result?["model_state"] as? String == "ready" && modelReady {
+                    self.dentalPreparationMessage = "\(modelName)のモデルを準備しました。"
+                    self.dentalPreparationFraction = 1.0
+                    self.dentalPreparationDetail = ""
+                    if self.modelPreparationPurpose == .creationSelection {
+                        self.creationChoice = pendingChoice
+                    } else {
+                        self.resultOutcome = .success
+                        self.toothSegRefineFailed = false
+                        self.failureReasonText = ""
+                        self.statusText = "ToothSegモデル準備完了"
+                        self.progressText = "結果画面のボタンをもう一度押すと高精細歯分割を開始します。"
+                        self.resultMessage = "元の歯列・顎骨結果は引き続き利用できます"
+                    }
                 } else {
-                    self.dentalPreparationMessage = "モデルを準備できませんでした。標準の選択に戻します。"
-                    self.creationChoice = .standardArchJaw
+                    if self.modelPreparationPurpose == .creationSelection {
+                        self.dentalPreparationMessage = "モデルを準備できませんでした。標準の選択に戻します。"
+                        self.creationChoice = .standardArchJaw
+                    } else {
+                        self.dentalPreparationMessage = "ToothSegモデルを準備できませんでした。"
+                        self.resultOutcome = .success
+                        self.toothSegRefineFailed = true
+                        self.failureReasonText = "ToothSegモデルのダウンロードまたは検証に失敗しました。ネットワーク状態を確認して再試行してください。"
+                        self.statusText = "ToothSegモデルを準備できませんでした"
+                        self.progressText = "元の歯列・顎骨結果は引き続き利用できます。"
+                        self.resultMessage = "ToothSegモデル準備に失敗しました"
+                        self.setSafeError(
+                            code: "toothseg_model_preparation_failed",
+                            reason: "The ToothSeg model download or validation did not complete.",
+                            mpsState: "unknown"
+                        )
+                    }
                 }
             }
         }
@@ -883,7 +1292,9 @@ final class AppState: ObservableObject {
     func cancelDentalPreparation() {
         guard dentalPreparationRunning else {
             showDentalPreparationSheet = false
-            creationChoice = .standardArchJaw
+            if modelPreparationPurpose == .creationSelection {
+                creationChoice = .standardArchJaw
+            }
             return
         }
         dentalPreparationCancellationRequested = true
@@ -891,8 +1302,15 @@ final class AppState: ObservableObject {
         dentalPreparationTimer?.invalidate()
         dentalPreparationTimer = nil
         dentalPreparationMessage = "モデル準備を終了しています。"
+        dentalPreparationFraction = nil
         showDentalPreparationSheet = false
-        creationChoice = .standardArchJaw
+        if modelPreparationPurpose == .creationSelection {
+            creationChoice = .standardArchJaw
+        } else {
+            resultOutcome = .success
+            statusText = "ToothSegモデル準備をキャンセルしました"
+            progressText = "元の歯列・顎骨結果は引き続き利用できます。"
+        }
     }
 
     private func startDentalPreparationTimer() {
@@ -900,6 +1318,13 @@ final class AppState: ObservableObject {
         dentalPreparationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, let started = self.dentalPreparationStartedAt else { return }
             self.dentalPreparationElapsed = formatElapsed(Date().timeIntervalSince(started))
+            if self.pendingModelPreparationChoice == .toothSegExperimental,
+               let snapshot = readLogTail(self.paths.toothsegPrepareLog, maxBytes: LOG_TAIL_BYTES),
+               let progress = toothSegPreparationProgressFromLog(snapshot.text) {
+                self.dentalPreparationFraction = progress.fraction
+                self.dentalPreparationMessage = progress.message
+                self.dentalPreparationDetail = progress.detailText
+            }
         }
     }
 
@@ -956,6 +1381,7 @@ final class AppState: ObservableObject {
         statusText = "CT確認中"
         progressText = "撮影データの種類を確認しています。プレビュー作成はまだ開始していません。"
         resetRunProgressTracking()
+        beginStructuredRunProgress(route: progressRoute(backend: segmentationBackend, mode: runMode))
         runProgressFraction = nil
         isRunning = true
         stopRequested = false
@@ -1277,17 +1703,23 @@ final class AppState: ObservableObject {
         safeErrorReason = ""
         safeMPSState = "unknown"
         safeErrorOccurredAt = ""
+        toothSegRefineFailed = false
         resultKind = .inference
         resultOutcome = .none
         surfacePreviewFailed = false
         activeRunBackend = segmentationBackend
         activeRunMode = runMode
         activeRunDevice = effectiveRunDevice
+        primaryRunBackend = segmentationBackend
+        primaryRunMode = runMode
+        activeResultFlavor = segmentationBackend == .toothSeg ? .toothSeg : .craniofacial
         statusText = segmentationBackend == .dentalSegmentator
             ? "DentalSegmentatorで3Dプレビューを作成中"
-            : "3Dプレビューを作成中"
+            : (segmentationBackend == .toothSeg ? "ToothSegで個別歯を作成中" : "3Dプレビューを作成中")
         if segmentationBackend == .dentalSegmentator {
             progressText = "CTデータを処理しています。"
+        } else if segmentationBackend == .toothSeg {
+            progressText = "歯列ROIを抽出し、0.3 mmと0.2 mmの両branchで歯を1本ずつ分けています。"
         } else {
             progressText = runMode == .individualTeeth ? "歯を1本ずつ分けています。" : "CTデータを処理しています。"
         }
@@ -1318,6 +1750,7 @@ final class AppState: ObservableObject {
         let modeForRun = runMode
         let backendForRun = segmentationBackend
         let deviceForRun = effectiveRunDevice
+        let smoothSurfacesForRun = higherOrderResampling
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc = runner.run(command, environment: environment, logURL: appRunLogURL)
@@ -1330,15 +1763,28 @@ final class AppState: ObservableObject {
                 : appRunLogURL
             var surfacePreviewRC: Int32? = nil
             if rc == 0 && self?.stopRequested != true {
-                let previewLabel = backendForRun == .dentalSegmentator ? "DentalSegmentator" : (modeForRun == .individualTeeth ? "個別歯" : "歯列・顎骨")
-                DispatchQueue.main.async {
+                let previewLabel = backendForRun == .dentalSegmentator ? "DentalSegmentator" : (backendForRun == .toothSeg ? "ToothSeg個別歯" : (modeForRun == .individualTeeth ? "個別歯" : "歯列・顎骨"))
+                let previewLabelmap = self?.expectedResultLabelmapURL(
+                    caseDir: output,
+                    flavor: backendForRun == .toothSeg ? .toothSeg : .craniofacial
+                )
+                DispatchQueue.main.sync {
+                    self?.advanceStructuredRunToPreview(logURLs: [appRunLogURL, caseLogURL])
                     self?.statusText = "3Dプレビュー作成中"
                     self?.progressText = "ブラウザで開ける\(previewLabel)3Dプレビューを作成しています。"
                     self?.runProgressFraction = nil
                     self?.runHeartbeatText = "STLとHTML viewerを生成しています。数十秒かかることがあります。"
                 }
+                let sourceLabelmap = previewLabelmap.flatMap {
+                    FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+                }
                 surfacePreviewRC = runner.run(
-                    CommandBuilder.surfacePreviewCommand(python: venvPython, caseDir: output),
+                    CommandBuilder.surfacePreviewCommand(
+                        python: venvPython,
+                        caseDir: output,
+                        sourceInput: sourceLabelmap,
+                        smoothSurfaces: smoothSurfacesForRun
+                    ),
                     environment: environment,
                     logURL: caseLogURL
                 )
@@ -1365,10 +1811,16 @@ final class AppState: ObservableObject {
                 self?.activeRunBackend = backendForRun
                 self?.activeRunMode = modeForRun
                 self?.activeRunDevice = deviceForRun
+                self?.activeResultFlavor = backendForRun == .toothSeg ? .toothSeg : .craniofacial
+                self?.primaryRunBackend = backendForRun
+                self?.primaryRunMode = modeForRun
                 self?.loadSafeRunResult()
-                if rc == 0 && !stopped {
-                    self?.runProgressFraction = 1.0
-                }
+                self?.primaryRunTeethDetected = self?.primaryRunBackend == .totalSegmentator
+                    ? (self?.teethDetected == true)
+                    : false
+                self?.canRunToothSegRefine = self?.primaryRunBackend == .totalSegmentator ? (self?.primaryRunTeethDetected == true) : false
+                self?.toothSegRefineFailed = false
+                self?.normalizeActiveResultFlavor()
                 self?.screen = .result
                 self?.selectedStep = 3
                 if stopped {
@@ -1379,6 +1831,7 @@ final class AppState: ObservableObject {
                     self?.progressText = "処理を停止しました。入力は変更されていません。"
                     self?.resultMessage = "3Dプレビューを作成できませんでした"
                 } else if rc == 0 && surfacePreviewRC == 0 {
+                    self?.runProgressFraction = 1.0
                     self?.resultOutcome = .success
                     self?.failureReasonText = ""
                     self?.statusText = "完了"
@@ -1415,12 +1868,225 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func loadSafeRunResult() {
-        guard let payload = readJSON(paths.runResultJSON) else { return }
+    func startToothSegRefineRun() {
+        guard let inputURL else {
+            statusText = "入力を確認してください。"
+            return
+        }
+        guard let outputURL else {
+            statusText = "結果フォルダが見つかりません。"
+            return
+        }
+        guard !isRunning else {
+            return
+        }
+        guard primaryRunBackend == .totalSegmentator else {
+            failureReasonText = "高精細化はTotalSegmentatorの初回出力時のみ使用できます。"
+            statusText = "対象外"
+            progressText = failureReasonText
+            resultOutcome = .failure
+            return
+        }
+        guard primaryRunTeethDetected else {
+            failureReasonText = "初回の歯抽出結果がありません。"
+            statusText = "高精細化を開始できません"
+            progressText = "初回結果に歯が含まれないため、ToothSeg高精細化は不要です。"
+            resultOutcome = .failure
+            return
+        }
+        guard isToothSegModelReady else {
+            requestToothSegRefine()
+            return
+        }
+        let refineDiagnosticsURL = outputURL.appendingPathComponent("logs/toothseg_refine", isDirectory: true)
+        let refineLogURL = refineDiagnosticsURL.appendingPathComponent("process.log")
+        let refineResultURL = refineDiagnosticsURL.appendingPathComponent("result.json")
+        try? FileManager.default.removeItem(at: refineResultURL)
+        logText = ""
+        summaryText = ""
+        resultMessage = ""
+        failureReasonText = ""
+        safeErrorCode = ""
+        safeErrorReason = ""
+        safeMPSState = "unknown"
+        safeErrorOccurredAt = ""
+        toothSegRefineFailed = false
+        resultKind = .inference
+        activeRunBackend = .toothSeg
+        activeRunMode = .individualTeeth
+        activeRunDevice = "mps"
+        activeResultFlavor = .toothSeg
+        statusText = "ToothSeg（高精細歯分割）を実行中"
+        progressText = "歯を個別化してFDI番号付きの高精細ラベルマップを生成しています。"
+        resetRunProgressTracking()
+        beginStructuredRunProgress(route: "toothseg_refine")
+        runProgressFraction = nil
+        isRunning = true
+        stopRequested = false
+        screen = .running
+        selectedStep = 2
+        activeLogURL = refineLogURL
+        resultLogURL = nil
+        runner.resetTerminationRequest()
+        startRunTimer()
+
+        let command = CommandBuilder.toothSegRefineCommand(
+            python: paths.venvPython,
+            input: inputURL,
+            output: outputURL,
+            craniofacialCase: outputURL,
+            paths: paths
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let runner = self.runner
+        let venvPython = paths.venvPython
+        let outputForRefine = outputURL
+        let previewOutput = expectedSurfacePreviewOutputURL(
+            caseDir: outputURL,
+            flavor: .toothSeg
+        )
+        let smoothSurfacesForRun = higherOrderResampling
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: refineLogURL)
+            let previewInput = outputForRefine
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("toothseg", isDirectory: true)
+                .appendingPathComponent("toothseg_fdi_multilabel.nii.gz")
+            let previewLog = outputForRefine.appendingPathComponent("logs/toothseg_refine/preview.log")
+            let stoppedBeforePreview = runner.isTerminationRequested || self?.stopRequested == true
+            var surfacePreviewRC: Int32? = nil
+            if rc == 0 && !stoppedBeforePreview {
+                DispatchQueue.main.sync {
+                    self?.advanceStructuredRunToPreview(logURLs: [refineLogURL, previewLog])
+                }
+                let hasPreviewInput = FileManager.default.fileExists(atPath: previewInput.path)
+                surfacePreviewRC = runner.run(
+                    CommandBuilder.surfacePreviewCommand(
+                        python: venvPython,
+                        caseDir: outputForRefine,
+                        sourceInput: hasPreviewInput ? previewInput : nil,
+                        outputDir: previewOutput,
+                        smoothSurfaces: smoothSurfacesForRun
+                    ),
+                    environment: environment,
+                    logURL: previewLog
+                )
+            }
+            let summaryCommand = CommandBuilder.summaryCommand(python: venvPython, caseDir: outputForRefine)
+            let stoppedBeforeSummary = runner.isTerminationRequested || self?.stopRequested == true
+            let summary = stoppedBeforeSummary
+                ? ""
+                : runner.runCapturing(summaryCommand, environment: environment, logURL: nil).1
+            DispatchQueue.main.async {
+                let stopped = self?.stopRequested == true
+                self?.isRunning = false
+                self?.stopRequested = false
+                self?.refreshLog(from: refineLogURL)
+                self?.activeLogURL = nil
+                self?.resultLogURL = refineLogURL
+                self?.runHeartbeatText = ""
+                self?.screen = .result
+                self?.selectedStep = 3
+                self?.summaryText = summary
+                self?.loadSafeRunResult(from: refineResultURL, treatAsPrimaryResult: false)
+                if stopped {
+                    self?.resultOutcome = .success
+                    self?.toothSegRefineFailed = true
+                    self?.activeResultFlavor = .craniofacial
+                    self?.setSafeError(code: "toothseg_refine_cancelled", reason: "The ToothSeg high-resolution run was cancelled.", mpsState: "unknown")
+                    self?.failureReasonText = "高精細化を停止しました。"
+                    self?.statusText = "停止しました"
+                    self?.progressText = "高精細化を停止しました。元の歯列・顎骨結果は引き続き利用できます。"
+                    self?.resultMessage = "高精細化は停止しました"
+                } else if rc == 0 {
+                    self?.activeResultFlavor = .toothSeg
+                    self?.toothSegRefineFailed = false
+                    if surfacePreviewRC == 0 {
+                        self?.runProgressFraction = 1.0
+                        self?.resultOutcome = .success
+                        self?.surfacePreviewFailed = false
+                        self?.failureReasonText = ""
+                        self?.statusText = "高精細化が完了"
+                        self?.progressText = "高精細化ラベルマップと3D previewが生成されました。"
+                        self?.resultMessage = "ToothSeg高精細化を作成しました"
+                    } else {
+                        self?.resultOutcome = .success
+                        self?.surfacePreviewFailed = true
+                        self?.setSafeError(code: "preview_generation_failed", reason: "The 3D preview could not be generated.", mpsState: "validated")
+                        let reason = runFailureReason(from: previewLog)
+                        self?.failureReasonText = reason.isEmpty ? "3D preview生成が完了できませんでした。詳細ログを確認してください。" : reason
+                        self?.statusText = "高精細化は完了（3D preview未作成）"
+                        self?.progressText = "高精細化の結果は保存されています。"
+                        self?.resultMessage = "ToothSeg高精細化は完了しましたが、3D previewの再生成に失敗しました"
+                    }
+                    self?.canRunToothSegRefine = false
+                } else {
+                    self?.resultOutcome = .success
+                    self?.toothSegRefineFailed = true
+                    self?.activeResultFlavor = .craniofacial
+                    if self?.safeErrorCode.isEmpty ?? true {
+                        self?.setSafeError(
+                            code: "toothseg_refine_failed",
+                            reason: "The high-resolution ToothSeg refinement did not complete.",
+                            mpsState: "validated"
+                        )
+                    }
+                    let reason = self?.toothSegRefineFailureReason(from: refineLogURL) ?? ""
+                    self?.failureReasonText = reason.isEmpty ? "ToothSeg高精細化を完了できませんでした。" : reason
+                    self?.statusText = "高精細化を完了できませんでした"
+                    self?.progressText = "原因を確認して高精細化を再実行してください。"
+                    self?.resultMessage = "ToothSeg高精細化に失敗しました"
+                }
+            }
+        }
+    }
+
+    private func loadSafeRunResult(from resultURL: URL? = nil, treatAsPrimaryResult: Bool = true) {
+        guard let payload = readJSON(resultURL ?? paths.runResultJSON) else { return }
         safeErrorCode = payload["error_code"] as? String ?? ""
         safeErrorReason = payload["safe_reason"] as? String ?? ""
         safeMPSState = payload["mps_state"] as? String ?? "unknown"
         safeErrorOccurredAt = payload["occurred_at"] as? String ?? ""
+        let detected = payload["teeth_detected"] as? Bool ?? false
+        teethDetected = detected
+        refineAvailable = payload["refine_available"] as? Bool ?? detected
+        if treatAsPrimaryResult {
+            primaryRunTeethDetected = detected
+        }
+    }
+
+    private func toothSegRefineFailureReason(from logURL: URL) -> String {
+        switch safeErrorCode {
+        case "toothseg_mps_oom":
+            return "MPSメモリ不足（Out Of Memory）で失敗しました。他のアプリを終了するかMacを再起動してから再試行してください。CTの範囲によっては、このMacでは高精細化を実行できない場合があります。"
+        case "toothseg_input_invalid":
+            return "元の歯列結果から有効な高精細化範囲を作成できませんでした。通常の歯列・顎骨結果は引き続き利用できます。"
+        case "toothseg_download_failed", "toothseg_model_preparation_failed":
+            return "ToothSegモデルの取得に失敗しました。ネットワーク状態を確認して再試行してください。"
+        default:
+            return runFailureReason(from: logURL)
+        }
+    }
+
+    private func normalizeActiveResultFlavor() {
+        let flavors = availableResultFlavors
+        if flavors.isEmpty {
+            activeResultFlavor = .craniofacial
+            return
+        }
+        if !flavors.contains(activeResultFlavor) {
+            activeResultFlavor = flavors.first ?? .craniofacial
+        }
+    }
+
+    private func setResultFlavor(_ flavor: ResultOutputFlavor) {
+        guard availableResultFlavors.contains(flavor) else { return }
+        activeResultFlavor = flavor
+    }
+
+    func setActiveResultFlavor(_ flavor: ResultOutputFlavor) {
+        setResultFlavor(flavor)
     }
 
     private func setSafeError(code: String, reason: String, mpsState: String) {
@@ -1605,7 +2271,12 @@ final class AppState: ObservableObject {
     }
 
     func openResultPreview() {
-        guard let outputURL, let preview = caseSurfacePreview(outputURL) else {
+        guard let outputURL else {
+            resultMessage = "3DプレビューHTMLが見つかりません。"
+            return
+        }
+        let preview = expectedSurfacePreviewURL(caseDir: outputURL, flavor: activeResultFlavor)
+        guard FileManager.default.fileExists(atPath: preview.path) else {
             resultMessage = "3DプレビューHTMLが見つかりません。"
             return
         }
@@ -1623,11 +2294,11 @@ final class AppState: ObservableObject {
             return
         }
         let logURL = outputURL.appendingPathComponent("logs/run.log")
-        resultKind = .inference
-        resultOutcome = .none
-        failureReasonText = ""
-        statusText = "3Dプレビュー作成中"
-        progressText = "labelmap作成は再実行せず、3Dプレビューだけ作成しています。"
+            resultKind = .inference
+            resultOutcome = .none
+            failureReasonText = ""
+            statusText = "3Dプレビュー作成中"
+            progressText = "labelmap作成は再実行せず、3Dプレビューだけ作成しています。"
         runHeartbeatText = "3D表示用ファイルを作成しています。"
         runProgressFraction = nil
         isRunning = true
@@ -1639,7 +2310,18 @@ final class AppState: ObservableObject {
         runner.resetTerminationRequest()
         startRunTimer()
 
-        let command = CommandBuilder.surfacePreviewCommand(python: paths.venvPython, caseDir: outputURL)
+        let sourceInput = expectedResultLabelmapURL(caseDir: outputURL, flavor: activeResultFlavor)
+        let previewOutput = expectedSurfacePreviewOutputURL(
+            caseDir: outputURL,
+            flavor: activeResultFlavor
+        )
+        let command = CommandBuilder.surfacePreviewCommand(
+            python: paths.venvPython,
+            caseDir: outputURL,
+            sourceInput: sourceInput,
+            outputDir: previewOutput,
+            smoothSurfaces: higherOrderResampling
+        )
         let summaryCommand = CommandBuilder.summaryCommand(python: paths.venvPython, caseDir: outputURL)
         let environment = CommandBuilder.launchEnvironment(paths: paths)
         let runner = self.runner
@@ -1746,7 +2428,7 @@ final class AppState: ObservableObject {
             updateMessage = "更新確認URLは設定されていません。"
             return
         }
-        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.1.2"
+        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.0"
         let allowedHosts = (manifest["update_allowed_hosts"] as? [String]) ?? []
         let updateJSON = paths.logs.appendingPathComponent("update_check.json")
         updateCheckRunning = true
@@ -1891,7 +2573,23 @@ final class AppState: ObservableObject {
                 logInfoText = "詳細ログは最後の一部だけ表示します。全文はログファイルで確認できます。"
             }
         }
-        if let progress = runProgressFromLog(text) {
+        let executionState = runExecutionStateFromLog(text)
+        let resolvedStage = executionState.stage
+            ?? executionState.progress.flatMap(inferredRunStage(from:))
+        if let stage = resolvedStage {
+            if runStageEvent?.signature != stage.signature {
+                runStageEvent = stage
+                runStageProgress = nil
+                runStageStartedAt = Date()
+            }
+            runStageProgress = executionState.progress
+            let signature = stage.signature + "|" + (executionState.progress?.signature ?? "")
+            if signature != lastRunProgressSignature {
+                lastRunProgressSignature = signature
+                lastRunProgressAt = Date()
+            }
+            runProgressFraction = runWeightedProgress?.estimate
+        } else if let progress = executionState.progress {
             let signature = progress.signature
             if signature != lastRunProgressSignature {
                 lastRunProgressSignature = signature
@@ -1928,23 +2626,98 @@ final class AppState: ObservableObject {
         startLogTimer()
     }
 
-    private func expectedResultLabelmapURL(caseDir: URL) -> URL {
-        if activeRunBackend == .dentalSegmentator {
+    private func expectedResultLabelmapURL(
+        caseDir: URL,
+        flavor: ResultOutputFlavor = .craniofacial
+    ) -> URL {
+        switch flavor {
+        case .craniofacial:
+            if activeRunBackend == .dentalSegmentator {
+                return caseDir
+                    .appendingPathComponent("segmentations", isDirectory: true)
+                    .appendingPathComponent("dentalsegmentator", isDirectory: true)
+                    .appendingPathComponent("dentalsegmentator_multilabel.nii.gz")
+            }
+            return caseDir
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("derived", isDirectory: true)
+                .appendingPathComponent("craniofacial_arch_jaw_multilabel.nii.gz")
+        case .toothSeg:
+            return caseDir
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("toothseg", isDirectory: true)
+                .appendingPathComponent("toothseg_fdi_multilabel.nii.gz")
+        }
+    }
+
+    private func expectedSurfacePreviewOutputURL(
+        caseDir: URL,
+        flavor: ResultOutputFlavor
+    ) -> URL {
+        switch flavor {
+        case .craniofacial:
+            return caseDir.appendingPathComponent("surface_preview", isDirectory: true)
+        case .toothSeg:
+            return caseDir.appendingPathComponent("surface_preview/toothseg", isDirectory: true)
+        }
+    }
+
+    private func expectedSurfacePreviewURL(
+        caseDir: URL,
+        flavor: ResultOutputFlavor
+    ) -> URL {
+        let preferred = expectedSurfacePreviewOutputURL(caseDir: caseDir, flavor: flavor)
+            .appendingPathComponent("index.html")
+        if FileManager.default.fileExists(atPath: preferred.path) {
+            return preferred
+        }
+        if flavor == .toothSeg {
+            let legacy = caseDir.appendingPathComponent("surface_preview/index.html")
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                return legacy
+            }
+        }
+        return preferred
+    }
+
+    private func primaryResultLabelmapURL(
+        caseDir: URL,
+        backend: SegmentationBackend,
+        runMode: RunMode
+    ) -> URL {
+        if backend == .dentalSegmentator {
             return caseDir
                 .appendingPathComponent("segmentations", isDirectory: true)
                 .appendingPathComponent("dentalsegmentator", isDirectory: true)
                 .appendingPathComponent("dentalsegmentator_multilabel.nii.gz")
         }
-        if activeRunMode == .individualTeeth {
+        if backend == .toothSeg {
+            return caseDir
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("toothseg", isDirectory: true)
+                .appendingPathComponent("toothseg_fdi_multilabel.nii.gz")
+        }
+        if runMode == .individualTeeth {
             return caseDir
                 .appendingPathComponent("segmentations", isDirectory: true)
                 .appendingPathComponent("teeth_experimental", isDirectory: true)
                 .appendingPathComponent("teeth_multilabel_fullspace.nii.gz")
         }
         return caseDir
-            .appendingPathComponent("segmentations", isDirectory: true)
-            .appendingPathComponent("derived", isDirectory: true)
-            .appendingPathComponent("craniofacial_arch_jaw_multilabel.nii.gz")
+                .appendingPathComponent("segmentations", isDirectory: true)
+                .appendingPathComponent("derived", isDirectory: true)
+                .appendingPathComponent("craniofacial_arch_jaw_multilabel.nii.gz")
+    }
+
+    private func primaryResultLabelmapPath() -> URL {
+        guard let outputURL else {
+            return paths.runResultJSON
+        }
+        return primaryResultLabelmapURL(
+            caseDir: outputURL,
+            backend: activeRunBackend,
+            runMode: activeRunMode
+        )
     }
 
     private func nextCaseOutput() -> URL {
@@ -1954,12 +2727,51 @@ final class AppState: ObservableObject {
     private func resetRunProgressTracking() {
         lastRunProgressAt = nil
         lastRunProgressSignature = ""
+        runStageEvent = nil
+        runStageProgress = nil
+        runStageStartedAt = nil
         if activeRunBackend == .dentalSegmentator {
             runHeartbeatText = "DentalSegmentatorの処理を継続しています。"
+        } else if activeRunBackend == .toothSeg {
+            runHeartbeatText = "ToothSegのsemantic/instance処理を継続しています。"
         } else if inputSource == .sample {
             runHeartbeatText = "Sample 1の処理を継続しています。"
         } else {
             runHeartbeatText = "ログを待っています。モデル準備済みでも初回処理には時間がかかる場合があります。"
+        }
+    }
+
+    private func progressRoute(backend: SegmentationBackend, mode: RunMode) -> String {
+        if backend == .dentalSegmentator { return "dentalsegmentator" }
+        if backend == .toothSeg { return "toothseg_refine" }
+        return mode == .individualTeeth ? "individual_teeth_beta" : "totalsegmentator"
+    }
+
+    private func beginStructuredRunProgress(route: String) {
+        guard let stage = runStageCatalog[route]?.first else { return }
+        runStageEvent = RunStageEvent(
+            route: route, stageID: stage.id, index: 1,
+            total: runStageCatalog[route]?.count ?? 1, label: stage.label
+        )
+        runStageProgress = nil
+        runStageStartedAt = Date()
+    }
+
+    private func advanceStructuredRunToPreview(logURLs: [URL]) {
+        guard let route = runStageEvent?.route,
+              let stages = runStageCatalog[route],
+              let stage = stages.last
+        else { return }
+        runStageEvent = RunStageEvent(
+            route: route, stageID: stage.id, index: stages.count,
+            total: stages.count, label: stage.label
+        )
+        runStageProgress = nil
+        runStageStartedAt = Date()
+        runProgressFraction = nil
+        let line = runStageLogLine(runStageEvent!) + "\n"
+        for url in Set(logURLs) {
+            appendLog(line, to: url)
         }
     }
 
@@ -1971,6 +2783,8 @@ final class AppState: ObservableObject {
         guard let lastRunProgressAt else {
             if activeRunBackend == .dentalSegmentator {
                 runHeartbeatText = "DentalSegmentatorの処理を継続しています。"
+            } else if activeRunBackend == .toothSeg {
+                runHeartbeatText = "ToothSegのsemantic/instance処理を継続しています。"
             } else if inputSource == .sample {
                 runHeartbeatText = "Sample 1の処理を継続しています。"
             } else {
@@ -2030,7 +2844,31 @@ func runFailureReason(from logURL: URL) -> String {
     guard !lines.isEmpty else {
         return ""
     }
-    let markers = ["DENTALSEGMENTATOR FAILED", "DEVICE CHECK FAILED", "TASK BLOCKED"]
+    if lines.reversed().contains(where: { $0.lowercased().contains("mps backend out of memory") }) {
+        return "MPSメモリ不足（Out Of Memory）で失敗しました。他のアプリを終了するかMacを再起動してから再試行してください。CTの範囲によっては、このMacでは高精細化を実行できない場合があります。"
+    }
+    if lines.reversed().contains(where: {
+        let lower = $0.lowercased()
+        return (lower.contains("download") || lower.contains("downloading"))
+            && (lower.contains("error") || lower.contains("failed") || lower.contains("timed out"))
+    }) {
+        return "ダウンロード関連で失敗しました。ネットワーク状態を確認して再試行してください。"
+    }
+    if let inputLine = lines.reversed().first(where: {
+        let lower = $0.lowercased()
+        return lower.contains("no teeth")
+            || lower.contains("teeth detected")
+            || lower.contains("input") && lower.contains("empty")
+    }) {
+        return compactFailureLine(inputLine)
+    }
+    let markers = [
+        "DENTALSEGMENTATOR FAILED",
+        "DEVICE CHECK FAILED",
+        "TASK BLOCKED",
+        "TOOTHSEG FAILED",
+        "TOOTHSEG_PREP_PROGRESS",
+    ]
     if let markerIndex = lines.lastIndex(where: { line in markers.contains { line.contains($0) } }) {
         let following = lines.dropFirst(markerIndex + 1).first ?? lines[markerIndex]
         return compactFailureLine(following)
@@ -2545,18 +3383,19 @@ struct RunLogProgress {
     let total: Int?
     let percent: Int?
     let stage: String?
+    let etaSeconds: Int?
+    let route: String?
+    let stageID: String?
+    let scope: String
 
     var signature: String {
         let stepText = step.map { String($0) } ?? ""
         let totalText = total.map { String($0) } ?? ""
         let percentText = percent.map { String($0) } ?? ""
-        return "\(stage ?? "")|\(stepText)|\(totalText)|\(percentText)"
+        return "\(route ?? "")|\(stageID ?? "")|\(scope)|\(stage ?? "")|\(stepText)|\(totalText)|\(percentText)|\(etaSeconds ?? -1)"
     }
 
     var fraction: Double? {
-        if percent == 100 {
-            return nil
-        }
         if let percent {
             return max(0.0, min(1.0, Double(percent) / 100.0))
         }
@@ -2567,36 +3406,248 @@ struct RunLogProgress {
     }
 
     var displayText: String {
-        let stageText = stage.flatMap { $0.isEmpty ? nil : $0 } ?? "処理"
+        let rawStage = stage.flatMap { $0.isEmpty ? nil : $0 } ?? "処理"
+        let stageText = rawStage == "ToothSeg semantic" ? "ToothSeg semantic枝" : (rawStage == "ToothSeg instance" ? "ToothSeg instance枝" : rawStage)
         if percent == 100 {
             return "\(stageText)を終え、次の処理へ進んでいます。"
         }
-        return "\(stageText)を進めています。"
+        var parts = ["\(stageText)を進めています。"]
+        if let step, let total, let percent {
+            parts.append("\(step)/\(total)（\(percent)%）")
+        }
+        if let etaSeconds, etaSeconds > 0 {
+            parts.append("残り約\(formatCompactDuration(etaSeconds))")
+        }
+        return parts.joined(separator: " ")
     }
 }
 
-func runProgressFromLog(_ text: String) -> RunLogProgress? {
-    var last: RunLogProgress?
+private let runStageCatalog: [String: [(id: String, label: String)]] = [
+    "totalsegmentator": [
+        ("prepare", "実行準備"), ("segment", "顎顔面を抽出中"),
+        ("finalize", "結果を整理中"), ("preview", "3D表示・結果情報を作成中"),
+    ],
+    "dentalsegmentator": [
+        ("prepare", "入力準備"), ("predict", "DentalSegmentatorで推論中"),
+        ("finalize", "ラベル結果を整理中"), ("preview", "3D表示・結果情報を作成中"),
+    ],
+    "individual_teeth_beta": [
+        ("prepare", "実行準備"), ("craniofacial", "顎顔面を抽出中"),
+        ("roi", "歯列ROIを作成中"), ("individual", "歯を1本ずつ抽出中"),
+        ("restore", "元画像へ復元中"), ("preview", "3D表示・結果情報を作成中"),
+    ],
+    "toothseg_refine": [
+        ("roi", "12mm ROI・入力を準備中"), ("semantic", "ToothSeg semantic枝"),
+        ("instance", "ToothSeg instance枝"), ("restore", "FDI番号付与・元画像へ復元中"),
+        ("preview", "3D表示・結果情報を作成中"),
+    ],
+]
+
+func inferredRunStage(from progress: RunLogProgress) -> RunStageEvent? {
+    guard let route = progress.route,
+          let stageID = progress.stageID,
+          let stages = runStageCatalog[route],
+          let offset = stages.firstIndex(where: { $0.id == stageID })
+    else { return nil }
+    return RunStageEvent(
+        route: route,
+        stageID: stageID,
+        index: offset + 1,
+        total: stages.count,
+        label: stages[offset].label
+    )
+}
+
+func runStageLogLine(_ stage: RunStageEvent) -> String {
+    let payload: [String: Any] = [
+        "route": stage.route,
+        "stage_id": stage.stageID,
+        "index": stage.index,
+        "total": stage.total,
+        "label": stage.label,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+          let json = String(data: data, encoding: .utf8)
+    else { return "" }
+    return "RUN_STAGE " + json
+}
+
+struct RunStageEvent: Equatable {
+    let route: String
+    let stageID: String
+    let index: Int
+    let total: Int
+    let label: String
+
+    var signature: String { "\(route)|\(stageID)|\(index)|\(total)" }
+}
+
+struct RunExecutionLogState {
+    let stage: RunStageEvent?
+    let progress: RunLogProgress?
+    let hasStructuredStages: Bool
+}
+
+struct RunProgressProfile {
+    let route: String
+    let weights: [Double]
+
+    static let profiles: [String: RunProgressProfile] = [
+        "totalsegmentator": .init(route: "totalsegmentator", weights: [0.01, 0.68, 0.01, 0.30]),
+        "dentalsegmentator": .init(route: "dentalsegmentator", weights: [0.01, 0.91, 0.01, 0.07]),
+        "individual_teeth_beta": .init(route: "individual_teeth_beta", weights: [0.01, 0.62, 0.01, 0.29, 0.01, 0.06]),
+        "toothseg_refine": .init(route: "toothseg_refine", weights: [0.01, 0.19, 0.79, 0.006, 0.004]),
+    ]
+}
+
+struct RunWeightedProgress {
+    let lowerBound: Double
+    let upperBound: Double
+    let estimate: Double?
+    let stageFraction: Double?
+
+    static func calculate(stage: RunStageEvent, progress: RunLogProgress?) -> RunWeightedProgress? {
+        guard let profile = RunProgressProfile.profiles[stage.route],
+              profile.weights.count == stage.total,
+              stage.index > 0,
+              stage.index <= profile.weights.count
+        else { return nil }
+        let lower = profile.weights.prefix(stage.index - 1).reduce(0, +)
+        let upper = lower + profile.weights[stage.index - 1]
+        let matchingStageProgress = progress.flatMap { candidate -> Double? in
+            guard candidate.scope == "stage",
+                  candidate.route == stage.route,
+                  candidate.stageID == stage.stageID
+            else { return nil }
+            return candidate.fraction
+        }
+        return RunWeightedProgress(
+            lowerBound: lower,
+            upperBound: upper,
+            estimate: matchingStageProgress.map { lower + profile.weights[stage.index - 1] * $0 },
+            stageFraction: matchingStageProgress
+        )
+    }
+}
+
+func runExecutionStateFromLog(_ text: String) -> RunExecutionLogState {
+    var currentStage: RunStageEvent?
+    var currentProgress: RunLogProgress?
+    var hasStructuredStages = false
     for rawLine in text.split(whereSeparator: \.isNewline) {
         let line = String(rawLine)
-        guard line.hasPrefix("RUN_PROGRESS ") else {
+        if line.hasPrefix("RUN_STAGE ") {
+            let jsonText = String(line.dropFirst("RUN_STAGE ".count))
+            if let data = jsonText.data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data),
+               let payload = object as? [String: Any],
+               let route = stringFromJSON(payload["route"]),
+               let stageID = stringFromJSON(payload["stage_id"]),
+               let index = intFromJSON(payload["index"]),
+               let total = intFromJSON(payload["total"]),
+               let label = stringFromJSON(payload["label"]) {
+                currentStage = RunStageEvent(
+                    route: route, stageID: stageID, index: index, total: total, label: label
+                )
+                currentProgress = nil
+                hasStructuredStages = true
+            }
             continue
         }
+        guard line.hasPrefix("RUN_PROGRESS ") else { continue }
         let jsonText = String(line.dropFirst("RUN_PROGRESS ".count))
         guard let data = jsonText.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let payload = object as? [String: Any]
-        else {
-            continue
-        }
-        last = RunLogProgress(
+        else { continue }
+        currentProgress = RunLogProgress(
             step: intFromJSON(payload["step"]),
             total: intFromJSON(payload["total"]),
             percent: intFromJSON(payload["percent"]),
-            stage: stringFromJSON(payload["stage"])
+            stage: stringFromJSON(payload["stage"]),
+            etaSeconds: intFromJSON(payload["eta_seconds"]),
+            route: stringFromJSON(payload["route"]),
+            stageID: stringFromJSON(payload["stage_id"]),
+            scope: stringFromJSON(payload["scope"]) ?? "subtask"
+        )
+    }
+    return RunExecutionLogState(
+        stage: currentStage, progress: currentProgress, hasStructuredStages: hasStructuredStages
+    )
+}
+
+func runProgressFromLog(_ text: String) -> RunLogProgress? {
+    runExecutionStateFromLog(text).progress
+}
+
+struct ToothSegPreparationProgress {
+    let stage: String
+    let message: String
+    let downloadedBytes: Int?
+    let totalBytes: Int?
+    let percent: Int?
+    let rateBPS: Double?
+    let etaSeconds: Int?
+    let resumed: Bool
+
+    var fraction: Double? {
+        if let percent { return max(0, min(1, Double(percent) / 100)) }
+        if let downloadedBytes, let totalBytes, totalBytes > 0 {
+            return max(0, min(1, Double(downloadedBytes) / Double(totalBytes)))
+        }
+        return stage == "complete" ? 1.0 : nil
+    }
+
+    var detailText: String {
+        guard stage == "download" else { return "" }
+        var parts: [String] = []
+        if let downloadedBytes, let totalBytes {
+            parts.append("\(formatByteCount(downloadedBytes)) / \(formatByteCount(totalBytes))")
+        }
+        if let percent { parts.append("\(percent)%") }
+        if let rateBPS, rateBPS > 0 { parts.append("\(formatByteCount(Int(rateBPS)))/秒") }
+        if let etaSeconds, etaSeconds > 0 { parts.append("残り約\(formatCompactDuration(etaSeconds))") }
+        if resumed { parts.append("中断位置から再開") }
+        return parts.joined(separator: " ・ ")
+    }
+}
+
+func toothSegPreparationProgressFromLog(_ text: String) -> ToothSegPreparationProgress? {
+    var last: ToothSegPreparationProgress?
+    for rawLine in text.split(whereSeparator: \.isNewline) {
+        let line = String(rawLine)
+        guard line.hasPrefix("TOOTHSEG_PREP_PROGRESS ") else { continue }
+        let jsonText = String(line.dropFirst("TOOTHSEG_PREP_PROGRESS ".count))
+        guard let data = jsonText.data(using: .utf8),
+              let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let stage = payload["stage"] as? String,
+              let message = payload["message"] as? String else { continue }
+        last = ToothSegPreparationProgress(
+            stage: stage,
+            message: message,
+            downloadedBytes: intFromJSON(payload["downloaded_bytes"]),
+            totalBytes: intFromJSON(payload["total_bytes"]),
+            percent: intFromJSON(payload["percent"]),
+            rateBPS: (payload["rate_bps"] as? NSNumber)?.doubleValue,
+            etaSeconds: intFromJSON(payload["eta_seconds"]),
+            resumed: (payload["resumed"] as? Bool) ?? false
         )
     }
     return last
+}
+
+func formatCompactDuration(_ seconds: Int) -> String {
+    let safe = max(0, seconds)
+    let hours = safe / 3600
+    let minutes = (safe % 3600) / 60
+    let remaining = safe % 60
+    if hours > 0 { return "\(hours)時間\(minutes)分" }
+    if minutes > 0 { return "\(minutes)分\(String(format: "%02d", remaining))秒" }
+    return "\(remaining)秒"
+}
+
+func formatByteCount(_ bytes: Int) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
 }
 
 func intFromJSON(_ value: Any?) -> Int? {

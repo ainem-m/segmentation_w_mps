@@ -2,24 +2,72 @@ from __future__ import annotations
 
 import os
 import json
+import io
 import stat
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
+from totalsegmentator_wrapper_mac.cli import main as cli_main
 
 from totalsegmentator_wrapper_mac.runner_totalseg import (
     RUN_PROGRESS_PREFIX,
+    RUN_STAGE_LAYOUTS,
+    RUN_STAGE_PREFIX,
     TEETH_UNSUPPORTED_REASON,
+    _emit_run_stage,
     _run_command_streamed,
+    _teeth_detected_from_mask_stats,
     parse_tqdm_progress,
     resolve_totalseg_executable,
+    run_toothseg_refine,
     run_totalsegmentator,
     sanitized_command,
 )
 
 
 class RunnerTests(unittest.TestCase):
+    def test_teeth_detection_uses_nonempty_label_stats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stats_path = Path(tmp) / "mask_stats.json"
+            stats_path.write_text(
+                json.dumps(
+                    {
+                        "masks": [
+                            {"name": "upper_teeth.nii.gz", "label": "upper_teeth", "nonzero_voxels": 42},
+                            {"name": "lower_teeth.nii.gz", "label": "lower_teeth", "nonzero_voxels": 0},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(_teeth_detected_from_mask_stats(stats_path))
+
+    def test_run_stage_layouts_match_the_fixed_route_contract(self) -> None:
+        self.assertEqual([len(stages) for stages in RUN_STAGE_LAYOUTS.values()], [4, 4, 6, 5])
+        self.assertEqual(
+            [stage_id for stage_id, _label in RUN_STAGE_LAYOUTS["toothseg_refine"]],
+            ["roi", "semantic", "instance", "restore", "preview"],
+        )
+
+    def test_run_stage_is_saved_and_mirrored_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "run.log"
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                event = _emit_run_stage(
+                    "toothseg_refine", 3, log_path=log_path, reset_log=True
+                )
+
+            self.assertEqual(event["stage_id"], "instance")
+            self.assertEqual(event["index"], 3)
+            self.assertEqual(event["total"], 5)
+            self.assertEqual(stderr.getvalue(), log_path.read_text(encoding="utf-8"))
+            self.assertTrue(stderr.getvalue().startswith(RUN_STAGE_PREFIX))
+
     def test_sanitized_command_hides_full_paths(self) -> None:
         command = ["TotalSegmentator", "-i", "/secret/case/source.nii.gz", "-o", "/tmp/out", "-ta", "x"]
         safe = sanitized_command(command, Path("/secret/case/source.nii.gz"), Path("/tmp/out"))
@@ -50,6 +98,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(progress["total"], 231)
         self.assertEqual(progress["percent"], 13)
         self.assertEqual(progress["stage"], "Resampling")
+        self.assertEqual(progress["eta_seconds"], 80)
 
     def test_parse_tqdm_progress_keeps_section_complete_distinct_from_run_complete(self) -> None:
         progress = parse_tqdm_progress("Saving: 100%|##########| 231/231 [00:10<00:00, 2.4it/s]")
@@ -71,6 +120,18 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(progress["percent"])
         self.assertEqual(progress["stage"], "Saving segmentations")
         self.assertTrue(progress["phase_only"])
+
+    def test_parse_tqdm_progress_handles_download_with_sizes(self) -> None:
+        progress = parse_tqdm_progress(
+            "Downloading weights: 100%|##########| 12.5MB/12.5MB [00:10<00:00,  1.2MB/s]"
+        )
+
+        self.assertIsNotNone(progress)
+        assert progress is not None
+        self.assertEqual(progress["step"], 13107200)
+        self.assertEqual(progress["total"], 13107200)
+        self.assertEqual(progress["percent"], 100)
+        self.assertEqual(progress["stage"], "Downloading weights")
 
     def test_streamed_command_records_carriage_return_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,6 +164,43 @@ class RunnerTests(unittest.TestCase):
             self.assertIn('"stage": "Predicting s01"', log_text)
             self.assertIn('"step": 3', log_text)
             self.assertIn('"total": 3', log_text)
+
+    def test_streamed_command_can_name_toothseg_branch_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake = tmp_path / "fake_tqdm.py"
+            fake.write_text(
+                "import sys\n"
+                "sys.stderr.write(' 50%|##### | 2/4 [00:01<00:03]\\r\\n')\n",
+                encoding="utf-8",
+            )
+            log_path = tmp_path / "run.log"
+
+            mirrored = io.StringIO()
+            with redirect_stderr(mirrored):
+                rc, _elapsed, _stdout, _stderr = _run_command_streamed(
+                    command=[sys.executable, str(fake)],
+                    env=os.environ.copy(),
+                    log_path=log_path,
+                    safe_command=["python", "fake_tqdm.py"],
+                    progress_stage="ToothSeg semantic",
+                    progress_route="toothseg_refine",
+                    progress_stage_id="semantic",
+                    progress_scope="stage",
+                )
+
+            self.assertEqual(rc, 0)
+            progress_lines = [
+                json.loads(line.removeprefix(RUN_PROGRESS_PREFIX))
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.startswith(RUN_PROGRESS_PREFIX)
+            ]
+            self.assertEqual(progress_lines[-1]["stage"], "ToothSeg semantic")
+            self.assertEqual(progress_lines[-1]["eta_seconds"], 3)
+            self.assertEqual(progress_lines[-1]["route"], "toothseg_refine")
+            self.assertEqual(progress_lines[-1]["stage_id"], "semantic")
+            self.assertEqual(progress_lines[-1]["scope"], "stage")
+            self.assertIn(RUN_PROGRESS_PREFIX, mirrored.getvalue())
 
     def test_run_totalsegmentator_with_fake_binary_writes_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,6 +249,12 @@ class RunnerTests(unittest.TestCase):
             run_log = (tmp_path / "case" / "logs" / "run.log").read_text(encoding="utf-8")
             self.assertIn("-i sample.nii.gz", run_log)
             self.assertNotIn(str(input_path.parent), run_log)
+            stage_ids = [
+                json.loads(line.removeprefix(RUN_STAGE_PREFIX))["stage_id"]
+                for line in run_log.splitlines()
+                if line.startswith(RUN_STAGE_PREFIX)
+            ]
+            self.assertEqual(stage_ids, ["prepare", "segment", "finalize"])
             mask_stats = json.loads(
                 (tmp_path / "case" / "logs" / "mask_stats.json").read_text(encoding="utf-8")
             )
@@ -168,6 +272,39 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertFalse(benchmark["run"]["robust_crop"])
             self.assertFalse(benchmark["run"]["higher_order_resampling"])
+
+    def test_cli_stdout_remains_a_single_json_document_when_stages_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "sample.nii.gz"
+            input_path.write_text("fake nifti", encoding="utf-8")
+            fake_bin = root / "fake_totalseg.py"
+            fake_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "import argparse\n"
+                "from pathlib import Path\n"
+                "p=argparse.ArgumentParser(); p.add_argument('-i'); p.add_argument('-o'); "
+                "p.add_argument('-ta'); p.add_argument('--device'); a=p.parse_args()\n"
+                "o=Path(a.o); o.mkdir(parents=True, exist_ok=True); "
+                "(o/'mandible.nii.gz').write_text('mask')\n",
+                encoding="utf-8",
+            )
+            fake_bin.chmod(fake_bin.stat().st_mode | stat.S_IXUSR)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                rc = cli_main(
+                    [
+                        "run", "--input", str(input_path), "--output", str(root / "case"),
+                        "--device", "mps", "--skip-device-check", "--totalseg-bin", str(fake_bin),
+                    ]
+                )
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "success")
+            self.assertNotIn(RUN_STAGE_PREFIX, stdout.getvalue())
+            self.assertIn(RUN_STAGE_PREFIX, stderr.getvalue())
 
     def test_run_totalsegmentator_with_robust_crop_passes_totalseg_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -309,6 +446,47 @@ class RunnerTests(unittest.TestCase):
                     robust_crop=True,
                     experimental_teeth=True,
                 )
+
+    def test_toothseg_refine_requires_teeth_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "sample.nii.gz"
+            input_path.write_text("fake nifti", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "toothseg-refine can only be used with task=teeth"):
+                run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=tmp_path / "case",
+                    task="craniofacial_structures",
+                    requested_device="mps",
+                    backend="toothseg",
+                    toothseg_refine=True,
+                    copy_input=True,
+                    skip_device_check=True,
+                )
+
+    def test_toothseg_refine_reuses_supplied_case_with_fixed_12mm_margin(self) -> None:
+        with patch(
+            "totalsegmentator_wrapper_mac.runner_totalseg.run_totalsegmentator"
+        ) as run:
+            sentinel = object()
+            run.return_value = sentinel
+            source = Path("/input/source.nii.gz")
+            output = Path("/output/case")
+
+            result = run_toothseg_refine(
+                input_path=source,
+                output_root=output,
+                requested_device="mps",
+                teeth_craniofacial_case=output,
+            )
+
+            self.assertIs(result, sentinel)
+            kwargs = run.call_args.kwargs
+            self.assertEqual(kwargs["backend"], "toothseg")
+            self.assertEqual(kwargs["task"], "teeth")
+            self.assertEqual(kwargs["teeth_crop_margin_mm"], 12.0)
+            self.assertEqual(kwargs["teeth_craniofacial_case"], output)
 
 
 if __name__ == "__main__":

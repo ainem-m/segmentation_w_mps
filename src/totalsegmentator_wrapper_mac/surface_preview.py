@@ -145,6 +145,18 @@ def resolve_surface_preview_input(
         resolved = input_path.resolve()
         return resolved, {"source": "explicit_input", "input": str(resolved)}
 
+    toothseg_fullspace = (
+        case_dir
+        / "segmentations"
+        / "toothseg"
+        / "toothseg_fdi_multilabel.nii.gz"
+    )
+    if toothseg_fullspace.exists():
+        return toothseg_fullspace, {
+            "source": "toothseg_fdi_multilabel",
+            "input": str(toothseg_fullspace.resolve()),
+        }
+
     teeth_fullspace = (
         case_dir
         / "segmentations"
@@ -176,7 +188,8 @@ def resolve_surface_preview_input(
 
     raise FileNotFoundError(
         "No default surface-preview input found. Expected either "
-        f"{teeth_fullspace}, {dentalseg_fullspace}, or craniofacial masks under {raw_totalseg}."
+        f"{toothseg_fullspace}, {teeth_fullspace}, {dentalseg_fullspace}, "
+        f"or craniofacial masks under {raw_totalseg}."
     )
 
 
@@ -539,7 +552,8 @@ def safe_name(value: str) -> str:
 
 
 def is_dental_hard_tissue(name: str) -> bool:
-    if name in {
+    normalized = name.lower()
+    if normalized in {
         "bridge",
         "crown",
         "implant",
@@ -549,7 +563,7 @@ def is_dental_hard_tissue(name: str) -> bool:
         "teeth_lower",
     }:
         return True
-    return "fdi" in name and "pulp" not in name
+    return "fdi" in normalized and "pulp" not in normalized
 
 
 def write_markdown_summary(path: Path, summary: dict[str, Any]) -> None:

@@ -270,7 +270,7 @@ class SetupManagerTests(unittest.TestCase):
 
             self.assertIn("-c", command)
             self.assertIn(str(root / "constraints.txt"), command)
-            self.assertIn(str(root / "app.whl") + "[dicom,mps,dentalseg]", command)
+            self.assertIn(str(root / "app.whl") + "[dicom,mps,dentalseg,toothseg]", command)
 
     def test_progress_log_records_user_visible_setup_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -18,7 +18,7 @@ official TotalSegmentator application or project.
 - **CPU vs MPSの実測表を出す**。バズの核は数字と動画。
 - **DICOM normalizerはPython preview packageには入れない**。必要なDICOM
   ingest/rescueは別C++ Mac binaryとして切り出す。
-- **ONNX / DentalSegmentator純正対応は後回し**。
+- **DentalSegmentator / ToothSegは明示的な実験機能**。別backendやCPUへ自動fallbackしない。
 - 医療機器・診断支援・治療計画支援を名乗らない。非臨床・研究/教育・検証用に限定する。
 
 ## 想定成果物
@@ -78,6 +78,8 @@ docs/32_SWIFTUI_SHELL_COMPLETION_AUDIT.md
 docs/33_MAC_NOTARIZATION.md
 docs/34_ALPHA_DISTRIBUTION_SUPPORT_CARD.md
 docs/35_CLOUDFLARE_DISTRIBUTION.md
+docs/38_DENTALSEGMENTATOR_BACKEND_NOTES.md
+docs/39_TOOTHSEG_BACKEND_NOTES.md
 docs/future/SLICER_EXPORT_REINTRODUCTION.md
 native/dicom_normalizer/README.md
 ```
@@ -111,7 +113,7 @@ python -m totalsegmentator_wrapper_mac doctor
 
 python -m totalsegmentator_wrapper_mac setup \
   --python /path/to/python3.12 \
-  --wheel dist/totalsegmentator_wrapper_mac-0.1.2-cp312-cp312-macosx_11_0_arm64.whl \
+  --wheel dist/totalsegmentator_wrapper_mac-0.2.0-cp312-cp312-macosx_11_0_arm64.whl \
   --constraints constraints/macos-arm64-py312.txt \
   --json /tmp/totalsegmentator-wrapper-mac_setup.json \
   --dry-run \

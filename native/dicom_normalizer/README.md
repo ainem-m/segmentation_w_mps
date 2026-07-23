@@ -2,6 +2,10 @@
 
 Mac-oriented C++ DICOM intake and rescue binary for TotalSegmentator Wrapper workflows.
 
+The parser and pixel decoder use GDCM. JPEG, JPEG-LS, JPEG 2000, and RLE
+transfer syntaxes are decoded in-process; successful metadata parsing alone is
+never treated as proof that pixel data is readable.
+
 Current phase:
 
 ```text
@@ -16,6 +20,11 @@ explicit secondary-capture rescue preparation
 cmake -S native/dicom_normalizer -B build/dicom_normalizer
 cmake --build build/dicom_normalizer --parallel
 ```
+
+GDCM 3.x development files are required to build. On macOS,
+`scripts/build_dicom_normalizer_mac.sh` also bundles the complete native runtime
+under `build/dicom_normalizer/lib` and rewrites load paths to `@loader_path`, so
+the shipped helper does not require Homebrew on the user's Mac.
 
 The binary is:
 
@@ -44,7 +53,8 @@ Classifications:
 original_ct_geometry_ok
 secondary_capture_rescue_candidate
 compressed_pixel_data
-needs_dicom_library
+pixel_decode_failed
+enhanced_ct_geometry_unverified
 dicomdir_only
 reject
 ```
@@ -122,7 +132,9 @@ not_segmentation_grade_original_ct: true
 manual_spacing_required: true
 ```
 
-Compressed transfer syntaxes are detected and classified, but this binary does
-not implement native pixel decompression. If DCMTK/GDCM tools are found they are
-reported as available adapters; otherwise the JSON marks the series as requiring
-an external tool.
+Compressed transfer syntaxes are decoded and, when needed for dcm2niix, losslessly
+transcoded to Explicit VR Little Endian with embedded GDCM. A decode failure is a
+hard `pixel_decode_failed` result; it never silently falls back to metadata-only
+acceptance. Enhanced CT pixel data is decoded, but the series remains
+`enhanced_ct_geometry_unverified` until every per-frame functional-group geometry
+item can be validated.

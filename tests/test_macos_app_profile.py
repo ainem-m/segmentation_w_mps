@@ -16,6 +16,35 @@ from totalsegmentator_wrapper_mac.runner_totalseg import TotalSegRunResult, run_
 
 
 class MacOSAppProfileTests(unittest.TestCase):
+    def test_unprepared_toothseg_model_fails_before_mps_or_case_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.nii.gz"
+            results = root / "models" / "nnUNet_results"
+            input_path.write_bytes(b"fake")
+            results.mkdir(parents=True)
+
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg.resolve_device"
+            ) as mps_check, patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg._run_command_streamed"
+            ) as child_runner:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    task="teeth",
+                    requested_device="mps",
+                    backend="toothseg",
+                    toothseg_nnunet_results=results,
+                    execution_profile="macos-app",
+                    require_mps=True,
+                )
+
+            self.assertEqual(result.error_code, "toothseg_prepare_required")
+            self.assertFalse((root / "case").exists())
+            mps_check.assert_not_called()
+            child_runner.assert_not_called()
+
     def test_unprepared_dental_model_fails_before_mps_or_case_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

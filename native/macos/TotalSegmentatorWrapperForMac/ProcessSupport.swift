@@ -306,6 +306,8 @@ func createRuntimeDirectories(paths: AppPaths) {
         paths.dentalsegRaw,
         paths.dentalsegPreprocessed,
         paths.dentalsegResults,
+        paths.toothsegRoot,
+        paths.toothsegResults,
     ] {
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
     }

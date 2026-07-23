@@ -15,8 +15,8 @@ SCRIPT = ROOT / "scripts" / "prepare_cloudflare_release.py"
 PAGES_ROOT = ROOT / "cloudflare" / "pages"
 APP_HUB_ROOT = ROOT / "cloudflare" / "app-hub"
 R2_ROOT = ROOT / "cloudflare" / "r2"
-TARGET_VERSION = "0.1.2"
-TARGET_DMG_NAME = "TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg"
+TARGET_VERSION = "0.2.0"
+TARGET_DMG_NAME = "TotalSegmentator Wrapper for Mac-0.2.0-20260722-gdcm-toothseg-arm64.dmg"
 
 
 def stable_update_manifest() -> dict:
@@ -207,6 +207,10 @@ class CloudflareDistributionTests(unittest.TestCase):
                     str(SCRIPT),
                     "--version",
                     TARGET_VERSION,
+                    "--channel",
+                    "candidate",
+                    "--minimum-supported-version",
+                    "0.1.2",
                     "--dmg",
                     str(fake_dmg),
                     "--download-origin",
@@ -223,15 +227,16 @@ class CloudflareDistributionTests(unittest.TestCase):
                 text=True,
             )
 
-            update = json.loads((r2_root / "releases" / "stable" / "update.json").read_text(encoding="utf-8"))
+            update = json.loads((r2_root / "releases" / "candidate" / "update.json").read_text(encoding="utf-8"))
             release_dir = r2_root / "releases" / TARGET_VERSION
             release = json.loads((release_dir / "release.json").read_text(encoding="utf-8"))
             checksums = (release_dir / "SHA256SUMS.txt").read_text(encoding="utf-8")
+            release_notes = (release_dir / "RELEASE_NOTES.txt").read_text(encoding="utf-8")
             upload_plan = json.loads((r2_root / "upload-plan.json").read_text(encoding="utf-8"))
             expected_sha = hashlib.sha256(b"fake dmg").hexdigest()
 
             self.assertEqual(update["latest_version"], TARGET_VERSION)
-            self.assertEqual(update["minimum_supported_version"], "0.1.1")
+            self.assertEqual(update["minimum_supported_version"], "0.1.2")
             self.assertEqual(update["sha256"], release["sha256"])
             self.assertEqual(update["sha256"], expected_sha)
             self.assertIn(
@@ -241,9 +246,92 @@ class CloudflareDistributionTests(unittest.TestCase):
             self.assertIn(f"{expected_sha}  {TARGET_DMG_NAME}", checksums)
             self.assertEqual(release["file_size_bytes"], len(b"fake dmg"))
             self.assertEqual(release["file_name"], TARGET_DMG_NAME)
+            self.assertFalse(release["notarized"])
+            self.assertIn("has not been verified as Developer ID signed and Apple notarized", release_notes)
+            self.assertNotIn("- Developer ID signed and Apple notarized DMG", release_notes)
             self.assertEqual(upload_plan["bucket"], "lacramy-downloads")
             self.assertEqual(upload_plan["object_prefix"], "totalsegmentator-wrapper-mac")
             self.assertEqual(len(upload_plan["objects"]), 5)
+
+    def test_prepare_stable_release_rejects_fake_dmg_even_when_marked_notarized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dmg = Path(tmp) / TARGET_DMG_NAME
+            fake_dmg.write_bytes(b"fake dmg")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--version",
+                    TARGET_VERSION,
+                    "--minimum-supported-version",
+                    "0.1.2",
+                    "--dmg",
+                    str(fake_dmg),
+                    "--r2-root",
+                    str(Path(tmp) / "r2"),
+                    "--notarized",
+                ],
+                check=False,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("failed notarization verification", completed.stderr)
+
+    def test_prepare_stable_release_requires_explicit_minimum_supported_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dmg = Path(tmp) / TARGET_DMG_NAME
+            fake_dmg.write_bytes(b"fake dmg")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--version",
+                    TARGET_VERSION,
+                    "--dmg",
+                    str(fake_dmg),
+                    "--r2-root",
+                    str(Path(tmp) / "r2"),
+                ],
+                check=False,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("--minimum-supported-version is required", completed.stderr)
+
+    def test_prepare_stable_release_rejects_non_notarized_dmg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dmg = Path(tmp) / TARGET_DMG_NAME
+            fake_dmg.write_bytes(b"fake dmg")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--version",
+                    TARGET_VERSION,
+                    "--minimum-supported-version",
+                    "0.1.2",
+                    "--dmg",
+                    str(fake_dmg),
+                    "--r2-root",
+                    str(Path(tmp) / "r2"),
+                    "--no-notarized",
+                ],
+                check=False,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("stable releases require a notarized DMG", completed.stderr)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(totalsegmentator_wrapper_dicom_normalizer VERSION 0.1.0 LANGUAGES CXX)
+project(totalsegmentator_wrapper_dicom_normalizer VERSION 0.2.0 LANGUAGES CXX)
+
+find_package(
+  GDCM 3.0 REQUIRED CONFIG
+  HINTS
+    "$ENV{GDCM_DIR}"
+    "/opt/homebrew/opt/gdcm/lib/gdcm-3.2"
+    "/usr/local/opt/gdcm/lib/gdcm-3.2"
+)
 
 add_executable(totalsegmentator-wrapper-dicom-normalizer
   src/main.cpp
+  src/gdcm_import.cpp
 )
 
 target_compile_features(totalsegmentator-wrapper-dicom-normalizer PRIVATE cxx_std_20)
+target_link_libraries(totalsegmentator-wrapper-dicom-normalizer PRIVATE gdcmMSFF)
 
 if(APPLE)
   target_compile_definitions(totalsegmentator-wrapper-dicom-normalizer PRIVATE TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_MAC=1)
@@ -32,6 +42,7 @@ if(BUILD_TESTING)
         ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_normalizer.py
         $<TARGET_FILE:totalsegmentator-wrapper-dicom-normalizer>
+        $<TARGET_FILE:gdcmconv>
     )
   endif()
 endif()

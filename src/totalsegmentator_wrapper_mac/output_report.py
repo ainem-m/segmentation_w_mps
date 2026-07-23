@@ -49,7 +49,9 @@ def _readme(
     elapsed_text = f"{elapsed:.2f} seconds" if isinstance(elapsed, (int, float)) else "unknown"
     mask_lines = _mask_lines(mask_stats)
     source_note = _source_note(case, source_volume_path)
-    return f"""# TotalSegmentator Wrapper for Mac Output
+    diagnostics_dir = case.logs_dir.relative_to(case.root).as_posix()
+    title = "ToothSeg Refinement Output" if case.report_filename == "TOOTHSEG_OUTPUT.md" else "TotalSegmentator Wrapper for Mac Output"
+    return f"""# {title}
 
 ## Run
 
@@ -66,10 +68,10 @@ elapsed: {elapsed_text}
 ```text
 source volume: {source_note}
 segmentations: segmentations/
-benchmark log: logs/benchmark.json
-environment log: logs/environment.json
-run log: logs/run.log
-mask stats: logs/mask_stats.json
+benchmark log: {diagnostics_dir}/benchmark.json
+environment log: {diagnostics_dir}/environment.json
+run log: {diagnostics_dir}/run.log
+mask stats: {diagnostics_dir}/mask_stats.json
 ```
 
 ## Segmentation Masks
