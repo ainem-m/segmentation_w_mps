@@ -652,6 +652,8 @@ struct CommandBuilder {
         coronalSliceStepMM: Double?,
         sagittalCount: Int?,
         sagittalSliceStepMM: Double?,
+        coronalReference: URL?,
+        sagittalReference: URL?,
         outputJSON: URL
     ) -> [String] {
         var command = [
@@ -682,6 +684,12 @@ struct CommandBuilder {
         }
         if let sagittalSliceStepMM {
             command += ["--sagittal-slice-step-mm", String(sagittalSliceStepMM)]
+        }
+        if let coronalReference {
+            command += ["--coronal-reference", coronalReference.path]
+        }
+        if let sagittalReference {
+            command += ["--sagittal-reference", sagittalReference.path]
         }
         command += ["--output", outputJSON.path]
         return command

@@ -1709,11 +1709,17 @@ final class AppState: ObservableObject {
         resultKind = .dicomAudit
         resultOutcome = .none
         if let primary {
-            exportPrimaryRescueStackIfAvailable(primary)
+            exportPrimaryRescueStackIfAvailable(
+                primary,
+                referenceCandidates: candidates.filter { $0.role == "reference" }
+            )
         }
     }
 
-    private func exportPrimaryRescueStackIfAvailable(_ candidate: SecondaryCaptureRescueCandidate) {
+    private func exportPrimaryRescueStackIfAvailable(
+        _ candidate: SecondaryCaptureRescueCandidate,
+        referenceCandidates: [SecondaryCaptureRescueCandidate]
+    ) {
         guard candidate.role == "primary",
               let dicomDir = lastDicomDirURL,
               FileManager.default.isExecutableFile(atPath: paths.normalizer.path) else {
@@ -1740,12 +1746,46 @@ final class AppState: ObservableObject {
             paths: paths
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let appPaths = paths
         let runner = self.runner
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc = runner.run(command, environment: environment, logURL: logURL)
             let volumeURL = stackDir.appendingPathComponent("preview_stack.npy")
             let manifestURL = stackDir.appendingPathComponent("source_manifest.json")
             let manifestHash = rescueStackManifestSHA256(manifestURL)
+            var referenceVolumes: [String: URL] = [:]
+            if rc == 0, manifestHash != nil {
+                for reference in referenceCandidates
+                where referenceVolumes[reference.plane] == nil
+                    && (reference.plane == "coronal" || reference.plane == "sagittal") {
+                    let referenceDir = sessionDir.appendingPathComponent(
+                        "reference_\(reference.plane)",
+                        isDirectory: true
+                    )
+                    let referenceLog = sessionDir.appendingPathComponent(
+                        "logs/export_\(reference.plane)_reference.log"
+                    )
+                    let referenceCommand = CommandBuilder.dicomExportRescueStackCommand(
+                        dicomDir: dicomDir,
+                        outputDir: referenceDir,
+                        seriesNumber: reference.seriesNumber,
+                        seriesKey: reference.seriesKey,
+                        paths: appPaths
+                    )
+                    let referenceRC = runner.run(
+                        referenceCommand,
+                        environment: environment,
+                        logURL: referenceLog
+                    )
+                    let referenceVolume = referenceDir.appendingPathComponent(
+                        "preview_stack.npy"
+                    )
+                    if referenceRC == 0,
+                       FileManager.default.fileExists(atPath: referenceVolume.path) {
+                        referenceVolumes[reference.plane] = referenceVolume
+                    }
+                }
+            }
             DispatchQueue.main.async {
                 self?.isRunning = false
                 guard self?.rescuePreparationCancellationRequested != true else {
@@ -1764,6 +1804,8 @@ final class AppState: ObservableObject {
                 self?.startSecondaryCaptureSpacingEstimation(
                     decodedVolume: volumeURL,
                     sourceManifestSHA256: manifestHash,
+                    coronalReference: referenceVolumes["coronal"],
+                    sagittalReference: referenceVolumes["sagittal"],
                     outputJSON: estimateJSON
                 )
             }
@@ -1773,6 +1815,8 @@ final class AppState: ObservableObject {
     func startSecondaryCaptureSpacingEstimation(
         decodedVolume: URL,
         sourceManifestSHA256: String,
+        coronalReference: URL? = nil,
+        sagittalReference: URL? = nil,
         outputJSON: URL
     ) {
         let isSHA256 = sourceManifestSHA256.count == 64
@@ -1839,6 +1883,8 @@ final class AppState: ObservableObject {
             coronalSliceStepMM: coronal?.sliceThickness,
             sagittalCount: sagittal?.fileCount,
             sagittalSliceStepMM: sagittal?.sliceThickness,
+            coronalReference: coronalReference,
+            sagittalReference: sagittalReference,
             outputJSON: outputJSON
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)
@@ -1913,7 +1959,10 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescueGeometryJSONURL = nil
         rescueDecodedVolumeURL = nil
-        exportPrimaryRescueStackIfAvailable(candidate)
+        exportPrimaryRescueStackIfAvailable(
+            candidate,
+            referenceCandidates: dicomRescueCandidates.filter { $0.role == "reference" }
+        )
     }
 
     func rescueSpacingDidChange(axis: RescueCalibrationAxis) {
