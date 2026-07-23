@@ -67,6 +67,9 @@ def write_dicom(
     rows: int = 32,
     columns: int = 32,
     geometry: bool = True,
+    include_pixel_spacing: bool | None = None,
+    include_image_position: bool | None = None,
+    include_image_orientation: bool | None = None,
     number_of_frames: int | None = None,
     secondary_capture: bool = False,
     samples_per_pixel: int = 1,
@@ -113,9 +116,11 @@ def write_dicom(
     data += elem_explicit(0x0028, 0x0103, "US", pixel_representation)
     if number_of_frames is not None:
         data += elem_explicit(0x0028, 0x0008, "IS", str(number_of_frames))
-    if geometry:
+    if include_pixel_spacing if include_pixel_spacing is not None else geometry:
         data += elem_explicit(0x0028, 0x0030, "DS", pixel_spacing)
+    if include_image_position if include_image_position is not None else geometry:
         data += elem_explicit(0x0020, 0x0032, "DS", image_position or f"0\\0\\{instance_number or series_number or 0}")
+    if include_image_orientation if include_image_orientation is not None else geometry:
         data += elem_explicit(0x0020, 0x0037, "DS", image_orientation or "1\\0\\0\\0\\1\\0")
     if slice_thickness is not None:
         data += elem_explicit(0x0018, 0x0050, "DS", slice_thickness)
@@ -523,6 +528,60 @@ def test_geometry_evidence_and_secondary_capture_references(binary: Path) -> Non
         assert payload["classification_counts"].get(
             "secondary_capture_rescue_candidate", 0
         ) == 0
+
+
+def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for index in range(32):
+            write_dicom(
+                root / "missing_xy" / f"ct_{index:04d}.dcm",
+                series_number=194,
+                series_uid="1.2.3.partial.missing.xy",
+                instance_number=index + 1,
+                include_pixel_spacing=False,
+                slice_thickness="1.2",
+                image_position=f"0\\0\\{index * 0.8}",
+            )
+            write_dicom(
+                root / "missing_z" / f"ct_{index:04d}.dcm",
+                series_number=195,
+                series_uid="1.2.3.partial.missing.z",
+                instance_number=index + 1,
+                include_image_position=False,
+                spacing_between_slices="1.5",
+                slice_thickness="2.0",
+                pixel_spacing="0.4\\0.6",
+            )
+
+        payload = load_audit(binary, root)
+        missing_xy = series_by_uid(payload, "1.2.3.partial.missing.xy")
+        assert missing_xy["classification"]["status"] == "geometry_rescue_candidate"
+        assert missing_xy["pixel_spacing_mm"] is None
+        assert missing_xy["projected_slice_spacing_mm"] == 0.8
+        assert "missing_pixel_spacing" in missing_xy["classification"]["reasons"]
+
+        missing_z = series_by_uid(payload, "1.2.3.partial.missing.z")
+        assert missing_z["classification"]["status"] == "geometry_rescue_candidate"
+        assert missing_z["pixel_spacing_mm"] == {"row": 0.4, "column": 0.6}
+        assert missing_z["projected_slice_spacing_mm"] is None
+        assert missing_z["spacing_between_slices"]["values_mm"] == [1.5]
+        assert missing_z["slice_thickness"]["values_mm"] == [2]
+
+        output = root / "exported_partial"
+        proc = run(
+            binary,
+            "export-rescue-stack",
+            "--dicom-dir",
+            str(root),
+            "--series-key",
+            "1.2.3.partial.missing.z",
+            "--output",
+            str(output),
+        )
+        assert proc.returncode == 0, proc.stderr
+        manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["classification"] == "geometry_rescue_candidate"
 
 
 def test_ordered_content_sha256_manifest_is_path_independent(binary: Path) -> None:
@@ -951,7 +1010,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(fake),
         )
         assert bad_rescue.returncode != 0
-        assert "prepare-rescue requires secondary_capture_rescue_candidate" in bad_rescue.stderr
+        assert "prepare-rescue requires a geometry rescue candidate" in bad_rescue.stderr
 
         missing_spacing = run(
             binary,
@@ -1085,6 +1144,7 @@ def main() -> int:
         test_dicomdir_and_implicit,
         test_secondary_capture_variants,
         test_geometry_evidence_and_secondary_capture_references,
+        test_partial_geometry_ct_is_rescue_candidate,
         test_ordered_content_sha256_manifest_is_path_independent,
         test_export_rescue_stack_patterned_voxel_order,
         test_export_rescue_stack_uint8_monochrome1,

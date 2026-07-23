@@ -134,6 +134,29 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("source_manifest.json", export)
         self.assertIn("startSecondaryCaptureSpacingEstimation", export)
 
+    def test_partial_geometry_rescue_uses_standard_tag_precedence(self):
+        candidates = body(STATE, "func secondaryCaptureRescueCandidates(payload:")
+        self.assertIn('"geometry_rescue_candidate"', candidates)
+        self.assertIn('"pixel_spacing_mm"', candidates)
+        self.assertIn('"spacing_between_slices"', candidates)
+        self.assertIn('"projected_slice_spacing_mm"', candidates)
+
+        candidate = body(STATE, "struct SecondaryCaptureRescueCandidate")
+        self.assertIn("x: validSpacing(pixelSpacingColumn)", candidate)
+        self.assertIn("y: validSpacing(pixelSpacingRow)", candidate)
+        projected = candidate.index("validSpacing(projectedSliceSpacing)")
+        between = candidate.index("validSpacing(spacingBetweenSlices)")
+        thickness = candidate.index("validSpacing(sliceThickness)")
+        self.assertLess(projected, between)
+        self.assertLess(between, thickness)
+
+        estimate = body(STATE, "func startSecondaryCaptureSpacingEstimation")
+        self.assertIn("selectedCandidate?.pixelSpacingColumn", estimate)
+        self.assertIn("selectedCandidate?.pixelSpacingRow", estimate)
+        self.assertIn('"SpacingBetweenSlices"', estimate)
+        self.assertIn('"IPPProjectedSliceSpacing"', estimate)
+        self.assertIn("selectedCandidate?.preferredSliceStep", estimate)
+
     def test_creation_choices_offer_equal_default_and_other_routes_without_toothseg(self):
         creation = body(STATE, "enum CreationChoice")
         self.assertEqual(

@@ -226,17 +226,72 @@ struct RescueSpacing: Equatable {
 struct SecondaryCaptureRescueCandidate: Identifiable, Equatable {
     let seriesKey: String
     let seriesNumber: Int?
+    let classificationStatus: String
     let plane: String
     let role: String
     let reconstructionGroup: String
     let fileCount: Int
     let rows: Int
     let columns: Int
+    let pixelSpacingRow: Double?
+    let pixelSpacingColumn: Double?
+    let projectedSliceSpacing: Double?
+    let spacingBetweenSlices: Double?
     let sliceThickness: Double?
     let contentManifestSHA256: String?
     let studyKeySHA256: String?
 
     var id: String { seriesKey }
+
+    var initialSpacing: RescueSpacing {
+        RescueSpacing(
+            x: validSpacing(pixelSpacingColumn) ?? 1.0,
+            y: validSpacing(pixelSpacingRow) ?? 1.0,
+            z: validSpacing(projectedSliceSpacing)
+                ?? validSpacing(spacingBetweenSlices)
+                ?? validSpacing(sliceThickness)
+                ?? 1.0
+        )
+    }
+
+    var preferredSliceStep: Double? {
+        validSpacing(projectedSliceSpacing)
+            ?? validSpacing(spacingBetweenSlices)
+            ?? validSpacing(sliceThickness)
+    }
+
+    var initialSpacingEvidence: [String] {
+        var evidence: [String] = []
+        if validSpacing(pixelSpacingRow) != nil, validSpacing(pixelSpacingColumn) != nil {
+            evidence.append("Pixel SpacingをX/Y候補に使用（X=column、Y=row）")
+        } else {
+            evidence.append("X/Yは編集用の仮初期値")
+        }
+        if validSpacing(projectedSliceSpacing) != nil {
+            evidence.append("IPPをIOP法線へ投影した隣接差をZ候補に使用")
+        } else if validSpacing(spacingBetweenSlices) != nil {
+            evidence.append("Spacing Between SlicesをZ候補に使用")
+        } else if validSpacing(sliceThickness) != nil {
+            evidence.append("Slice Thicknessを低信頼のZ候補に使用")
+        } else {
+            evidence.append("Zは編集用の仮初期値")
+        }
+        return evidence
+    }
+
+    var hasFallbackSpacingAxis: Bool {
+        validSpacing(pixelSpacingRow) == nil
+            || validSpacing(pixelSpacingColumn) == nil
+            || (
+                validSpacing(projectedSliceSpacing) == nil
+                    && validSpacing(spacingBetweenSlices) == nil
+                    && validSpacing(sliceThickness) == nil
+            )
+    }
+
+    private func validSpacing(_ value: Double?) -> Double? {
+        value.flatMap { $0.isFinite && $0 > 0 && $0 <= 20 ? $0 : nil }
+    }
 
     var displayPlane: String {
         switch plane {
@@ -1677,17 +1732,19 @@ final class AppState: ObservableObject {
         dicomRescueCandidates = candidates
         let primary = candidates.first(where: { $0.role == "primary" }) ?? candidates.first
         selectedDicomRescueCandidateID = primary?.id
-        let z = primary?.sliceThickness.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1.0
-        // X/Y have no trustworthy patient geometry in Secondary Capture. A finite,
-        // editable fallback is intentionally presented as low confidence.
-        rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: z)
+        rescueEstimatedSpacing = primary?.initialSpacing
+            ?? RescueSpacing(x: 1.0, y: 1.0, z: 1.0)
         rescueSpacingX = rescueEstimatedSpacing.x
         rescueSpacingY = rescueEstimatedSpacing.y
         rescueSpacingZ = rescueEstimatedSpacing.z
-        rescueConfidence = primary?.sliceThickness == nil ? "未推定（仮の初期値）" : "低"
-        rescueEvidence = primary?.sliceThickness == nil
-            ? ["標準DICOM幾何タグが不足", "X/Y/Zは編集用の仮初期値"]
-            : ["Slice ThicknessからZ候補を取得", "X/Yは編集用の仮初期値"]
+        rescueXYLocked = primary?.pixelSpacingRow == nil
+            || primary?.pixelSpacingColumn == nil
+            || primary?.pixelSpacingRow == primary?.pixelSpacingColumn
+        rescueConfidence = primary?.hasFallbackSpacingAxis == false
+            ? "低"
+            : "未推定（仮の初期値を含む）"
+        rescueEvidence = primary?.initialSpacingEvidence
+            ?? ["標準DICOM幾何タグが不足", "X/Y/Zは編集用の仮初期値"]
         rescueWorkflowState = .manualOnly
         rescueCropMinX = 0
         rescueCropMinY = 0
@@ -1834,7 +1891,18 @@ final class AppState: ObservableObject {
         rescuePreparationCancellationRequested = false
         isRunning = true
         runner.resetTerminationRequest()
-        let hints = "unknown,unknown,\(String(format: "%.6f", rescueEstimatedSpacing.z))"
+        let selectedCandidate = selectedDicomRescueCandidate
+        let hintValues: [Double?] = [
+            selectedCandidate?.pixelSpacingColumn,
+            selectedCandidate?.pixelSpacingRow,
+            selectedCandidate?.preferredSliceStep,
+        ]
+        let hints = hintValues.map { value in
+            guard let value, value.isFinite, value > 0, value <= 20 else {
+                return "unknown"
+            }
+            return String(format: "%.6f", value)
+        }.joined(separator: ",")
         let evidenceJSON = outputJSON.deletingLastPathComponent().appendingPathComponent(
             "rescue_evidence.json"
         )
@@ -1851,6 +1919,33 @@ final class AppState: ObservableObject {
             ]
         }
         var usedTags: [[String: Any]] = []
+        if let row = selectedCandidate?.pixelSpacingRow,
+           let column = selectedCandidate?.pixelSpacingColumn {
+            usedTags.append([
+                "tag": "0028,0030",
+                "name": "PixelSpacing",
+                "value_mm": [row, column],
+                "consistency": "all_equal",
+                "source": "standard_dicom",
+            ])
+        }
+        if let projected = selectedCandidate?.projectedSliceSpacing {
+            usedTags.append([
+                "tag": "0020,0032+0020,0037",
+                "name": "IPPProjectedSliceSpacing",
+                "value_mm": projected,
+                "consistency": "median_unique_positions",
+                "source": "standard_dicom_derived",
+            ])
+        } else if let spacing = selectedCandidate?.spacingBetweenSlices {
+            usedTags.append([
+                "tag": "0018,0088",
+                "name": "SpacingBetweenSlices",
+                "value_mm": spacing,
+                "consistency": "all_equal",
+                "source": "standard_dicom",
+            ])
+        }
         if let thickness = selectedDicomRescueCandidate?.sliceThickness {
             usedTags.append([
                 "tag": "0018,0050",
@@ -1860,11 +1955,26 @@ final class AppState: ObservableObject {
                 "source": "standard_dicom",
             ])
         }
+        var spacingSources: [String] = []
+        if selectedCandidate?.pixelSpacingRow != nil,
+           selectedCandidate?.pixelSpacingColumn != nil {
+            spacingSources.append("pixel_spacing")
+        }
+        if selectedCandidate?.projectedSliceSpacing != nil {
+            spacingSources.append("ipp_iop_projected_spacing")
+        } else if selectedCandidate?.spacingBetweenSlices != nil {
+            spacingSources.append("spacing_between_slices")
+        } else if selectedCandidate?.sliceThickness != nil {
+            spacingSources.append("slice_thickness")
+        }
+        if selectedCandidate?.hasFallbackSpacingAxis != false {
+            spacingSources.append("fallback_initial_candidate")
+        }
         writeJSON(
             [
-                "spacing_sources": usedTags.isEmpty
+                "spacing_sources": spacingSources.isEmpty
                     ? ["fallback_initial_candidate"]
-                    : ["slice_thickness", "fallback_initial_candidate"],
+                    : spacingSources,
                 "used_series": usedSeries,
                 "used_dicom_tags": usedTags,
             ],
@@ -1878,11 +1988,11 @@ final class AppState: ObservableObject {
             sourceManifestSHA256: rescueSourceManifestSHA256,
             spacingHints: hints,
             evidenceJSON: evidenceJSON,
-            axialSliceStepMM: selectedDicomRescueCandidate?.sliceThickness,
+            axialSliceStepMM: selectedCandidate?.preferredSliceStep,
             coronalCount: coronal?.fileCount,
-            coronalSliceStepMM: coronal?.sliceThickness,
+            coronalSliceStepMM: coronal?.preferredSliceStep,
             sagittalCount: sagittal?.fileCount,
-            sagittalSliceStepMM: sagittal?.sliceThickness,
+            sagittalSliceStepMM: sagittal?.preferredSliceStep,
             coronalReference: coronalReference,
             sagittalReference: sagittalReference,
             outputJSON: outputJSON
@@ -1948,11 +2058,17 @@ final class AppState: ObservableObject {
             return
         }
         selectedDicomRescueCandidateID = candidate.id
-        let z = candidate.sliceThickness.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1.0
-        rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: z)
-        rescueSpacingX = 1.0
-        rescueSpacingY = 1.0
-        rescueSpacingZ = z
+        rescueEstimatedSpacing = candidate.initialSpacing
+        rescueSpacingX = rescueEstimatedSpacing.x
+        rescueSpacingY = rescueEstimatedSpacing.y
+        rescueSpacingZ = rescueEstimatedSpacing.z
+        rescueXYLocked = candidate.pixelSpacingRow == nil
+            || candidate.pixelSpacingColumn == nil
+            || candidate.pixelSpacingRow == candidate.pixelSpacingColumn
+        rescueConfidence = candidate.hasFallbackSpacingAxis
+            ? "未推定（仮の初期値を含む）"
+            : "低"
+        rescueEvidence = candidate.initialSpacingEvidence
         rescueCropMaxX = max(candidate.columns, 1)
         rescueCropMaxY = max(candidate.rows, 1)
         rescueCropMaxZ = max(candidate.fileCount, 1)
@@ -3814,6 +3930,7 @@ func secondaryCaptureRescueCandidates(payload: [String: Any]) -> [SecondaryCaptu
         guard let classification = item["classification"] as? [String: Any],
               let status = classification["status"] as? String,
               status == "secondary_capture_rescue_candidate"
+                || status == "geometry_rescue_candidate"
                 || status == "secondary_capture_reference_candidate",
               let seriesKey = item["series_key"] as? String,
               !seriesKey.isEmpty
@@ -3837,7 +3954,7 @@ func secondaryCaptureRescueCandidates(payload: [String: Any]) -> [SecondaryCaptu
             plane = "unknown"
         }
         let role = (classification["rescue_role"] as? String)
-            ?? (status == "secondary_capture_rescue_candidate" ? "primary" : "reference")
+            ?? (status == "secondary_capture_reference_candidate" ? "reference" : "primary")
         let reconstructionGroup: String
         if description.split(whereSeparator: { $0 == " " || $0 == "_" || $0 == "-" }).contains("BO") {
             reconstructionGroup = "BO"
@@ -3848,11 +3965,22 @@ func secondaryCaptureRescueCandidates(payload: [String: Any]) -> [SecondaryCaptu
         }
         let sliceThickness: Double? = {
             if let summary = item["slice_thickness"] as? [String: Any],
+               summary["consistent"] as? Bool == true,
                let values = summary["values_mm"] as? [Any] {
                 return values.compactMap(jsonDouble).first
             }
             return jsonDouble(item["slice_thickness_mm"])
         }()
+        let spacingBetweenSlices: Double? = {
+            guard let summary = item["spacing_between_slices"] as? [String: Any],
+                  summary["consistent"] as? Bool == true,
+                  let values = summary["values_mm"] as? [Any]
+            else {
+                return nil
+            }
+            return values.compactMap(jsonDouble).first
+        }()
+        let pixelSpacing = item["pixel_spacing_mm"] as? [String: Any]
         let contentManifestSHA256: String? = {
             guard let manifest = item["ordered_content_manifest"] as? [String: Any],
                   manifest["algorithm"] as? String == "sha256",
@@ -3867,12 +3995,17 @@ func secondaryCaptureRescueCandidates(payload: [String: Any]) -> [SecondaryCaptu
         return SecondaryCaptureRescueCandidate(
             seriesKey: seriesKey,
             seriesNumber: jsonInt(item["series_number"]),
+            classificationStatus: status,
             plane: plane,
             role: role,
             reconstructionGroup: reconstructionGroup,
             fileCount: jsonInt(item["effective_frame_count"]) ?? jsonInt(item["file_count"]) ?? 0,
             rows: jsonInt(item["rows"]) ?? 0,
             columns: jsonInt(item["columns"]) ?? 0,
+            pixelSpacingRow: pixelSpacing.flatMap { jsonDouble($0["row"]) },
+            pixelSpacingColumn: pixelSpacing.flatMap { jsonDouble($0["column"]) },
+            projectedSliceSpacing: jsonDouble(item["projected_slice_spacing_mm"]),
+            spacingBetweenSlices: spacingBetweenSlices,
             sliceThickness: sliceThickness,
             contentManifestSHA256: contentManifestSHA256,
             studyKeySHA256: item["study_key_sha256"] as? String
@@ -4241,6 +4374,8 @@ func dicomClassificationLabel(_ status: String) -> String {
         return "通常CTとして取り込み可能"
     case "secondary_capture_rescue_candidate":
         return "寸法確認が必要な救済候補"
+    case "geometry_rescue_candidate":
+        return "一部の寸法確認が必要なCT"
     case "secondary_capture_reference_candidate":
         return "三方向推定の参照系列"
     case "viewer_export_mpr_mixed_candidate":

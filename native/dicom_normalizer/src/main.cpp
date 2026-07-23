@@ -706,6 +706,57 @@ double median_sorted(std::vector<double> values) {
     return (values[mid - 1] + values[mid]) * 0.5;
 }
 
+std::optional<double> projected_slice_spacing_mm(const SeriesSummary& series) {
+    if (series.files.size() < 2) {
+        return std::nullopt;
+    }
+    const DicomMeta& first = series.files.front();
+    if (!first.has_image_orientation_patient) {
+        return std::nullopt;
+    }
+    const auto normal = normalize3(cross3(
+        normalize3(row_cosines(first.image_orientation_patient)),
+        normalize3(column_cosines(first.image_orientation_patient))));
+    if (!(norm3(normal) > 0.0)) {
+        return std::nullopt;
+    }
+    std::vector<double> positions;
+    positions.reserve(series.files.size());
+    for (const auto& item : series.files) {
+        bool same_orientation = true;
+        for (std::size_t axis = 0; axis < first.image_orientation_patient.size(); ++axis) {
+            if (std::abs(
+                    item.image_orientation_patient[axis]
+                    - first.image_orientation_patient[axis]) > 1e-4) {
+                same_orientation = false;
+                break;
+            }
+        }
+        if (!item.has_image_position_patient
+            || !item.has_image_orientation_patient
+            || !same_orientation) {
+            return std::nullopt;
+        }
+        positions.push_back(dot3(item.image_position_patient, normal));
+    }
+    std::sort(positions.begin(), positions.end());
+    std::vector<double> differences;
+    differences.reserve(positions.size() - 1);
+    for (std::size_t index = 1; index < positions.size(); ++index) {
+        const double difference = std::abs(positions[index] - positions[index - 1]);
+        if (difference > 1e-6) {
+            differences.push_back(difference);
+        }
+    }
+    if (differences.size() + 1 != positions.size()) {
+        return std::nullopt;
+    }
+    const double spacing = median_sorted(differences);
+    return spacing > 0.0 && std::isfinite(spacing)
+        ? std::optional<double>(spacing)
+        : std::nullopt;
+}
+
 std::vector<ViewerExportGroup> build_viewer_export_groups(const SeriesSummary& series) {
     std::map<std::string, std::vector<const DicomMeta*>> grouped;
     for (const auto& file : series.files) {
@@ -886,6 +937,8 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
     int max_number_of_frames = 0;
     int compressed_count = 0;
     int pixel_decode_failure_count = 0;
+    bool instance_order_unambiguous = true;
+    std::set<int> seen_instance_numbers;
     for (const auto& item : series.files) {
         pixel_spacing_count += item.has_pixel_spacing ? 1 : 0;
         position_count += item.has_image_position_patient ? 1 : 0;
@@ -893,6 +946,10 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         max_number_of_frames = std::max(max_number_of_frames, item.number_of_frames.value_or(0));
         compressed_count += is_compressed_transfer_syntax(item.transfer_syntax_uid) ? 1 : 0;
         pixel_decode_failure_count += item.has_pixel_data && !item.pixel_decode_ok ? 1 : 0;
+        if (!item.instance_number.has_value()
+            || !seen_instance_numbers.insert(*item.instance_number).second) {
+            instance_order_unambiguous = false;
+        }
     }
     const int effective_frame_count = std::max(file_count, max_number_of_frames);
 
@@ -1133,6 +1190,37 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
                 "select_viewer_export_group",
                 false,
                 "Viewer/MPR export-like mixed geometry. Select one geometry group for non-diagnostic preview rescue; prefer original axial CT if available.");
+        }
+        const bool orientation_axial_like = first.has_image_orientation_patient
+            && [&first]() {
+                const auto normal = normalize3(cross3(
+                    normalize3(row_cosines(first.image_orientation_patient)),
+                    normalize3(column_cosines(first.image_orientation_patient))));
+                const auto plane = plane_label_from_normal(normal);
+                return plane == "axial_like" || plane == "oblique_axial_like";
+            }();
+        const bool explicit_axial_stack = axial_like || orientation_axial_like;
+        if (effective_frame_count >= kMinVolumeSlices
+            && shape_consistent
+            && instance_order_unambiguous
+            && explicit_axial_stack) {
+            std::vector<std::string> rescue_reasons = reasons;
+            rescue_reasons.push_back("partial_standard_geometry");
+            rescue_reasons.push_back("manual_confirmation_required");
+            if (orientation_axial_like) {
+                rescue_reasons.push_back("axial_orientation_from_iop");
+            } else {
+                rescue_reasons.push_back("axial_label_seed");
+            }
+            return make(
+                "geometry_rescue_candidate",
+                "B: partial geometry rescue",
+                "C: rescue only",
+                rescue_reasons,
+                "",
+                "estimate_missing_geometry_then_confirm",
+                false,
+                "Some standard CT geometry is missing or inconsistent. Preserve available tags, estimate only missing axes, and require preview confirmation.");
         }
         return make(
             "reject",
@@ -1627,8 +1715,26 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     out << pad2 << "\"image_orientation_patient_consistent\": " << json_bool(orientation_consistent) << ",\n";
     out << pad2 << "\"has_pixel_spacing\": " << json_bool(pixel_spacing_count == static_cast<int>(series.files.size())) << ",\n";
     out << pad2 << "\"pixel_spacing_count\": " << pixel_spacing_count << ",\n";
+    out << pad2 << "\"pixel_spacing_mm\": ";
+    if (pixel_spacing_count == static_cast<int>(series.files.size())
+        && pixel_spacing_consistent
+        && first.pixel_spacing[0] > 0.0
+        && first.pixel_spacing[1] > 0.0) {
+        out << "{\"row\": " << first.pixel_spacing[0]
+            << ", \"column\": " << first.pixel_spacing[1] << "}";
+    } else {
+        out << "null";
+    }
+    out << ",\n";
     out << pad2 << "\"image_position_patient_count\": " << position_count << ",\n";
     out << pad2 << "\"image_orientation_patient_count\": " << orientation_count << ",\n";
+    out << pad2 << "\"projected_slice_spacing_mm\": ";
+    if (const auto spacing = projected_slice_spacing_mm(series); spacing.has_value()) {
+        out << *spacing;
+    } else {
+        out << "null";
+    }
+    out << ",\n";
     out << pad2 << "\"slice_thickness\": "
         << numeric_tag_evidence_json(
                series, &DicomMeta::has_slice_thickness, &DicomMeta::slice_thickness)
@@ -2711,9 +2817,10 @@ int export_rescue_stack(const Args& args) {
     }
     const auto classification = classify_series(*selected, detect_optional_tools());
     if (classification.status != "secondary_capture_rescue_candidate"
+        && classification.status != "geometry_rescue_candidate"
         && classification.status != "secondary_capture_reference_candidate") {
         throw std::runtime_error(
-            "export-rescue-stack requires a Secondary Capture rescue or reference candidate");
+            "export-rescue-stack requires a geometry rescue or reference candidate");
     }
 
     std::vector<dicom_normalizer::RescueStackInput> inputs;
@@ -2752,9 +2859,10 @@ int prepare_rescue(const Args& args) {
     }
     const auto tools = detect_optional_tools();
     const auto classification = classify_series(*selected, tools);
-    if (classification.status != "secondary_capture_rescue_candidate") {
+    if (classification.status != "secondary_capture_rescue_candidate"
+        && classification.status != "geometry_rescue_candidate") {
         throw std::runtime_error(
-            "prepare-rescue requires secondary_capture_rescue_candidate, got "
+            "prepare-rescue requires a geometry rescue candidate, got "
             + classification.status);
     }
 
