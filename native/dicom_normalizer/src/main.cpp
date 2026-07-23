@@ -752,9 +752,19 @@ std::optional<double> projected_slice_spacing_mm(const SeriesSummary& series) {
         return std::nullopt;
     }
     const double spacing = median_sorted(differences);
-    return spacing > 0.0 && std::isfinite(spacing)
-        ? std::optional<double>(spacing)
-        : std::nullopt;
+    if (!(spacing > 0.0) || !std::isfinite(spacing)) {
+        return std::nullopt;
+    }
+    const double tolerance = std::max(0.10, spacing * 0.05);
+    if (std::any_of(
+            differences.begin(),
+            differences.end(),
+            [spacing, tolerance](double difference) {
+                return std::abs(difference - spacing) > tolerance;
+            })) {
+        return std::nullopt;
+    }
+    return spacing;
 }
 
 std::vector<ViewerExportGroup> build_viewer_export_groups(const SeriesSummary& series) {

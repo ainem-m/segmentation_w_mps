@@ -553,6 +553,16 @@ def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
                 slice_thickness="2.0",
                 pixel_spacing="0.4\\0.6",
             )
+            irregular_position = index * 0.8 if index < 16 else 12.0 + (index - 15) * 1.4
+            write_dicom(
+                root / "irregular_z" / f"ct_{index:04d}.dcm",
+                series_number=196,
+                series_uid="1.2.3.partial.irregular.z",
+                instance_number=index + 1,
+                include_pixel_spacing=False,
+                slice_thickness="1.1",
+                image_position=f"0\\0\\{irregular_position}",
+            )
 
         payload = load_audit(binary, root)
         missing_xy = series_by_uid(payload, "1.2.3.partial.missing.xy")
@@ -567,6 +577,11 @@ def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
         assert missing_z["projected_slice_spacing_mm"] is None
         assert missing_z["spacing_between_slices"]["values_mm"] == [1.5]
         assert missing_z["slice_thickness"]["values_mm"] == [2]
+
+        irregular_z = series_by_uid(payload, "1.2.3.partial.irregular.z")
+        assert irregular_z["classification"]["status"] == "geometry_rescue_candidate"
+        assert irregular_z["projected_slice_spacing_mm"] is None
+        assert irregular_z["slice_thickness"]["values_mm"] == [1.1]
 
         output = root / "exported_partial"
         proc = run(
