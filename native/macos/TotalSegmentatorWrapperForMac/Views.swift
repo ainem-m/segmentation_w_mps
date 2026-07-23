@@ -55,6 +55,8 @@ struct RootView: View {
             InputAndCreationView()
         case .running:
             RunProgressView()
+        case .dicomRescue:
+            DicomRescueView()
         case .ctPreview:
             CTPreviewView()
         case .result:
@@ -181,6 +183,7 @@ struct HeaderView: View {
         case .start: return "最初はSampleで流れを確認"
         case .inputAndCreation: return "入力と作成内容"
         case .running: return "処理中"
+        case .dicomRescue: return "寸法を確認・調整"
         case .ctPreview: return "CT画像を確認"
         case .result: return "結果"
         }
@@ -192,6 +195,7 @@ struct HeaderView: View {
         case .start: return "入力から結果確認までを先に試せます。"
         case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
         case .running: return "現在の処理と経過時間を表示します。"
+        case .dicomRescue: return "三方向の断面を見ながら、参考用3Dプレビューの寸法を調整します。"
         case .ctPreview: return "歯や顎が3枚とも見えていれば、このCTを使えます。"
         case .result: return "作成したファイルと次の操作を確認できます。"
         }
@@ -1010,6 +1014,338 @@ private struct WeightedRunProgressBar: View {
                 pulse = true
             }
         }
+    }
+}
+
+struct DicomRescueView: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Label(
+                    "寸法情報を画像から推定しています。生成結果は参考用です。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.headline)
+                .foregroundStyle(.orange)
+
+                HStack {
+                    Text(state.rescueWorkflowState.label)
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    if state.isRunning {
+                        Button("自動処理をキャンセル") {
+                            state.cancelSecondaryCaptureRescuePreparation()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Text("信頼度: \(state.rescueConfidence)")
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
+                GroupBox("利用可能な系列") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(state.dicomRescueCandidates) { candidate in
+                            Button {
+                                state.selectSecondaryCaptureRescueCandidate(candidate)
+                            } label: {
+                                HStack {
+                                    Image(systemName: state.selectedDicomRescueCandidateID == candidate.id
+                                        ? "checkmark.circle.fill" : "circle")
+                                    Text(candidate.displayPlane)
+                                        .font(.headline)
+                                        .frame(width: 92, alignment: .leading)
+                                    Text(candidate.reconstructionGroup)
+                                        .frame(width: 64, alignment: .leading)
+                                    Text(candidate.displayRole)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("\(candidate.fileCount)枚 / \(candidate.rows)×\(candidate.columns)")
+                                        .foregroundStyle(.secondary)
+                                    Text(candidate.sliceThickness.map { String(format: "厚さ %.4g mm", $0) } ?? "厚さ不明")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(candidate.role != "primary")
+                        }
+                    }
+                }
+
+                GroupBox("推定根拠") {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(state.rescueEvidence, id: \.self) { reason in
+                            Label(reason, systemImage: "info.circle")
+                        }
+                        Text("候補値が生成されても、正確な寸法が確認できたことを意味しません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack(alignment: .top, spacing: 14) {
+                    GroupBox("X / Y / Z spacing（mm）") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            RescueSpacingEditor(
+                                axis: "X",
+                                value: $state.rescueSpacingX,
+                                changed: { state.rescueSpacingDidChange(axis: .x) }
+                            )
+                            RescueSpacingEditor(
+                                axis: "Y",
+                                value: $state.rescueSpacingY,
+                                changed: { state.rescueSpacingDidChange(axis: .y) }
+                            )
+                            RescueSpacingEditor(
+                                axis: "Z",
+                                value: $state.rescueSpacingZ,
+                                changed: { state.rescueSpacingDidChange(axis: .z) }
+                            )
+                            Toggle("X/Yを同じ値に固定", isOn: $state.rescueXYLocked)
+                                .onChange(of: state.rescueXYLocked) { locked in
+                                    if locked {
+                                        state.rescueSpacingY = state.rescueSpacingX
+                                        state.rescueSpacingDidChange(axis: .x)
+                                    }
+                                }
+                            Button("自動推定値へ戻す") {
+                                state.resetRescueGeometryToEstimate()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    GroupBox("向き") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("軸入れ替え", selection: $state.rescueAxisPermutation) {
+                                ForEach(RescueAxisPermutation.allCases) { permutation in
+                                    Text(permutation.displayName).tag(permutation)
+                                }
+                            }
+                            .onChange(of: state.rescueAxisPermutation) { _ in
+                                state.rescueTransformDidChange()
+                            }
+                            Stepper(
+                                "90度回転: \(state.rescueRotationQuarterTurns * 90)°",
+                                value: $state.rescueRotationQuarterTurns,
+                                in: 0...3
+                            )
+                            .onChange(of: state.rescueRotationQuarterTurns) { _ in
+                                state.rescueTransformDidChange()
+                            }
+                            Toggle("スライス順を反転", isOn: $state.rescueSliceOrderReversed)
+                                .onChange(of: state.rescueSliceOrderReversed) { _ in
+                                    state.rescueTransformDidChange()
+                                }
+                            Divider()
+                            Text("crop範囲（min / max exclusive）")
+                                .font(.caption.weight(.semibold))
+                            RescueCropEditor(
+                                axis: "X",
+                                minValue: $state.rescueCropMinX,
+                                maxValue: $state.rescueCropMaxX,
+                                changed: state.rescueTransformDidChange
+                            )
+                            RescueCropEditor(
+                                axis: "Y",
+                                minValue: $state.rescueCropMinY,
+                                maxValue: $state.rescueCropMaxY,
+                                changed: state.rescueTransformDidChange
+                            )
+                            RescueCropEditor(
+                                axis: "Z",
+                                minValue: $state.rescueCropMinZ,
+                                maxValue: $state.rescueCropMaxZ,
+                                changed: state.rescueTransformDidChange
+                            )
+                        }
+                    }
+                }
+
+                GroupBox("三方向MPR・疑似3Dプレビュー") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            rescueMPRPanel("AXIAL", key: "axial")
+                            rescueMPRPanel("CORONAL", key: "coronal")
+                            rescueMPRPanel("SAGITTAL", key: "sagittal")
+                        }
+                        HStack(alignment: .top, spacing: 10) {
+                            if let url = state.rescuePseudo3DPreviewURL,
+                               !state.rescuePreviewMetadataInferenceStarted {
+                                RescueArtifactImage(title: "疑似3D（AI推論なし）", url: url)
+                                    .frame(maxWidth: 260)
+                            } else {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label("疑似3D preview待機中", systemImage: "cube.transparent")
+                                    Text(state.rescuePreviewStatus)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Button {
+                            state.requestRescuePreviewUpdate()
+                        } label: {
+                            Label("三方向プレビューを更新（AI推論なし）", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!state.canRequestRescuePreview)
+                        Text("crosshair・zoom・pan・距離計測はpreview volume rendererへ接続するhookです。renderer未接続時はtransform変更を画像へ適用したとは表示せず、確定操作も無効になります。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                GroupBox("既知の長さでキャリブレーション") {
+                    HStack {
+                        Picker("更新軸", selection: $state.rescueCalibrationAxis) {
+                            ForEach(RescueCalibrationAxis.allCases) { axis in
+                                Text(axis.displayName).tag(axis)
+                            }
+                        }
+                        .frame(width: 140)
+                        TextField(
+                            "計測した長さ",
+                            value: $state.rescueMeasuredLengthMM,
+                            format: .number.precision(.fractionLength(0...4))
+                        )
+                        Text("mm")
+                        TextField(
+                            "既知の長さ",
+                            value: $state.rescueKnownLengthMM,
+                            format: .number.precision(.fractionLength(0...4))
+                        )
+                        Text("mm")
+                        Button("反映") {
+                            state.applyRescueKnownLengthCalibration()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                if !state.rescueInlineWarning.isEmpty {
+                    Label(state.rescueInlineWarning, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+
+                NextPhaseButton(
+                    title: "この寸法を確定して3Dプレビュー作成へ",
+                    systemImage: "checkmark.circle.fill",
+                    isEnabled: state.canConfirmSecondaryCaptureRescue
+                ) {
+                    state.confirmSecondaryCaptureRescue()
+                }
+                Text("この確定操作まではAI推論を開始しません。疑似NIfTIのshape・spacing readbackが一致した場合だけTotalSegmentatorへ進みます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rescueMPRPanel(_ label: String, key: String) -> some View {
+        if let slice = state.rescueMPRPreviewSlices.first(where: { $0.plane.lowercased().contains(key) }),
+           !state.rescuePreviewMetadataInferenceStarted {
+            RescueArtifactImage(title: label, url: slice.url)
+        } else {
+            RescueMPRPlaceholder(plane: label, revision: state.rescuePreviewRevision)
+        }
+    }
+}
+
+private struct RescueSpacingEditor: View {
+    let axis: String
+    @Binding var value: Double
+    let changed: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(axis)
+                .font(.headline)
+                .frame(width: 18)
+            TextField(
+                "\(axis) spacing",
+                value: $value,
+                format: .number.precision(.fractionLength(0...6))
+            )
+            .frame(width: 110)
+            .onChange(of: value) { _ in changed() }
+            Stepper("", value: $value, in: 0.01...20, step: 0.01)
+                .labelsHidden()
+        }
+    }
+}
+
+private struct RescueCropEditor: View {
+    let axis: String
+    @Binding var minValue: Int
+    @Binding var maxValue: Int
+    let changed: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(axis)
+                .frame(width: 18)
+            TextField("min", value: $minValue, format: .number)
+                .frame(width: 64)
+            Text("〜")
+            TextField("max", value: $maxValue, format: .number)
+                .frame(width: 64)
+        }
+        .onChange(of: minValue) { _ in changed() }
+        .onChange(of: maxValue) { _ in changed() }
+    }
+}
+
+private struct RescueArtifactImage: View {
+    let title: String
+    let url: URL
+
+    var body: some View {
+        VStack(spacing: 5) {
+            if let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .background(Color.black)
+            } else {
+                Rectangle()
+                    .fill(Color.black.opacity(0.85))
+                    .overlay(Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange))
+            }
+            Text(title)
+                .font(.caption.weight(.semibold))
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct RescueMPRPlaceholder: View {
+    let plane: String
+    let revision: Int
+
+    var body: some View {
+        VStack(spacing: 5) {
+            ZStack {
+                Rectangle()
+                    .fill(Color.black.opacity(0.85))
+                Image(systemName: "viewfinder")
+                    .font(.largeTitle)
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+            .aspectRatio(1, contentMode: .fit)
+            Text("\(plane) · preview \(revision)")
+                .font(.caption.weight(.semibold))
+        }
+        .accessibilityLabel("\(plane) MPR preview")
     }
 }
 

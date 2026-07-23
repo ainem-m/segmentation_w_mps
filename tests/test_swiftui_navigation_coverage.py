@@ -33,7 +33,10 @@ def body(source: str, declaration: str) -> str:
 class SwiftUINavigationCoverageTests(unittest.TestCase):
     def test_all_current_screens_are_rendered_and_labeled(self):
         screens = set(re.findall(r"case ([A-Za-z][A-Za-z0-9_]*)", body(STATE, "enum AppScreen")))
-        self.assertEqual(screens, {"setup", "start", "inputAndCreation", "running", "ctPreview", "result"})
+        self.assertEqual(
+            screens,
+            {"setup", "start", "inputAndCreation", "running", "dicomRescue", "ctPreview", "result"},
+        )
         root = body(VIEWS, "struct RootView")
         header = body(VIEWS, "struct HeaderView")
         for screen in screens:
@@ -58,6 +61,78 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("手元のCTを選ぶ", shared_input)
         self.assertIn("別のCTを選ぶ", shared_input)
         self.assertIn("NextPhaseButton(", shared_input)
+
+    def test_secondary_capture_rescue_has_an_explicit_confirmation_gate(self):
+        app_screen = body(STATE, "enum AppScreen")
+        self.assertIn("case dicomRescue", app_screen)
+        root = body(VIEWS, "struct RootView")
+        self.assertIn("case .dicomRescue:", root)
+        self.assertIn("DicomRescueView()", root)
+
+        audit = body(STATE, "func runDicomAudit")
+        clean_branch = audit.index("let cleanCandidates")
+        rescue_branch = audit.index("let rescueCandidates")
+        viewer_branch = audit.index("let viewerExportCandidates")
+        self.assertLess(clean_branch, rescue_branch)
+        self.assertLess(rescue_branch, viewer_branch)
+        self.assertIn("secondaryCaptureRescueCandidates", audit)
+        self.assertIn("beginSecondaryCaptureRescue", audit)
+
+        rescue_view = body(VIEWS, "struct DicomRescueView")
+        for text in (
+            "寸法情報を画像から推定しています。生成結果は参考用です。",
+            "X/Yを同じ値に固定",
+            "自動推定値へ戻す",
+            "スライス順を反転",
+            "三方向プレビューを更新（AI推論なし）",
+            "この寸法を確定して3Dプレビュー作成へ",
+            "既知の長さ",
+            "AXIAL",
+            "CORONAL",
+            "SAGITTAL",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, rescue_view)
+        self.assertIn("rescueRotationQuarterTurns", rescue_view)
+        self.assertIn("rescueAxisPermutation", rescue_view)
+        self.assertIn("RescueMPRPlaceholder", rescue_view)
+        self.assertIn("rescueCropMinX", rescue_view)
+        self.assertIn("rescueCropMaxZ", rescue_view)
+        self.assertIn("rescueMPRPreviewSlices", rescue_view)
+        self.assertIn("rescuePseudo3DPreviewURL", rescue_view)
+
+        confirm = body(STATE, "func confirmSecondaryCaptureRescue")
+        self.assertIn("canFinalizeRescueTransform", confirm)
+        self.assertIn("finalizeSecondaryCaptureRescue()", confirm)
+        self.assertNotIn("dicomPrepareRescueCommand", confirm)
+        self.assertNotIn("CommandBuilder.runCommand", confirm)
+        prepared = body(STATE, "private func acceptPreparedRescueNifti")
+        self.assertIn("guard rescueConfirmationWasExplicit", prepared)
+        self.assertIn("startRun()", prepared)
+
+    def test_rescue_command_uses_existing_prepare_rescue_cli_contract(self):
+        command = body(COMMANDS, "static func dicomPrepareRescueCommand")
+        self.assertIn('"dicom-normalizer-prepare-rescue"', command)
+        self.assertIn('"--patched-spacing"', command)
+        self.assertIn("spacing.commandValue", command)
+        self.assertIn('"--series-key"', command)
+        export_stack = body(COMMANDS, "static func dicomExportRescueStackCommand")
+        self.assertIn('"export-rescue-stack"', export_stack)
+        self.assertIn('"--series-key"', export_stack)
+        for declaration, subcommand in (
+            ("static func dicomRescueEstimateCommand", "dicom-rescue-estimate"),
+            ("static func dicomRescuePreviewCommand", "dicom-rescue-preview"),
+            ("static func dicomRescueFinalizeCommand", "dicom-rescue-finalize"),
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertIn(f'"{subcommand}"', body(COMMANDS, declaration))
+        finalize = body(COMMANDS, "static func dicomRescueFinalizeCommand")
+        self.assertIn('"--confirmation-token"', finalize)
+        begin_rescue = body(STATE, "func beginSecondaryCaptureRescue")
+        self.assertIn("exportPrimaryRescueStackIfAvailable", begin_rescue)
+        export = body(STATE, "private func exportPrimaryRescueStackIfAvailable")
+        self.assertIn("source_manifest.json", export)
+        self.assertIn("startSecondaryCaptureSpacingEstimation", export)
 
     def test_creation_choices_offer_equal_default_and_other_routes_without_toothseg(self):
         creation = body(STATE, "enum CreationChoice")
@@ -229,7 +304,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
                 self.assertIn(label, VIEWS)
 
     def test_every_phase_uses_the_component_matching_its_navigation_role(self):
-        self.assertEqual(VIEWS.count("NextPhaseButton("), 9)
+        self.assertEqual(VIEWS.count("NextPhaseButton("), 10)
 
         setup = body(VIEWS, "struct SetupView")
         start = body(VIEWS, "struct StartChoiceView")

@@ -19,6 +19,7 @@ from totalsegmentator_wrapper_mac.rescue_pipeline import (
     create_preview,
     finalize_rescue,
     read_nifti,
+    write_preview_artifacts,
 )
 
 
@@ -161,6 +162,30 @@ class RescuePipelineTests(unittest.TestCase):
             with self.assertRaises(RescuePipelineError):
                 read_nifti(path)
 
+    def test_preview_artifacts_include_three_planes_and_spacing_aspect(self) -> None:
+        volume = np.arange(6 * 4 * 3, dtype=np.int16).reshape((6, 4, 3))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = write_preview_artifacts(
+                Path(temp_dir),
+                volume,
+                (0.5, 1.0, 2.0),
+            )
+
+            self.assertFalse(outputs["inference_started"])
+            self.assertEqual(
+                {item["plane"] for item in outputs["mpr_preview"]},
+                {"axial", "coronal", "sagittal"},
+            )
+            axial = next(
+                item for item in outputs["mpr_preview"] if item["plane"] == "axial"
+            )
+            self.assertEqual((axial["width"], axial["height"]), (3, 4))
+            for item in outputs["mpr_preview"]:
+                self.assertTrue(Path(item["path"]).read_bytes().startswith(b"P5\n"))
+            self.assertTrue(
+                Path(outputs["pseudo_3d_preview"]).read_bytes().startswith(b"P5\n")
+            )
+
     def test_cli_estimate_preview_finalize_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -201,6 +226,10 @@ class RescuePipelineTests(unittest.TestCase):
                     ]
                 )
             preview_metadata = json.loads(preview_metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(preview_metadata["outputs"]["mpr_preview"]), 3)
+            self.assertTrue(
+                Path(preview_metadata["outputs"]["pseudo_3d_preview"]).exists()
+            )
             with redirect_stdout(StringIO()):
                 finalize_code = main(
                     [

@@ -578,6 +578,164 @@ struct CommandBuilder {
         return command
     }
 
+    static func dicomPrepareRescueCommand(
+        python: URL,
+        dicomDir: URL,
+        outputDir: URL,
+        seriesNumber: Int?,
+        seriesKey: String,
+        spacing: RescueSpacing,
+        paths: AppPaths
+    ) -> [String] {
+        var command = [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dicom-normalizer-prepare-rescue",
+            "--dicom-dir",
+            dicomDir.path,
+            "--output",
+            outputDir.path,
+            "--patched-spacing",
+            spacing.commandValue,
+            "--binary",
+            paths.normalizer.path,
+        ]
+        if let seriesNumber {
+            command.append("--series-number")
+            command.append(String(seriesNumber))
+        } else {
+            command.append("--series-key")
+            command.append(seriesKey)
+        }
+        command.append("--dcm2niix")
+        command.append(paths.dcm2niix.path)
+        return command
+    }
+
+    static func dicomExportRescueStackCommand(
+        dicomDir: URL,
+        outputDir: URL,
+        seriesNumber: Int?,
+        seriesKey: String,
+        paths: AppPaths
+    ) -> [String] {
+        var command = [
+            paths.normalizer.path,
+            "export-rescue-stack",
+            "--dicom-dir",
+            dicomDir.path,
+            "--output",
+            outputDir.path,
+        ]
+        if let seriesNumber {
+            command.append("--series-number")
+            command.append(String(seriesNumber))
+        } else {
+            command.append("--series-key")
+            command.append(seriesKey)
+        }
+        return command
+    }
+
+    // Phase-2 rescue hooks. These commands operate only on the decoded rescue
+    // volume and safe geometry metadata. Preview never starts inference; finalize
+    // requires the token bound to the source hash, spacing and transform.
+    static func dicomRescueEstimateCommand(
+        python: URL,
+        decodedVolume: URL,
+        sourceManifestSHA256: String,
+        spacingHints: String,
+        evidenceJSON: URL,
+        axialSliceStepMM: Double?,
+        coronalCount: Int?,
+        coronalSliceStepMM: Double?,
+        sagittalCount: Int?,
+        sagittalSliceStepMM: Double?,
+        outputJSON: URL
+    ) -> [String] {
+        var command = [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dicom-rescue-estimate",
+            "--volume",
+            decodedVolume.path,
+            "--source-manifest-sha256",
+            sourceManifestSHA256,
+            "--spacing-hints",
+            spacingHints,
+            "--evidence",
+            evidenceJSON.path,
+        ]
+        if let axialSliceStepMM {
+            command += ["--axial-slice-step-mm", String(axialSliceStepMM)]
+        }
+        if let coronalCount {
+            command += ["--coronal-count", String(coronalCount)]
+        }
+        if let coronalSliceStepMM {
+            command += ["--coronal-slice-step-mm", String(coronalSliceStepMM)]
+        }
+        if let sagittalCount {
+            command += ["--sagittal-count", String(sagittalCount)]
+        }
+        if let sagittalSliceStepMM {
+            command += ["--sagittal-slice-step-mm", String(sagittalSliceStepMM)]
+        }
+        command += ["--output", outputJSON.path]
+        return command
+    }
+
+    static func dicomRescuePreviewCommand(
+        python: URL,
+        decodedVolume: URL,
+        geometryJSON: URL,
+        outputVolume: URL,
+        outputJSON: URL
+    ) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dicom-rescue-preview",
+            "--volume",
+            decodedVolume.path,
+            "--geometry",
+            geometryJSON.path,
+            "--output-volume",
+            outputVolume.path,
+            "--output",
+            outputJSON.path,
+        ]
+    }
+
+    static func dicomRescueFinalizeCommand(
+        python: URL,
+        decodedVolume: URL,
+        geometryJSON: URL,
+        confirmationToken: String,
+        outputNifti: URL,
+        outputJSON: URL
+    ) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "dicom-rescue-finalize",
+            "--volume",
+            decodedVolume.path,
+            "--geometry",
+            geometryJSON.path,
+            "--confirmation-token",
+            confirmationToken,
+            "--output-nifti",
+            outputNifti.path,
+            "--output",
+            outputJSON.path,
+        ]
+    }
+
     static func dicomPrepareViewerExportCommand(python: URL, dicomDir: URL, outputDir: URL, seriesNumber: Int?, seriesKey: String, groupID: String, paths: AppPaths) -> [String] {
         var command = [
             python.path,

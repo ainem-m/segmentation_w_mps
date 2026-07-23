@@ -599,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
             load_decoded_volume,
             write_decoded_volume,
             write_metadata,
+            write_preview_artifacts,
         )
         from totalsegmentator_wrapper_mac.rescue_estimation import estimate_rescue_spacing
 
@@ -658,6 +659,11 @@ def main(argv: list[str] | None = None) -> int:
                         estimate_metadata=geometry,
                     )
                     write_decoded_volume(args.output_volume, preview)
+                    metadata["outputs"] = write_preview_artifacts(
+                        args.output_volume.parent / "images",
+                        preview,
+                        metadata["preview"]["spacing_xyz"],
+                    )
                 else:
                     metadata = finalize_rescue(
                         volume,

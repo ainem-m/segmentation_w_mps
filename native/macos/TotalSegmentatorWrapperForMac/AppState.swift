@@ -11,6 +11,7 @@ enum AppScreen {
     case start
     case inputAndCreation
     case running
+    case dicomRescue
     case ctPreview
     case result
 }
@@ -161,6 +162,101 @@ struct ViewerExportCandidate: Identifiable, Equatable {
     }
 }
 
+enum DicomRescueWorkflowState: String, CaseIterable {
+    case rescueAvailable
+    case estimating
+    case editableReady
+    case userModified
+    case manualOnly
+    case preparingNifti
+    case validatingNifti
+    case prepareFailed
+    case readbackMismatch
+
+    var label: String {
+        switch self {
+        case .rescueAvailable: return "救済候補があります"
+        case .estimating: return "寸法候補を作成中"
+        case .editableReady: return "候補作成済み"
+        case .userModified: return "手動調整中"
+        case .manualOnly: return "手動調整が必要"
+        case .preparingNifti: return "確定した寸法を適用中"
+        case .validatingNifti: return "shape・spacingを確認中"
+        case .prepareFailed: return "救済データを作成できませんでした"
+        case .readbackMismatch: return "確定値と出力が一致しません"
+        }
+    }
+}
+
+enum RescueAxisPermutation: String, CaseIterable, Identifiable {
+    case xyz
+    case xzy
+    case yxz
+    case yzx
+    case zxy
+    case zyx
+
+    var id: String { rawValue }
+    var displayName: String { rawValue.uppercased() }
+}
+
+enum RescueCalibrationAxis: String, CaseIterable, Identifiable {
+    case x
+    case y
+    case z
+
+    var id: String { rawValue }
+    var displayName: String { rawValue.uppercased() }
+}
+
+struct RescueSpacing: Equatable {
+    var x: Double
+    var y: Double
+    var z: Double
+
+    var isValid: Bool {
+        [x, y, z].allSatisfy { $0.isFinite && $0 > 0 && $0 <= 20 }
+    }
+
+    var commandValue: String {
+        [x, y, z].map { String(format: "%.6f", $0) }.joined(separator: ",")
+    }
+}
+
+struct SecondaryCaptureRescueCandidate: Identifiable, Equatable {
+    let seriesKey: String
+    let seriesNumber: Int?
+    let plane: String
+    let role: String
+    let reconstructionGroup: String
+    let fileCount: Int
+    let rows: Int
+    let columns: Int
+    let sliceThickness: Double?
+    let contentManifestSHA256: String?
+    let studyKeySHA256: String?
+
+    var id: String { seriesKey }
+
+    var displayPlane: String {
+        switch plane {
+        case "axial": return "AXIAL"
+        case "coronal": return "CORONAL"
+        case "sagittal": return "SAGITTAL"
+        default: return "方向不明"
+        }
+    }
+
+    var displayRole: String {
+        switch role {
+        case "primary": return "primary"
+        case "reference": return "reference"
+        case "cross_validation": return "cross-validation"
+        default: return "excluded"
+        }
+    }
+}
+
 struct CTPreviewSlice: Identifiable, Equatable {
     let plane: String
     let label: String
@@ -216,6 +312,9 @@ final class AppState: ObservableObject {
     var lastDicomDirURL: URL?
     private var lastRunProgressAt: Date?
     private var lastRunProgressSignature = ""
+    private var rescueCalibrationRecords: [[String: Any]] = []
+    private var rescuePreparationCancellationRequested = false
+    private var rescuePreviewWorkItem: DispatchWorkItem?
 
     @Published var screen: AppScreen = .setup
     @Published var selectedStep = 0
@@ -305,6 +404,39 @@ final class AppState: ObservableObject {
     @Published var dicomSelectionWasChanged = false
     @Published var dicomViewerExportCandidates: [ViewerExportCandidate] = []
     @Published var selectedViewerExportCandidateID: String?
+    @Published var dicomRescueCandidates: [SecondaryCaptureRescueCandidate] = []
+    @Published var selectedDicomRescueCandidateID: String?
+    @Published var rescueWorkflowState: DicomRescueWorkflowState = .rescueAvailable
+    @Published var rescueSpacingX = 1.0
+    @Published var rescueSpacingY = 1.0
+    @Published var rescueSpacingZ = 1.0
+    @Published var rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: 1.0)
+    @Published var rescueConfidence = "低"
+    @Published var rescueEvidence: [String] = []
+    @Published var rescueXYLocked = true
+    @Published var rescueAxisPermutation: RescueAxisPermutation = .xyz
+    @Published var rescueRotationQuarterTurns = 0
+    @Published var rescueSliceOrderReversed = false
+    @Published var rescueCalibrationAxis: RescueCalibrationAxis = .x
+    @Published var rescueMeasuredLengthMM = 0.0
+    @Published var rescueKnownLengthMM = 0.0
+    @Published var rescueInlineWarning = ""
+    @Published var rescueConfirmationWasExplicit = false
+    @Published var rescuePreviewRevision = 0
+    @Published var rescueCropMinX = 0
+    @Published var rescueCropMinY = 0
+    @Published var rescueCropMinZ = 0
+    @Published var rescueCropMaxX = 1
+    @Published var rescueCropMaxY = 1
+    @Published var rescueCropMaxZ = 1
+    @Published var rescueMPRPreviewSlices: [CTPreviewSlice] = []
+    @Published var rescuePseudo3DPreviewURL: URL?
+    @Published var rescuePreviewMetadataInferenceStarted = false
+    @Published var rescuePreviewStatus = "preview renderer未接続"
+    @Published var rescueConfirmationToken = ""
+    @Published var rescueDecodedVolumeURL: URL?
+    @Published var rescueGeometryJSONURL: URL?
+    @Published var rescueSourceManifestSHA256 = ""
     @Published var pendingPreparedInputURL: URL?
     @Published var pendingViewerExportMetadataURL: URL?
     @Published var pendingViewerExportCandidate: ViewerExportCandidate?
@@ -1372,6 +1504,7 @@ final class AppState: ObservableObject {
         dicomSelectionWasChanged = false
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
+        resetSecondaryCaptureRescue()
         clearPendingCTPreview()
         logText = ""
         dicomSummaryText = ""
@@ -1405,6 +1538,7 @@ final class AppState: ObservableObject {
             let rc = runner.run(command, environment: environment, logURL: logURL)
             let summary = formatDicomSummary(auditJSON: auditJSON)
             let cleanCandidates = rc == 0 ? cleanDicomSeriesCandidates(auditJSON: auditJSON) : []
+            let rescueCandidates = rc == 0 ? secondaryCaptureRescueCandidates(auditJSON: auditJSON) : []
             let viewerExportCandidates = rc == 0 ? viewerExportCandidates(auditJSON: auditJSON) : []
             DispatchQueue.main.async {
                 let stopped = self?.stopRequested == true
@@ -1421,6 +1555,9 @@ final class AppState: ObservableObject {
                 self?.dicomSelectionWasChanged = false
                 self?.dicomViewerExportCandidates = viewerExportCandidates
                 self?.selectedViewerExportCandidateID = viewerExportCandidates.first?.id
+                self?.dicomRescueCandidates = rescueCandidates
+                self?.selectedDicomRescueCandidateID = rescueCandidates.first(where: { $0.role == "primary" })?.id
+                    ?? rescueCandidates.first?.id
                 if stopped {
                     self?.resultOutcome = .failure
                     self?.failureReasonText = "撮影データの確認を停止しました。"
@@ -1432,6 +1569,8 @@ final class AppState: ObservableObject {
                     self?.resultMessage = "撮影データの確認を停止しました。入力は変更されていません。"
                 } else if rc == 0, let candidate = cleanCandidates.first {
                     self?.startDicomCleanConversion(dicomDir: dicomDir, candidate: candidate)
+                } else if rc == 0 && !rescueCandidates.isEmpty {
+                    self?.beginSecondaryCaptureRescue(candidates: rescueCandidates)
                 } else if rc == 0 && !viewerExportCandidates.isEmpty {
                     self?.resultOutcome = .none
                     self?.screen = .result
@@ -1479,6 +1618,643 @@ final class AppState: ObservableObject {
             return
         }
         startDicomViewerExportConversion(dicomDir: dicomDir, candidate: candidate)
+    }
+
+    var selectedDicomRescueCandidate: SecondaryCaptureRescueCandidate? {
+        guard let selectedDicomRescueCandidateID else { return nil }
+        return dicomRescueCandidates.first(where: { $0.id == selectedDicomRescueCandidateID })
+    }
+
+    var currentRescueSpacing: RescueSpacing {
+        RescueSpacing(x: rescueSpacingX, y: rescueSpacingY, z: rescueSpacingZ)
+    }
+
+    var rescueCropIsValid: Bool {
+        rescueCropMinX >= 0 && rescueCropMinY >= 0 && rescueCropMinZ >= 0
+            && rescueCropMaxX > rescueCropMinX
+            && rescueCropMaxY > rescueCropMinY
+            && rescueCropMaxZ > rescueCropMinZ
+    }
+
+    var rescueUsesNonIdentityTransform: Bool {
+        guard let candidate = selectedDicomRescueCandidate else { return true }
+        return rescueAxisPermutation != .xyz
+            || rescueRotationQuarterTurns != 0
+            || rescueSliceOrderReversed
+            || rescueCropMinX != 0
+            || rescueCropMinY != 0
+            || rescueCropMinZ != 0
+            || rescueCropMaxX != max(candidate.columns, 1)
+            || rescueCropMaxY != max(candidate.rows, 1)
+            || rescueCropMaxZ != max(candidate.fileCount, 1)
+    }
+
+    var canConfirmSecondaryCaptureRescue: Bool {
+        !isRunning
+            && selectedDicomRescueCandidate != nil
+            && currentRescueSpacing.isValid
+            && rescueCropIsValid
+            && canFinalizeRescueTransform
+    }
+
+    var canRequestRescuePreview: Bool {
+        !isRunning
+            && rescueDecodedVolumeURL != nil
+            && rescueGeometryJSONURL != nil
+            && !rescueSourceManifestSHA256.isEmpty
+            && currentRescueSpacing.isValid
+            && rescueCropIsValid
+    }
+
+    var canFinalizeRescueTransform: Bool {
+        rescueDecodedVolumeURL != nil
+            && rescueGeometryJSONURL != nil
+            && rescueConfirmationToken.count == 64
+            && rescueConfirmationToken.allSatisfy { $0.isHexDigit }
+    }
+
+    func beginSecondaryCaptureRescue(candidates: [SecondaryCaptureRescueCandidate]) {
+        dicomRescueCandidates = candidates
+        let primary = candidates.first(where: { $0.role == "primary" }) ?? candidates.first
+        selectedDicomRescueCandidateID = primary?.id
+        let z = primary?.sliceThickness.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1.0
+        // X/Y have no trustworthy patient geometry in Secondary Capture. A finite,
+        // editable fallback is intentionally presented as low confidence.
+        rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: z)
+        rescueSpacingX = rescueEstimatedSpacing.x
+        rescueSpacingY = rescueEstimatedSpacing.y
+        rescueSpacingZ = rescueEstimatedSpacing.z
+        rescueConfidence = primary?.sliceThickness == nil ? "未推定（仮の初期値）" : "低"
+        rescueEvidence = primary?.sliceThickness == nil
+            ? ["標準DICOM幾何タグが不足", "X/Y/Zは編集用の仮初期値"]
+            : ["Slice ThicknessからZ候補を取得", "X/Yは編集用の仮初期値"]
+        rescueWorkflowState = .manualOnly
+        rescueCropMinX = 0
+        rescueCropMinY = 0
+        rescueCropMinZ = 0
+        rescueCropMaxX = max(primary?.columns ?? 0, 1)
+        rescueCropMaxY = max(primary?.rows ?? 0, 1)
+        rescueCropMaxZ = max(primary?.fileCount ?? 0, 1)
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewMetadataInferenceStarted = false
+        rescuePreviewStatus = "preview renderer未接続（AI推論は開始していません）"
+        rescueCalibrationRecords = []
+        rescueInlineWarning = ""
+        rescueConfirmationWasExplicit = false
+        screen = .dicomRescue
+        selectedStep = 1
+        statusText = "寸法を確認してください"
+        progressText = "推定候補を確認し、必要なら手動で調整してください。AI推論はまだ開始していません。"
+        resultKind = .dicomAudit
+        resultOutcome = .none
+        if let primary {
+            exportPrimaryRescueStackIfAvailable(primary)
+        }
+    }
+
+    private func exportPrimaryRescueStackIfAvailable(_ candidate: SecondaryCaptureRescueCandidate) {
+        guard candidate.role == "primary",
+              let dicomDir = lastDicomDirURL,
+              FileManager.default.isExecutableFile(atPath: paths.normalizer.path) else {
+            rescueWorkflowState = .manualOnly
+            return
+        }
+        let sessionDir = paths.runs.appendingPathComponent(
+            "dicom_rescue_\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        let stackDir = sessionDir.appendingPathComponent("stack", isDirectory: true)
+        let logURL = sessionDir.appendingPathComponent("logs/export_rescue_stack.log")
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        rescueWorkflowState = .estimating
+        rescuePreviewStatus = "画像準備中（AI推論は開始していません）"
+        rescuePreparationCancellationRequested = false
+        isRunning = true
+        runner.resetTerminationRequest()
+        let command = CommandBuilder.dicomExportRescueStackCommand(
+            dicomDir: dicomDir,
+            outputDir: stackDir,
+            seriesNumber: candidate.seriesNumber,
+            seriesKey: candidate.seriesKey,
+            paths: paths
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let runner = self.runner
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: logURL)
+            let volumeURL = stackDir.appendingPathComponent("preview_stack.npy")
+            let manifestURL = stackDir.appendingPathComponent("source_manifest.json")
+            let manifestHash = rescueStackManifestSHA256(manifestURL)
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                guard self?.rescuePreparationCancellationRequested != true else {
+                    self?.rescueWorkflowState = .manualOnly
+                    self?.rescuePreviewStatus = "自動処理をキャンセルしました。手動調整を続けられます"
+                    return
+                }
+                guard rc == 0,
+                      FileManager.default.fileExists(atPath: volumeURL.path),
+                      let manifestHash else {
+                    self?.rescueWorkflowState = .manualOnly
+                    self?.rescuePreviewStatus = "画像準備に失敗したため手動調整を使用します"
+                    return
+                }
+                let estimateJSON = sessionDir.appendingPathComponent("estimate/rescue_geometry.v2.json")
+                self?.startSecondaryCaptureSpacingEstimation(
+                    decodedVolume: volumeURL,
+                    sourceManifestSHA256: manifestHash,
+                    outputJSON: estimateJSON
+                )
+            }
+        }
+    }
+
+    func startSecondaryCaptureSpacingEstimation(
+        decodedVolume: URL,
+        sourceManifestSHA256: String,
+        outputJSON: URL
+    ) {
+        let isSHA256 = sourceManifestSHA256.count == 64
+            && sourceManifestSHA256.allSatisfy { $0.isHexDigit }
+        guard FileManager.default.fileExists(atPath: decodedVolume.path), isSHA256 else {
+            rescueWorkflowState = .manualOnly
+            rescuePreviewStatus = "推定用volumeまたは安全な入力hashがないため手動調整を使用します"
+            return
+        }
+        rescueDecodedVolumeURL = decodedVolume
+        rescueGeometryJSONURL = outputJSON
+        rescueSourceManifestSHA256 = sourceManifestSHA256.lowercased()
+        rescueWorkflowState = .estimating
+        rescuePreviewStatus = "metadata確認中"
+        rescuePreparationCancellationRequested = false
+        isRunning = true
+        runner.resetTerminationRequest()
+        let hints = "unknown,unknown,\(String(format: "%.6f", rescueEstimatedSpacing.z))"
+        let evidenceJSON = outputJSON.deletingLastPathComponent().appendingPathComponent(
+            "rescue_evidence.json"
+        )
+        let usedSeries: [[String: Any]] = dicomRescueCandidates.compactMap { candidate in
+            guard let seriesHash = candidate.contentManifestSHA256 else { return nil }
+            return [
+                "series_hash": seriesHash,
+                "role": candidate.role,
+                "plane": candidate.plane,
+                "reconstruction_group": candidate.reconstructionGroup,
+                "file_count": candidate.fileCount,
+                "rows": candidate.rows,
+                "columns": candidate.columns,
+            ]
+        }
+        var usedTags: [[String: Any]] = []
+        if let thickness = selectedDicomRescueCandidate?.sliceThickness {
+            usedTags.append([
+                "tag": "0018,0050",
+                "name": "SliceThickness",
+                "value_mm": thickness,
+                "consistency": "all_equal",
+                "source": "standard_dicom",
+            ])
+        }
+        writeJSON(
+            [
+                "spacing_sources": usedTags.isEmpty
+                    ? ["fallback_initial_candidate"]
+                    : ["slice_thickness", "fallback_initial_candidate"],
+                "used_series": usedSeries,
+                "used_dicom_tags": usedTags,
+            ],
+            to: evidenceJSON
+        )
+        let coronal = dicomRescueCandidates.first(where: { $0.plane == "coronal" })
+        let sagittal = dicomRescueCandidates.first(where: { $0.plane == "sagittal" })
+        let command = CommandBuilder.dicomRescueEstimateCommand(
+            python: paths.venvPython,
+            decodedVolume: decodedVolume,
+            sourceManifestSHA256: rescueSourceManifestSHA256,
+            spacingHints: hints,
+            evidenceJSON: evidenceJSON,
+            axialSliceStepMM: selectedDicomRescueCandidate?.sliceThickness,
+            coronalCount: coronal?.fileCount,
+            coronalSliceStepMM: coronal?.sliceThickness,
+            sagittalCount: sagittal?.fileCount,
+            sagittalSliceStepMM: sagittal?.sliceThickness,
+            outputJSON: outputJSON
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let logURL = outputJSON.deletingLastPathComponent().appendingPathComponent("estimate/rescue_estimate.log")
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let runner = self.runner
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: logURL)
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                guard self?.rescuePreparationCancellationRequested != true else {
+                    self?.rescueWorkflowState = .manualOnly
+                    self?.rescuePreviewStatus = "自動推定をキャンセルしました。手動調整を続けられます"
+                    return
+                }
+                if rc == 0, self?.applyRescueEstimateMetadata(outputJSON) == true {
+                    self?.rescueWorkflowState = .editableReady
+                    self?.rescuePreviewStatus = "候補作成済み（AI推論は開始していません）"
+                } else {
+                    self?.rescueWorkflowState = .manualOnly
+                    self?.rescuePreviewStatus = "自動推定に失敗したため手動調整を使用します"
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    func applyRescueEstimateMetadata(_ metadataJSON: URL) -> Bool {
+        guard let payload = readJSON(metadataJSON),
+              (payload["inference_started"] as? Bool) != true,
+              let estimate = payload["estimate"] as? [String: Any],
+              let values = estimate["estimated_spacing_xyz"] as? [Any]
+        else {
+            return false
+        }
+        let spacing = values.compactMap(jsonDouble)
+        guard spacing.count == 3 else { return false }
+        let candidate = RescueSpacing(x: spacing[0], y: spacing[1], z: spacing[2])
+        guard candidate.isValid else { return false }
+        rescueEstimatedSpacing = candidate
+        rescueXYLocked = abs(candidate.x - candidate.y) <= 0.0001
+        rescueSpacingX = candidate.x
+        rescueSpacingY = candidate.y
+        rescueSpacingZ = candidate.z
+        let confidence = estimate["confidence"] as? [String: Any]
+        rescueConfidence = (confidence?["overall"] as? String) ?? "低"
+        rescueEvidence = ((confidence?["reasons"] as? [String]) ?? [])
+            + ((confidence?["limitations"] as? [String]) ?? [])
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewRevision &+= 1
+        return true
+    }
+
+    func selectSecondaryCaptureRescueCandidate(_ candidate: SecondaryCaptureRescueCandidate) {
+        guard candidate.role == "primary" else {
+            rescueInlineWarning = "CORONAL/SAGITTAL系列は推定根拠として表示します。primary volumeにはAXIAL候補を選んでください。"
+            return
+        }
+        selectedDicomRescueCandidateID = candidate.id
+        let z = candidate.sliceThickness.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1.0
+        rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: z)
+        rescueSpacingX = 1.0
+        rescueSpacingY = 1.0
+        rescueSpacingZ = z
+        rescueCropMaxX = max(candidate.columns, 1)
+        rescueCropMaxY = max(candidate.rows, 1)
+        rescueCropMaxZ = max(candidate.fileCount, 1)
+        rescueConfirmationToken = ""
+        rescueGeometryJSONURL = nil
+        rescueDecodedVolumeURL = nil
+        exportPrimaryRescueStackIfAvailable(candidate)
+    }
+
+    func rescueSpacingDidChange(axis: RescueCalibrationAxis) {
+        if rescueXYLocked {
+            if axis == .x {
+                rescueSpacingY = rescueSpacingX
+            } else if axis == .y {
+                rescueSpacingX = rescueSpacingY
+            }
+        }
+        rescueWorkflowState = .userModified
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewRevision &+= 1
+        updateRescueInlineWarning()
+        scheduleRescuePreviewUpdate()
+    }
+
+    func rescueTransformDidChange() {
+        rescueWorkflowState = .userModified
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewRevision &+= 1
+        updateRescueInlineWarning()
+        scheduleRescuePreviewUpdate()
+    }
+
+    func resetRescueGeometryToEstimate() {
+        rescueSpacingX = rescueEstimatedSpacing.x
+        rescueSpacingY = rescueEstimatedSpacing.y
+        rescueSpacingZ = rescueEstimatedSpacing.z
+        rescueAxisPermutation = .xyz
+        rescueRotationQuarterTurns = 0
+        rescueSliceOrderReversed = false
+        rescueCalibrationRecords = []
+        if let candidate = selectedDicomRescueCandidate {
+            rescueCropMinX = 0
+            rescueCropMinY = 0
+            rescueCropMinZ = 0
+            rescueCropMaxX = max(candidate.columns, 1)
+            rescueCropMaxY = max(candidate.rows, 1)
+            rescueCropMaxZ = max(candidate.fileCount, 1)
+        }
+        rescueWorkflowState = .editableReady
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewStatus = "自動推定値へ戻しました。previewを更新してください"
+        rescuePreviewRevision &+= 1
+        updateRescueInlineWarning()
+        scheduleRescuePreviewUpdate()
+    }
+
+    func applyRescueKnownLengthCalibration() {
+        guard rescueMeasuredLengthMM.isFinite, rescueMeasuredLengthMM > 0,
+              rescueKnownLengthMM.isFinite, rescueKnownLengthMM > 0 else {
+            rescueInlineWarning = "計測した長さと既知の長さには0より大きい値を入力してください。"
+            return
+        }
+        let scale = rescueKnownLengthMM / rescueMeasuredLengthMM
+        rescueCalibrationRecords.append([
+            "axis": rescueCalibrationAxis.rawValue,
+            "measured_length_mm": rescueMeasuredLengthMM,
+            "known_length_mm": rescueKnownLengthMM,
+            "scale": scale,
+            "method": "known_length_manual",
+        ])
+        switch rescueCalibrationAxis {
+        case .x:
+            rescueSpacingX *= scale
+            if rescueXYLocked { rescueSpacingY = rescueSpacingX }
+        case .y:
+            rescueSpacingY *= scale
+            if rescueXYLocked { rescueSpacingX = rescueSpacingY }
+        case .z:
+            rescueSpacingZ *= scale
+        }
+        rescueSpacingDidChange(axis: rescueCalibrationAxis)
+    }
+
+    func applyRescuePreviewMetadata(_ metadataJSON: URL) {
+        guard let payload = readJSON(metadataJSON) else {
+            rescuePreviewStatus = "preview metadataを読めませんでした"
+            return
+        }
+        let inferenceStarted = (payload["inference_started"] as? Bool) ?? false
+        rescuePreviewMetadataInferenceStarted = inferenceStarted
+        guard !inferenceStarted else {
+            rescueMPRPreviewSlices = []
+            rescuePseudo3DPreviewURL = nil
+            rescueConfirmationToken = ""
+            rescuePreviewStatus = "preview段階で推論開始が報告されたため表示を拒否しました"
+            return
+        }
+        rescueMPRPreviewSlices = rescuePreviewSlices(payload: payload)
+        rescuePseudo3DPreviewURL = parsedRescuePseudo3DPreviewURL(payload: payload)
+        rescueConfirmationToken = (payload["confirmation_token"] as? String) ?? ""
+        rescuePreviewStatus = rescueMPRPreviewSlices.isEmpty
+            ? "preview artifact待機中（AI推論は開始していません）"
+            : "preview更新済み（AI推論は開始していません）"
+    }
+
+    func requestRescuePreviewUpdate() {
+        guard canRequestRescuePreview,
+              let decodedVolume = rescueDecodedVolumeURL else {
+            rescuePreviewStatus = "decoded preview volumeがないため、画像previewはまだ更新できません"
+            return
+        }
+        let previewDir = (rescueGeometryJSONURL?.deletingLastPathComponent() ?? paths.runs)
+            .appendingPathComponent("preview", isDirectory: true)
+        let requestJSON = previewDir.appendingPathComponent("rescue_preview_request.json")
+        let outputVolume = previewDir.appendingPathComponent("preview_volume.npy")
+        let outputJSON = previewDir.appendingPathComponent("preview.json")
+        try? FileManager.default.createDirectory(at: previewDir, withIntermediateDirectories: true)
+        guard var request = rescueGeometryJSONURL.flatMap(readJSON),
+              (request["schema"] as? String) == "totalsegmentator_wrapper_mac.rescue_geometry.v2",
+              let source = request["source"] as? [String: Any],
+              (source["content_manifest_sha256"] as? String) == rescueSourceManifestSHA256,
+              (request["inference_started"] as? Bool) != true else {
+            isRunning = false
+            rescuePreviewStatus = "推定metadataが入力volumeと一致しないためpreviewを更新できません"
+            return
+        }
+        request["workflow_status"] = "preview_requested"
+        request["confirmed"] = [
+            "confirmed_spacing_xyz": [rescueSpacingX, rescueSpacingY, rescueSpacingZ],
+            "manual_changed": currentRescueSpacing != rescueEstimatedSpacing || rescueUsesNonIdentityTransform,
+        ]
+        request["transform"] = [
+            "axis_permutation": Array(rescueAxisPermutation.rawValue).map(String.init),
+            "rotation_quarter_turns": rescueRotationQuarterTurns,
+            "slice_order_reversed": rescueSliceOrderReversed,
+            "crop_voxels_xyz": [
+                "min": [rescueCropMinX, rescueCropMinY, rescueCropMinZ],
+                "max_exclusive": [rescueCropMaxX, rescueCropMaxY, rescueCropMaxZ],
+            ],
+        ]
+        request["calibrations"] = rescueCalibrationRecords
+        request["inference_started"] = false
+        writeJSON(request, to: requestJSON)
+        rescuePreviewStatus = "preview画像を準備中（AI推論なし）"
+        rescuePreparationCancellationRequested = false
+        isRunning = true
+        runner.resetTerminationRequest()
+        let command = CommandBuilder.dicomRescuePreviewCommand(
+            python: paths.venvPython,
+            decodedVolume: decodedVolume,
+            geometryJSON: requestJSON,
+            outputVolume: outputVolume,
+            outputJSON: outputJSON
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let logURL = previewDir.appendingPathComponent("preview.log")
+        let runner = self.runner
+        let requestRevision = rescuePreviewRevision
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: logURL)
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                guard self?.rescuePreparationCancellationRequested != true else {
+                    self?.rescuePreviewStatus = "preview更新をキャンセルしました（AI推論は開始していません）"
+                    return
+                }
+                guard self?.rescuePreviewRevision == requestRevision else {
+                    self?.rescueConfirmationToken = ""
+                    self?.rescuePreviewStatus = "変更後の三方向previewを再計算しています"
+                    self?.scheduleRescuePreviewUpdate()
+                    return
+                }
+                if rc == 0 {
+                    self?.rescueGeometryJSONURL = outputJSON
+                    self?.applyRescuePreviewMetadata(outputJSON)
+                } else {
+                    self?.rescueConfirmationToken = ""
+                    self?.rescuePreviewStatus = "preview更新に失敗しました（AI推論は開始していません）"
+                }
+            }
+        }
+    }
+
+    private func scheduleRescuePreviewUpdate() {
+        rescueConfirmationToken = ""
+        rescuePreviewWorkItem?.cancel()
+        guard rescueDecodedVolumeURL != nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.canRequestRescuePreview else { return }
+            self.requestRescuePreviewUpdate()
+        }
+        rescuePreviewWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+    }
+
+    func cancelSecondaryCaptureRescuePreparation() {
+        guard isRunning, screen == .dicomRescue else { return }
+        rescuePreparationCancellationRequested = true
+        runner.terminate(graceSeconds: 2)
+        isRunning = false
+        rescueWorkflowState = .manualOnly
+        rescuePreviewStatus = "自動処理をキャンセルしました。手動調整を続けられます"
+        rescueConfirmationToken = ""
+        rescuePreviewWorkItem?.cancel()
+        rescuePreviewWorkItem = nil
+    }
+
+    func confirmSecondaryCaptureRescue() {
+        guard selectedDicomRescueCandidate != nil else {
+            rescueInlineWarning = "使用する系列を選択してください。"
+            return
+        }
+        guard currentRescueSpacing.isValid else {
+            rescueInlineWarning = "X/Y/Z spacingは0より大きい有限値（20 mm以下）で入力してください。"
+            return
+        }
+        guard rescueCropIsValid else {
+            rescueInlineWarning = "cropの最小値は最大値より小さくしてください。"
+            return
+        }
+        guard canFinalizeRescueTransform else {
+            rescueInlineWarning = "三方向プレビューを更新してから寸法を確定してください。AI推論はまだ開始していません。"
+            return
+        }
+        finalizeSecondaryCaptureRescue()
+    }
+
+    private func finalizeSecondaryCaptureRescue() {
+        guard let decodedVolume = rescueDecodedVolumeURL,
+              let geometryJSON = rescueGeometryJSONURL,
+              canFinalizeRescueTransform else {
+            rescueInlineWarning = "現在のtransformに対応するpreviewとconfirmation tokenを作成してください。"
+            return
+        }
+        rescueConfirmationWasExplicit = true
+        let finalizeDir = geometryJSON.deletingLastPathComponent().appendingPathComponent(
+            "final_\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        let outputNifti = finalizeDir.appendingPathComponent("rescue_volume.nii")
+        let outputJSON = finalizeDir.appendingPathComponent("rescue_geometry.v2.json")
+        let logURL = finalizeDir.appendingPathComponent("finalize.log")
+        try? FileManager.default.createDirectory(at: finalizeDir, withIntermediateDirectories: true)
+        rescueWorkflowState = .preparingNifti
+        isRunning = true
+        stopRequested = false
+        screen = .running
+        selectedStep = 2
+        outputURL = finalizeDir
+        activeLogURL = logURL
+        resultLogURL = nil
+        runner.resetTerminationRequest()
+        startRunTimer()
+        statusText = "確定したtransformを適用中"
+        progressText = "confirmation tokenを検証し、疑似NIfTIを作成しています。AI推論はまだ開始していません。"
+        let command = CommandBuilder.dicomRescueFinalizeCommand(
+            python: paths.venvPython,
+            decodedVolume: decodedVolume,
+            geometryJSON: geometryJSON,
+            confirmationToken: rescueConfirmationToken,
+            outputNifti: outputNifti,
+            outputJSON: outputJSON
+        )
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let runner = self.runner
+        let requestedSpacing = currentRescueSpacing
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = runner.run(command, environment: environment, logURL: logURL)
+            let valid = rc == 0 && rescueFinalizedNiftiMatches(
+                outputNifti: outputNifti,
+                metadataJSON: outputJSON,
+                requested: requestedSpacing
+            )
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                self?.stopRequested = false
+                self?.refreshLog(from: logURL)
+                self?.activeLogURL = nil
+                self?.resultLogURL = logURL
+                if valid {
+                    self?.acceptPreparedRescueNifti(outputNifti)
+                } else {
+                    self?.rescueWorkflowState = rc == 0 ? .readbackMismatch : .prepareFailed
+                    self?.rescueConfirmationWasExplicit = false
+                    self?.screen = .dicomRescue
+                    self?.selectedStep = 1
+                    self?.rescueInlineWarning = "finalizeまたはNIfTI readbackに失敗しました。AI推論は開始していません。"
+                }
+            }
+        }
+    }
+
+    private func acceptPreparedRescueNifti(_ preparedURL: URL) {
+        guard rescueConfirmationWasExplicit,
+              FileManager.default.fileExists(atPath: preparedURL.path) else {
+            rescueWorkflowState = .readbackMismatch
+            screen = .dicomRescue
+            return
+        }
+        inputURL = preparedURL
+        inputSource = .nifti
+        creationChoice = .standardArchJaw
+        resultKind = .none
+        outputURL = nil
+        statusText = "寸法確認済み"
+        progressText = "確定したspacingのreadbackに成功しました。3Dプレビュー作成を開始します。"
+        startRun()
+    }
+
+    private func updateRescueInlineWarning() {
+        if !currentRescueSpacing.isValid {
+            rescueInlineWarning = "極端または無効なspacingです。各値は0より大きく20 mm以下にしてください。"
+        } else if !rescueCropIsValid {
+            rescueInlineWarning = "cropの最小値は最大値より小さくしてください。"
+        } else if rescueUsesNonIdentityTransform {
+            rescueInlineWarning = "transform候補を変更しました。preview/finalize backend接続前は表示へ適用せず、確定もできません。"
+        } else {
+            rescueInlineWarning = ""
+        }
+    }
+
+    private func resetSecondaryCaptureRescue() {
+        dicomRescueCandidates = []
+        selectedDicomRescueCandidateID = nil
+        rescueWorkflowState = .rescueAvailable
+        rescueConfirmationWasExplicit = false
+        rescueInlineWarning = ""
+        rescueMPRPreviewSlices = []
+        rescuePseudo3DPreviewURL = nil
+        rescuePreviewMetadataInferenceStarted = false
+        rescueDecodedVolumeURL = nil
+        rescueGeometryJSONURL = nil
+        rescueSourceManifestSHA256 = ""
+        rescuePreparationCancellationRequested = false
+        rescueConfirmationToken = ""
+        rescuePreviewWorkItem?.cancel()
+        rescuePreviewWorkItem = nil
     }
 
     func convertDicomToNiftiFromAudit() {
@@ -2195,6 +2971,7 @@ final class AppState: ObservableObject {
         selectedDicomSeriesID = nil
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
+        resetSecondaryCaptureRescue()
         clearPendingCTPreview()
     }
 
@@ -2905,11 +3682,14 @@ func formatDicomSummary(auditJSON: URL) -> String {
     lines.append("撮影データのまとまり数: \(payload["series_count"] ?? 0)")
     lines.append("プレビュー作成はまだ開始していません。")
     let candidates = cleanDicomSeriesCandidates(payload: payload)
+    let rescueCandidates = secondaryCaptureRescueCandidates(payload: payload)
     let viewerCandidates = viewerExportCandidates(payload: payload)
     if candidates.count == 1 {
         lines.append("通常のCTとして取り込める候補があります。自動で準備します。")
     } else if candidates.count > 1 {
         lines.append("通常のCTとして取り込める候補が複数あります。使用する撮影を選んでください。")
+    } else if !rescueCandidates.isEmpty {
+        lines.append("寸法情報が不足した断面画像があります。推定候補を手動で確認して参考用3Dプレビューへ進めます。")
     } else if !viewerCandidates.isEmpty {
         lines.append("CTを見るソフトから表示用の断面画像として書き出されたデータの可能性があります。断面群を確認すると非診断preview用に準備できます。")
     } else {
@@ -2968,6 +3748,116 @@ func cleanDicomSeriesCandidates(payload: [String: Any]) -> [CleanDicomSeriesCand
         }
     }
     return candidates
+}
+
+func secondaryCaptureRescueCandidates(auditJSON: URL) -> [SecondaryCaptureRescueCandidate] {
+    guard let payload = readJSON(auditJSON) else {
+        return []
+    }
+    return secondaryCaptureRescueCandidates(payload: payload)
+}
+
+func secondaryCaptureRescueCandidates(payload: [String: Any]) -> [SecondaryCaptureRescueCandidate] {
+    guard let series = payload["series"] as? [[String: Any]] else {
+        return []
+    }
+    let candidates = series.compactMap { item -> SecondaryCaptureRescueCandidate? in
+        guard let classification = item["classification"] as? [String: Any],
+              let status = classification["status"] as? String,
+              status == "secondary_capture_rescue_candidate"
+                || status == "secondary_capture_reference_candidate",
+              let seriesKey = item["series_key"] as? String,
+              !seriesKey.isEmpty
+        else {
+            return nil
+        }
+        let description = ((item["series_description"] as? String) ?? "").uppercased()
+        let imageType = ((item["image_type"] as? [String]) ?? []).joined(separator: " ").uppercased()
+        let planeText = description + " " + imageType
+        let explicitPlane = ((item["plane_label"] as? String)
+            ?? (classification["plane_label"] as? String)
+            ?? "").lowercased()
+        let plane: String
+        if explicitPlane.contains("axial") || planeText.contains("AXIAL") {
+            plane = "axial"
+        } else if explicitPlane.contains("coronal") || planeText.contains("CORONAL") {
+            plane = "coronal"
+        } else if explicitPlane.contains("sagittal") || planeText.contains("SAGITTAL") {
+            plane = "sagittal"
+        } else {
+            plane = "unknown"
+        }
+        let role = (classification["rescue_role"] as? String)
+            ?? (status == "secondary_capture_rescue_candidate" ? "primary" : "reference")
+        let reconstructionGroup: String
+        if description.split(whereSeparator: { $0 == " " || $0 == "_" || $0 == "-" }).contains("BO") {
+            reconstructionGroup = "BO"
+        } else if description.split(whereSeparator: { $0 == " " || $0 == "_" || $0 == "-" }).contains("ST") {
+            reconstructionGroup = "ST"
+        } else {
+            reconstructionGroup = "未分類"
+        }
+        let sliceThickness: Double? = {
+            if let summary = item["slice_thickness"] as? [String: Any],
+               let values = summary["values_mm"] as? [Any] {
+                return values.compactMap(jsonDouble).first
+            }
+            return jsonDouble(item["slice_thickness_mm"])
+        }()
+        let contentManifestSHA256: String? = {
+            guard let manifest = item["ordered_content_manifest"] as? [String: Any],
+                  manifest["algorithm"] as? String == "sha256",
+                  let hash = manifest["manifest_sha256"] as? String,
+                  hash.count == 64,
+                  hash.allSatisfy({ $0.isHexDigit })
+            else {
+                return nil
+            }
+            return hash.lowercased()
+        }()
+        return SecondaryCaptureRescueCandidate(
+            seriesKey: seriesKey,
+            seriesNumber: jsonInt(item["series_number"]),
+            plane: plane,
+            role: role,
+            reconstructionGroup: reconstructionGroup,
+            fileCount: jsonInt(item["effective_frame_count"]) ?? jsonInt(item["file_count"]) ?? 0,
+            rows: jsonInt(item["rows"]) ?? 0,
+            columns: jsonInt(item["columns"]) ?? 0,
+            sliceThickness: sliceThickness,
+            contentManifestSHA256: contentManifestSHA256,
+            studyKeySHA256: item["study_key_sha256"] as? String
+        )
+    }
+    let primaryGroups = Dictionary(
+        grouping: candidates.filter { $0.role == "primary" },
+        by: { $0.studyKeySHA256 ?? "" }
+    )
+    guard let selectedStudy = primaryGroups.max(by: { lhs, rhs in
+        let lhsCount = lhs.value.reduce(0) { $0 + $1.fileCount }
+        let rhsCount = rhs.value.reduce(0) { $0 + $1.fileCount }
+        return lhsCount == rhsCount ? lhs.key > rhs.key : lhsCount < rhsCount
+    })?.key else {
+        return []
+    }
+    return candidates.filter { ($0.studyKeySHA256 ?? "") == selectedStudy }
+}
+
+func rescueStackManifestSHA256(_ manifestJSON: URL) -> String? {
+    guard let payload = readJSON(manifestJSON),
+          payload["schema"] as? String == "totalsegmentator_wrapper_mac.rescue_stack.v1",
+          payload["status"] as? String == "success",
+          let source = payload["source"] as? [String: Any],
+          source["algorithm"] as? String == "sha256",
+          let hash = source["manifest_sha256"] as? String,
+          hash.count == 64,
+          hash.allSatisfy({ $0.isHexDigit }),
+          let ordering = payload["ordering"] as? [String: Any],
+          ordering["ambiguous"] as? Bool == false
+    else {
+        return nil
+    }
+    return hash.lowercased()
 }
 
 func viewerExportCandidates(auditJSON: URL) -> [ViewerExportCandidate] {
@@ -3036,6 +3926,62 @@ func convertedNiftiURL(metadataJSON: URL) -> URL? {
     return URL(fileURLWithPath: nifti)
 }
 
+func preparedRescueNiftiURL(
+    metadataJSON: URL,
+    validationJSON: URL,
+    requested: RescueSpacing
+) -> URL? {
+    let readbackSpacing = (readJSON(validationJSON)?["requested_spacing"] as? [Any])?.compactMap(jsonDouble) ?? []
+    guard requested.isValid,
+          let metadata = readJSON(metadataJSON),
+          let validation = readJSON(validationJSON),
+          validation["status"] as? String == "success",
+          validation["patched_spacing_matches_requested"] as? Bool == true,
+          readbackSpacing.count == 3,
+          zip(readbackSpacing, [requested.x, requested.y, requested.z])
+            .allSatisfy({ abs($0.0 - $0.1) <= 0.0001 }),
+          let patched = validation["patched_nifti"] as? [String: Any],
+          (patched["ok"] as? Bool) == true,
+          let outputs = metadata["outputs"] as? [String: Any],
+          let path = outputs["patched_nifti"] as? String,
+          !path.isEmpty
+    else {
+        return nil
+    }
+    return URL(fileURLWithPath: path)
+}
+
+func rescueFinalizedNiftiMatches(
+    outputNifti: URL,
+    metadataJSON: URL,
+    requested: RescueSpacing
+) -> Bool {
+    guard requested.isValid,
+          FileManager.default.fileExists(atPath: outputNifti.path),
+          let payload = readJSON(metadataJSON),
+          payload["workflow_status"] as? String == "finalized",
+          (payload["inference_started"] as? Bool) != true,
+          let confirmed = payload["confirmed"] as? [String: Any],
+          let confirmedValues = confirmed["confirmed_spacing_xyz"] as? [Any],
+          confirmedValues.compactMap(jsonDouble).count == 3,
+          zip(confirmedValues.compactMap(jsonDouble), [requested.x, requested.y, requested.z])
+            .allSatisfy({ abs($0.0 - $0.1) <= 0.0001 }),
+          let validation = payload["output_validation"] as? [String: Any],
+          validation["affine_consistent"] as? Bool == true,
+          validation["voxel_payload_consistent"] as? Bool == true,
+          validation["input_hash_matches"] as? Bool == true,
+          let shape = validation["shape"] as? [Any],
+          shape.compactMap(jsonInt).count == 3,
+          shape.compactMap(jsonInt).allSatisfy({ $0 > 0 }),
+          let spacing = validation["spacing_xyz"] as? [Any],
+          spacing.compactMap(jsonDouble).count == 3,
+          spacing.compactMap(jsonDouble).allSatisfy({ $0.isFinite && $0 > 0 })
+    else {
+        return false
+    }
+    return true
+}
+
 func viewerExportPreviewSlices(metadataJSON: URL) -> [CTPreviewSlice] {
     guard let payload = readJSON(metadataJSON),
           let outputs = payload["outputs"] as? [String: Any],
@@ -3065,6 +4011,39 @@ func viewerExportPreviewSlices(metadataJSON: URL) -> [CTPreviewSlice] {
         )
     }
     return slices
+}
+
+func rescuePreviewSlices(payload: [String: Any]) -> [CTPreviewSlice] {
+    let previewPayload = (payload["outputs"] as? [String: Any]) ?? payload
+    let previews = (previewPayload["mpr_preview"] as? [[String: Any]])
+        ?? (previewPayload["previews"] as? [[String: Any]])
+        ?? []
+    return previews.compactMap { preview in
+        guard let plane = preview["plane"] as? String,
+              let path = preview["path"] as? String,
+              !path.isEmpty
+        else {
+            return nil
+        }
+        return CTPreviewSlice(
+            plane: plane,
+            label: japanesePreviewPlaneLabel(plane),
+            url: URL(fileURLWithPath: path),
+            width: jsonInt(preview["width"]) ?? 0,
+            height: jsonInt(preview["height"]) ?? 0,
+            minValue: jsonDouble(preview["min"]) ?? 0,
+            maxValue: jsonDouble(preview["max"]) ?? 0,
+            uniformOrEmpty: (preview["uniform_or_empty"] as? Bool) ?? false
+        )
+    }
+}
+
+func parsedRescuePseudo3DPreviewURL(payload: [String: Any]) -> URL? {
+    let previewPayload = (payload["outputs"] as? [String: Any]) ?? payload
+    let path = (previewPayload["pseudo_3d_preview"] as? String)
+        ?? (previewPayload["pseudo_3d_preview_path"] as? String)
+    guard let path, !path.isEmpty else { return nil }
+    return URL(fileURLWithPath: path)
 }
 
 func makeCTPreviewWarning(slices: [CTPreviewSlice]) -> String {
@@ -3212,7 +4191,9 @@ func dicomClassificationLabel(_ status: String) -> String {
     case "original_ct_geometry_ok":
         return "通常CTとして取り込み可能"
     case "secondary_capture_rescue_candidate":
-        return "救済候補（自動AI不可）"
+        return "寸法確認が必要な救済候補"
+    case "secondary_capture_reference_candidate":
+        return "三方向推定の参照系列"
     case "viewer_export_mpr_mixed_candidate":
         return "viewer書き出し救済候補"
     case "needs_dicom_library":
@@ -3234,6 +4215,10 @@ func dicomNextActionShortLabel(_ action: String) -> String {
         return "アプリが取り込み準備"
     case "prepare_rescue":
         return "手動救済のみ"
+    case "prepare_rescue_with_explicit_spacing":
+        return "寸法候補を確認"
+    case "use_as_rescue_reference_series":
+        return "推定根拠として使用"
     case "select_viewer_export_group":
         return "断面群を選択"
     case "transcode_compressed":

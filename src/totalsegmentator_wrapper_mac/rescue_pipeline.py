@@ -82,6 +82,57 @@ def write_decoded_volume(path: Path, volume_xyz: np.ndarray) -> None:
     _atomic_write_bytes(path, buffer.getvalue())
 
 
+def write_preview_artifacts(
+    output_dir: Path,
+    volume_xyz: np.ndarray,
+    spacing_xyz: Sequence[float],
+) -> dict[str, Any]:
+    """Write non-inference MPR and MIP previews with physical aspect ratios."""
+
+    volume = validate_decoded_volume(volume_xyz)
+    spacing = validate_spacing_xyz(spacing_xyz)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    planes = (
+        ("axial", volume[:, :, volume.shape[2] // 2].T, spacing[1], spacing[0]),
+        ("coronal", volume[:, volume.shape[1] // 2, :].T, spacing[2], spacing[0]),
+        ("sagittal", volume[volume.shape[0] // 2, :, :].T, spacing[2], spacing[1]),
+    )
+    previews: list[dict[str, Any]] = []
+    for plane, image, row_spacing, column_spacing in planes:
+        path = output_dir / f"{plane}.pgm"
+        display = _physical_aspect_image(
+            image,
+            row_spacing=row_spacing,
+            column_spacing=column_spacing,
+        )
+        minimum, maximum, uniform = _write_normalized_pgm(path, display)
+        previews.append(
+            {
+                "plane": plane,
+                "path": str(path),
+                "width": int(display.shape[1]),
+                "height": int(display.shape[0]),
+                "min": minimum,
+                "max": maximum,
+                "uniform_or_empty": uniform,
+            }
+        )
+
+    pseudo_path = output_dir / "pseudo_3d_mip.pgm"
+    pseudo = _physical_aspect_image(
+        np.max(volume, axis=2).T,
+        row_spacing=spacing[1],
+        column_spacing=spacing[0],
+    )
+    _write_normalized_pgm(pseudo_path, pseudo)
+    return {
+        "mpr_preview": previews,
+        "pseudo_3d_preview": str(pseudo_path),
+        "preview_kind": "mpr_centers_and_z_axis_mip",
+        "inference_started": False,
+    }
+
+
 def validate_decoded_volume(volume_xyz: np.ndarray) -> np.ndarray:
     volume = np.asarray(volume_xyz)
     if volume.ndim != 3 or any(int(size) <= 0 for size in volume.shape):
@@ -706,7 +757,7 @@ def _safe_calibrations(value: Any) -> list[dict[str, Any]]:
     for item in value:
         if isinstance(item, Mapping):
             safe: dict[str, Any] = {}
-            for key in ("plane", "method"):
+            for key in ("axis", "plane", "method"):
                 token = item.get(key)
                 if (
                     isinstance(token, str)
@@ -717,7 +768,12 @@ def _safe_calibrations(value: Any) -> list[dict[str, Any]]:
                     )
                 ):
                     safe[key] = token
-            for key in ("known_length_mm", "residual_mm"):
+            for key in (
+                "measured_length_mm",
+                "known_length_mm",
+                "scale",
+                "residual_mm",
+            ):
                 scalar = item.get(key)
                 if isinstance(scalar, (int, float)) and math.isfinite(float(scalar)):
                     safe[key] = float(scalar)
@@ -757,6 +813,55 @@ def _file_sha256(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _physical_aspect_image(
+    image: np.ndarray,
+    *,
+    row_spacing: float,
+    column_spacing: float,
+    max_side: int = 768,
+) -> np.ndarray:
+    source = np.asarray(image)
+    physical_height = max(float(source.shape[0]) * row_spacing, 1e-9)
+    physical_width = max(float(source.shape[1]) * column_spacing, 1e-9)
+    scale = min(max_side / physical_height, max_side / physical_width, 1.0)
+    target_height = max(1, int(round(physical_height * scale)))
+    target_width = max(1, int(round(physical_width * scale)))
+    row_indices = np.rint(
+        np.linspace(0, source.shape[0] - 1, target_height)
+    ).astype(np.intp)
+    column_indices = np.rint(
+        np.linspace(0, source.shape[1] - 1, target_width)
+    ).astype(np.intp)
+    return source[np.ix_(row_indices, column_indices)]
+
+
+def _write_normalized_pgm(
+    path: Path,
+    image: np.ndarray,
+) -> tuple[float, float, bool]:
+    values = np.asarray(image, dtype=np.float64)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        minimum = maximum = 0.0
+        pixels = np.zeros(values.shape, dtype=np.uint8)
+        uniform = True
+    else:
+        minimum = float(np.min(finite))
+        maximum = float(np.max(finite))
+        lower = float(np.percentile(finite, 1.0))
+        upper = float(np.percentile(finite, 99.0))
+        uniform = not upper > lower
+        if uniform:
+            pixels = np.zeros(values.shape, dtype=np.uint8)
+        else:
+            normalized = np.clip((values - lower) / (upper - lower), 0.0, 1.0)
+            normalized[~np.isfinite(normalized)] = 0.0
+            pixels = np.rint(normalized * 255.0).astype(np.uint8)
+    header = f"P5\n{pixels.shape[1]} {pixels.shape[0]}\n255\n".encode("ascii")
+    _atomic_write_bytes(path, header + pixels.tobytes(order="C"))
+    return minimum, maximum, uniform
 
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
