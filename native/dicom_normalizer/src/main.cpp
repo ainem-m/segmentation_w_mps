@@ -2833,12 +2833,25 @@ int export_rescue_stack(const Args& args) {
         });
     }
     const fs::path stack_path = args.output / "preview_stack.npy";
+    fs::create_directories(args.output);
+    fs::permissions(
+        args.output,
+        fs::perms::owner_all,
+        fs::perm_options::replace);
     const auto result =
         dicom_normalizer::export_rescue_stack_npy(std::move(inputs), stack_path);
+    fs::permissions(
+        stack_path,
+        fs::perms::owner_read | fs::perms::owner_write,
+        fs::perm_options::replace);
     const fs::path manifest_path = args.output / "source_manifest.json";
     write_text(
         manifest_path,
         rescue_stack_source_manifest_json(classification, result));
+    fs::permissions(
+        manifest_path,
+        fs::perms::owner_read | fs::perms::owner_write,
+        fs::perm_options::replace);
     std::cout << "wrote " << stack_path << "\n";
     std::cout << "wrote " << manifest_path << "\n";
     return 0;

@@ -582,6 +582,9 @@ def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
         assert proc.returncode == 0, proc.stderr
         manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
         assert manifest["classification"] == "geometry_rescue_candidate"
+        assert stat.S_IMODE(output.stat().st_mode) == 0o700
+        assert stat.S_IMODE((output / "preview_stack.npy").stat().st_mode) == 0o600
+        assert stat.S_IMODE((output / "source_manifest.json").stat().st_mode) == 0o600
 
 
 def test_ordered_content_sha256_manifest_is_path_independent(binary: Path) -> None:

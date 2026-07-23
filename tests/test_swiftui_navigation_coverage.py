@@ -145,6 +145,9 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("startSecondaryCaptureSpacingEstimation", export)
         self.assertIn(".sourceStackUnavailable", export)
         self.assertIn("NIfTI作成へ進めません", export)
+        private_directory = body(STATE, "private func makeRescueDirectoryPrivate")
+        self.assertIn(".posixPermissions: 0o700", private_directory)
+        self.assertIn("permissions.intValue & 0o777 == 0o700", private_directory)
 
     def test_partial_geometry_rescue_uses_standard_tag_precedence(self):
         candidates = body(STATE, "func secondaryCaptureRescueCandidates(payload:")

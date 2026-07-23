@@ -1801,6 +1801,12 @@ final class AppState: ObservableObject {
         let stackDir = sessionDir.appendingPathComponent("stack", isDirectory: true)
         let logURL = sessionDir.appendingPathComponent("logs/export_rescue_stack.log")
         try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard makeRescueDirectoryPrivate(sessionDir),
+              makeRescueDirectoryPrivate(logURL.deletingLastPathComponent()) else {
+            rescueWorkflowState = .sourceStackUnavailable
+            rescuePreviewStatus = "救済データの専用保存領域を安全に作成できません"
+            return
+        }
         rescueWorkflowState = .estimating
         rescuePreviewStatus = "画像準備中（AI推論は開始していません）"
         rescuePreparationCancellationRequested = false
@@ -2011,6 +2017,13 @@ final class AppState: ObservableObject {
         let environment = CommandBuilder.launchEnvironment(paths: paths)
         let logURL = outputJSON.deletingLastPathComponent().appendingPathComponent("estimate/rescue_estimate.log")
         try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard makeRescueDirectoryPrivate(outputJSON.deletingLastPathComponent()),
+              makeRescueDirectoryPrivate(logURL.deletingLastPathComponent()) else {
+            isRunning = false
+            rescueWorkflowState = .manualOnly
+            rescuePreviewStatus = "推定用の専用保存領域を安全に作成できません"
+            return
+        }
         let runner = self.runner
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc = runner.run(command, environment: environment, logURL: logURL)
@@ -2288,6 +2301,26 @@ final class AppState: ObservableObject {
         rescueMeasuredLengthMM = 0
     }
 
+    private func makeRescueDirectoryPrivate(_ directory: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+            let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+            guard let permissions = attributes[.posixPermissions] as? NSNumber else {
+                return false
+            }
+            return permissions.intValue & 0o777 == 0o700
+        } catch {
+            return false
+        }
+    }
+
     func applyRescuePreviewMetadata(_ metadataJSON: URL) {
         guard let payload = readJSON(metadataJSON) else {
             rescuePreviewStatus = "preview metadataを読めませんでした"
@@ -2325,6 +2358,10 @@ final class AppState: ObservableObject {
         let outputVolume = previewDir.appendingPathComponent("preview_volume.npy")
         let outputJSON = previewDir.appendingPathComponent("preview.json")
         try? FileManager.default.createDirectory(at: previewDir, withIntermediateDirectories: true)
+        guard makeRescueDirectoryPrivate(previewDir) else {
+            rescuePreviewStatus = "previewの専用保存領域を安全に作成できません"
+            return
+        }
         guard var request = rescueGeometryJSONURL.flatMap(readJSON),
               (request["schema"] as? String) == "totalsegmentator_wrapper_mac.rescue_geometry.v2",
               let source = request["source"] as? [String: Any],
@@ -2451,6 +2488,10 @@ final class AppState: ObservableObject {
         let outputJSON = finalizeDir.appendingPathComponent("rescue_geometry.v2.json")
         let logURL = finalizeDir.appendingPathComponent("finalize.log")
         try? FileManager.default.createDirectory(at: finalizeDir, withIntermediateDirectories: true)
+        guard makeRescueDirectoryPrivate(finalizeDir) else {
+            rescueInlineWarning = "確定成果物の専用保存領域を安全に作成できません。"
+            return
+        }
         rescueWorkflowState = .preparingNifti
         isRunning = true
         stopRequested = false
