@@ -123,11 +123,27 @@ def run_surface_preview(
         "renderer": "webgl",
         "fallback_renderer": "canvas2d",
         "camera_mode_default": "trackpad",
+        "display_mode_default": "normal",
+        "display_modes": ["normal", "wireframe", "xray"],
         "transparent_rendering": "jaw_depth_prepass_front_shell",
         "runtime_smoothing": True,
         "runtime_smoothing_presets": list(SMOOTH_PRESETS.keys()),
         "material_default": "rich",
         "material_presets": ["standard", "rich", "realistic", "neutral", "high_contrast"],
+        "xray": {
+            "surface_color": [1.0, 1.0, 1.0],
+            "base_alpha": 0.18,
+            "rim_power": 2.0,
+            "alpha_max": 0.62,
+            "compositing": "back_then_front",
+            "target_strategy": "translucent_layers_else_all",
+            "blend": "src_alpha_one_minus_src_alpha",
+            "depth_test": True,
+            "depth_write": False,
+            "outline_alpha": 0.58,
+            "outline_radius_physical_pixels": 1,
+            "background": "#313432",
+        },
     }
     (output_dir / "preview_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
@@ -683,6 +699,7 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
 #views { grid-template-columns: 1fr 1fr; }
 #views button, .segmented button { width: 100%; }
 .segmented { grid-template-columns: 1fr 1fr; }
+#displayModeButtons { grid-template-columns: repeat(3, 1fr); }
 .controlRow { display: grid; gap: 6px; }
 .controlLabel { color: #cfe4e2; font-size: 13px; font-weight: 700; }
 #geometryControl[hidden] { display: none; }
@@ -699,9 +716,17 @@ code { color: #c9e2ff; }
   <aside id="panel">
     <h1>TotalSegmentator 3Dビューアー</h1>
     <p>データ: <code id="dataName"></code></p>
-    <p>検出された構造ラベル: <code id="labelCount"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
+    <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
     <h2>表示</h2>
     <div id="displayControls">
+    <div id="displayModeControl" class="controlRow">
+      <span class="controlLabel">表示モード</span>
+      <div class="segmented" id="displayModeButtons">
+        <button id="displayNormal" type="button">通常</button>
+        <button id="displayWireframe" type="button">ワイヤー</button>
+        <button id="displayXray" type="button">X-ray</button>
+      </div>
+    </div>
     <div id="geometryControl" class="controlRow" hidden>
       <span class="controlLabel">形状</span>
       <div class="segmented" id="geometryButtons">
@@ -760,6 +785,7 @@ const DEFAULT_SMOOTHING_PRESETS = {
 const SMOOTHING_PRESETS = DATA.smoothingPresets || DEFAULT_SMOOTHING_PRESETS;
 const SMOOTHING_PRESET_ORDER = ['none', 'slicer_like', 'medium', 'strong'];
 const MATERIAL_MODE_ORDER = ['standard', 'rich', 'realistic', 'neutral', 'high_contrast'];
+const DISPLAY_MODE_ORDER = ['normal', 'wireframe', 'xray'];
 const GEOMETRY_PRESET_ORDER = geometryPresetNames();
 let inputMode = 'trackpad';
 let dragging = null;
@@ -780,11 +806,17 @@ const camera = {
 const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));
 let currentGeometryPreset = normalizeGeometryPreset(DATA.geometryPreset || '');
 let currentMaterialMode = normalizeMaterialMode(DATA.materialPreset || 'rich');
+let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'normal');
 const preparedMeshes = DATA.meshes.map(prepareMesh);
 let currentSmoothingPreset = normalizeSmoothingPreset((DATA.smoothing && DATA.smoothing.preset) || 'slicer_like');
 let program = null;
 let attribs = null;
 let uniforms = null;
+let outlineProgram = null;
+let outlineAttribs = null;
+let outlineUniforms = null;
+let outlineResources = null;
+let gridResources = null;
 let uintIndexExtension = null;
 document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
 document.getElementById('labelCount').textContent = DATA.labelCount;
@@ -793,9 +825,13 @@ const geometryOriginalButton = document.getElementById('geometryOriginal');
 const geometrySdfButton = document.getElementById('geometrySdf');
 const smoothingPresetSelect = document.getElementById('smoothingPreset');
 const materialPresetSelect = document.getElementById('materialPreset');
+const displayNormalButton = document.getElementById('displayNormal');
+const displayWireframeButton = document.getElementById('displayWireframe');
+const displayXrayButton = document.getElementById('displayXray');
 populateGeometryControl();
 populateSmoothingControl();
 populateMaterialControl();
+populateDisplayModeControl();
 applyMaterialMode(currentMaterialMode, false);
 applySmoothingPreset(currentSmoothingPreset, false);
 const layers = document.getElementById('layers');
@@ -904,6 +940,14 @@ function materialModeLabel(name) {
   };
   return labels[name] || name;
 }
+function displayModeLabel(name) {
+  const labels = {
+    normal: '通常',
+    wireframe: 'ワイヤーフレーム',
+    xray: 'X-ray'
+  };
+  return labels[name] || name;
+}
 function smoothingPresetNames() {
   const known = SMOOTHING_PRESET_ORDER.filter(name => Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, name));
   const extra = Object.keys(SMOOTHING_PRESETS).filter(name => !known.includes(name)).sort();
@@ -920,6 +964,9 @@ function normalizeMaterialMode(name) {
   if (name === 'clinical') return 'neutral';
   if (MATERIAL_MODE_ORDER.includes(name)) return name;
   return 'rich';
+}
+function normalizeDisplayMode(name) {
+  return DISPLAY_MODE_ORDER.includes(name) ? name : 'normal';
 }
 function populateGeometryControl() {
   const hasVariants = hasGeometryVariants();
@@ -951,6 +998,28 @@ function populateMaterialControl() {
   }
   materialPresetSelect.value = currentMaterialMode;
   materialPresetSelect.onchange = () => setMaterialMode(materialPresetSelect.value);
+}
+function populateDisplayModeControl() {
+  displayNormalButton.onclick = () => setDisplayMode('normal');
+  displayWireframeButton.onclick = () => setDisplayMode('wireframe');
+  displayXrayButton.onclick = () => setDisplayMode('xray');
+  updateDisplayModeControl();
+}
+function setDisplayMode(name) {
+  currentDisplayMode = normalizeDisplayMode(name);
+  updateDisplayModeControl();
+  if (gl && currentDisplayMode === 'xray') resizeOutlineResources();
+  draw();
+}
+function updateDisplayModeControl() {
+  displayNormalButton.classList.toggle('active', currentDisplayMode === 'normal');
+  displayWireframeButton.classList.toggle('active', currentDisplayMode === 'wireframe');
+  displayXrayButton.classList.toggle('active', currentDisplayMode === 'xray');
+  displayNormalButton.setAttribute('aria-pressed', String(currentDisplayMode === 'normal'));
+  displayWireframeButton.setAttribute('aria-pressed', String(currentDisplayMode === 'wireframe'));
+  displayXrayButton.setAttribute('aria-pressed', String(currentDisplayMode === 'xray'));
+  materialPresetSelect.disabled = currentDisplayMode !== 'normal';
+  document.getElementById('displayModeLabel').textContent = displayModeLabel(currentDisplayMode);
 }
 function setSmoothingPreset(name) {
   const preset = normalizeSmoothingPreset(name);
@@ -1112,7 +1181,10 @@ function resize() {
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.floor(rect.width * devicePixelRatio));
   canvas.height = Math.max(1, Math.floor(rect.height * devicePixelRatio));
-  if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+  if (gl) {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    if (currentDisplayMode === 'xray') resizeOutlineResources();
+  }
   draw();
 }
 function onPointerDown(event) {
@@ -1359,10 +1431,20 @@ function initWebGl() {
     warmth: gl.getUniformLocation(program, 'uWarmth'),
     wrapDiffuse: gl.getUniformLocation(program, 'uWrapDiffuse'),
     emission: gl.getUniformLocation(program, 'uEmission'),
-    subsurface: gl.getUniformLocation(program, 'uSubsurface')
+    subsurface: gl.getUniformLocation(program, 'uSubsurface'),
+    renderMode: gl.getUniformLocation(program, 'uRenderMode')
   };
   for (const mesh of preparedMeshes) uploadMesh(mesh);
-  gl.clearColor(0.067, 0.075, 0.090, 1.0);
+  outlineProgram = makeProgram(outlineVertexShaderSource(), outlineFragmentShaderSource());
+  outlineAttribs = {
+    position: gl.getAttribLocation(outlineProgram, 'aPosition')
+  };
+  outlineUniforms = {
+    mask: gl.getUniformLocation(outlineProgram, 'uMask'),
+    texelSize: gl.getUniformLocation(outlineProgram, 'uTexelSize')
+  };
+  outlineResources = createOutlineResources();
+  gridResources = createGridResources();
   gl.enable(gl.DEPTH_TEST);
   gl.disable(gl.CULL_FACE);
 }
@@ -1426,6 +1508,9 @@ function uploadMesh(mesh) {
     mesh.webgl = {
       positionBuffer,
       normalBuffer,
+      wirePositionBuffer: null,
+      wireNormalBuffer: null,
+      wireDrawCount: 0,
       indexBuffer,
       indexType: indexArray instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
       drawCount: indexArray.length,
@@ -1438,10 +1523,21 @@ function uploadMesh(mesh) {
   gl.bufferData(gl.ARRAY_BUFFER, expanded.vertices, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, expanded.normals, gl.DYNAMIC_DRAW);
-  mesh.webgl = { positionBuffer, normalBuffer, indexBuffer: null, indexType: null, drawCount: expanded.vertices.length / 3, drawArrays: true };
+  mesh.webgl = {
+    positionBuffer,
+    normalBuffer,
+    wirePositionBuffer: null,
+    wireNormalBuffer: null,
+    wireDrawCount: 0,
+    indexBuffer: null,
+    indexType: null,
+    drawCount: expanded.vertices.length / 3,
+    drawArrays: true
+  };
 }
 function refreshMeshBuffers(mesh) {
   if (!gl || !mesh.webgl) return;
+  if (mesh.webgl.wirePositionBuffer) refreshWireframeBuffers(mesh);
   if (mesh.webgl.drawArrays) {
     const expanded = expandFaces(mesh.vertices, mesh.normals, mesh.faces);
     gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.positionBuffer);
@@ -1461,6 +1557,8 @@ function rebuildMeshBuffers(mesh) {
   if (mesh.webgl) {
     gl.deleteBuffer(mesh.webgl.positionBuffer);
     gl.deleteBuffer(mesh.webgl.normalBuffer);
+    if (mesh.webgl.wirePositionBuffer) gl.deleteBuffer(mesh.webgl.wirePositionBuffer);
+    if (mesh.webgl.wireNormalBuffer) gl.deleteBuffer(mesh.webgl.wireNormalBuffer);
     if (mesh.webgl.indexBuffer) gl.deleteBuffer(mesh.webgl.indexBuffer);
   }
   mesh.webgl = null;
@@ -1479,17 +1577,96 @@ function expandFaces(vertices, normals, faces) {
   }
   return { vertices: outVertices, normals: outNormals };
 }
+function expandWireframe(vertices, normals, faces) {
+  const outVertices = new Float32Array(faces.length * 18);
+  const outNormals = new Float32Array(faces.length * 18);
+  const edgeOrder = [0, 1, 1, 2, 2, 0];
+  for (let i = 0; i < faces.length; i++) {
+    for (let j = 0; j < edgeOrder.length; j++) {
+      const source = faces[i][edgeOrder[j]] * 3;
+      const target = i * 18 + j * 3;
+      outVertices.set(vertices.subarray(source, source + 3), target);
+      outNormals.set(normals.subarray(source, source + 3), target);
+    }
+  }
+  return { vertices: outVertices, normals: outNormals };
+}
+function ensureWireframeBuffers(mesh) {
+  if (mesh.webgl.wirePositionBuffer) return;
+  mesh.webgl.wirePositionBuffer = gl.createBuffer();
+  mesh.webgl.wireNormalBuffer = gl.createBuffer();
+  refreshWireframeBuffers(mesh);
+}
+function refreshWireframeBuffers(mesh) {
+  const wireframe = expandWireframe(mesh.vertices, mesh.normals, mesh.faces);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.wirePositionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, wireframe.vertices, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.wireNormalBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, wireframe.normals, gl.DYNAMIC_DRAW);
+  mesh.webgl.wireDrawCount = wireframe.vertices.length / 3;
+}
 function draw() {
   if (gl && program) drawWebGl();
   else drawFallback2d();
 }
 function drawWebGl() {
+  if (currentDisplayMode === 'xray') {
+    gl.clearColor(0.1921569, 0.2039216, 0.1960784, 1.0);
+  } else {
+    gl.clearColor(0.067, 0.075, 0.090, 1.0);
+  }
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(program);
   const minSide = Math.min(canvas.width, canvas.height);
   const viewportScale = [minSide / canvas.width, minSide / canvas.height];
   const visibleMeshes = preparedMeshes.filter(mesh => visible[mesh.name]);
   const depthRange = viewDepthRange(visibleMeshes);
+  applySceneUniforms(viewportScale, depthRange);
+  const xrayTargets = currentDisplayMode === 'xray'
+    ? selectXrayTargets(visibleMeshes)
+    : new Set();
+  const normallyRendered = currentDisplayMode === 'wireframe'
+    ? []
+    : visibleMeshes.filter(mesh => !xrayTargets.has(mesh));
+  const opaque = normallyRendered.filter(mesh => mesh.material.opacity >= 0.995);
+  const frontShellTranslucent = normallyRendered.filter(mesh => usesFrontShellTransparency(mesh));
+  const classicTranslucent = normallyRendered.filter(
+    mesh => mesh.material.opacity < 0.995 && !usesFrontShellTransparency(mesh)
+  );
+  const wireframe = currentDisplayMode === 'wireframe' ? visibleMeshes : [];
+  const xray = currentDisplayMode === 'xray'
+    ? visibleMeshes.filter(mesh => xrayTargets.has(mesh))
+    : [];
+
+  // Render order: opaque -> depth-aware grid -> X-ray back/front ->
+  // physical-pixel outline -> selection/gizmo overlay.
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.colorMask(true, true, true, true);
+  gl.disable(gl.BLEND);
+  gl.disable(gl.CULL_FACE);
+  gl.depthMask(true);
+  for (const mesh of opaque) drawMeshWebGl(mesh, 0);
+  drawTranslucentDepthPrepass(frontShellTranslucent);
+  drawTranslucentFrontShell(frontShellTranslucent);
+  drawClassicTranslucent(classicTranslucent);
+  drawWireframeMeshes(wireframe);
+  drawDepthAwareGrid(xray.length > 0);
+  drawXrayShells(xray);
+  if (xray.length) {
+    drawXrayOutlineMask(opaque, xray);
+    compositeXrayOutline();
+  }
+  drawSelectionAndGizmoOverlay();
+  gl.useProgram(program);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.colorMask(true, true, true, true);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+  gl.disable(gl.CULL_FACE);
+}
+function applySceneUniforms(viewportScale, depthRange) {
   gl.uniformMatrix3fv(uniforms.orientation, false, new Float32Array(columnMajorMat3(camera.orientation)));
   gl.uniform3fv(uniforms.viewCenter, new Float32Array(camera.viewCenter));
   gl.uniform1f(uniforms.viewScale, camera.viewScale);
@@ -1499,25 +1676,13 @@ function drawWebGl() {
   gl.uniform2fv(uniforms.viewportSize, new Float32Array([canvas.width, canvas.height]));
   gl.uniform1f(uniforms.depthNear, depthRange.near);
   gl.uniform1f(uniforms.depthFar, depthRange.far);
-  const opaque = visibleMeshes.filter(mesh => mesh.material.opacity >= 0.995);
-  const frontShellTranslucent = visibleMeshes.filter(mesh => usesFrontShellTransparency(mesh));
-  const classicTranslucent = visibleMeshes.filter(mesh => mesh.material.opacity < 0.995 && !usesFrontShellTransparency(mesh));
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-  gl.colorMask(true, true, true, true);
-  gl.disable(gl.BLEND);
-  gl.depthMask(true);
-  for (const mesh of opaque) drawMeshWebGl(mesh);
-  drawTranslucentDepthPrepass(frontShellTranslucent);
-  drawTranslucentFrontShell(frontShellTranslucent);
-  drawClassicTranslucent(classicTranslucent);
-  gl.colorMask(true, true, true, true);
-  gl.depthFunc(gl.LEQUAL);
-  gl.depthMask(true);
-  gl.disable(gl.BLEND);
 }
 function usesFrontShellTransparency(mesh) {
   return mesh.name === 'jaws' && mesh.material.opacity < 0.995;
+}
+function selectXrayTargets(meshes) {
+  const translucent = meshes.filter(mesh => mesh.material.opacity < 0.995);
+  return new Set(translucent.length ? translucent : meshes);
 }
 function drawTranslucentDepthPrepass(meshes) {
   if (!meshes.length) return;
@@ -1525,7 +1690,7 @@ function drawTranslucentDepthPrepass(meshes) {
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(true);
   gl.colorMask(false, false, false, false);
-  for (const mesh of meshes) drawMeshWebGl(mesh);
+  for (const mesh of meshes) drawMeshWebGl(mesh, 0);
   gl.colorMask(true, true, true, true);
 }
 function drawTranslucentFrontShell(meshes) {
@@ -1534,7 +1699,7 @@ function drawTranslucentFrontShell(meshes) {
   gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(false);
-  for (const mesh of meshes) drawMeshWebGl(mesh);
+  for (const mesh of meshes) drawMeshWebGl(mesh, 0);
   gl.depthMask(true);
   gl.disable(gl.BLEND);
 }
@@ -1544,17 +1709,45 @@ function drawClassicTranslucent(meshes) {
   gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(false);
-  for (const mesh of meshes) drawMeshWebGl(mesh);
+  for (const mesh of meshes) drawMeshWebGl(mesh, 0);
   gl.depthMask(true);
   gl.disable(gl.BLEND);
 }
-function drawMeshWebGl(mesh) {
-  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.positionBuffer);
+function drawWireframeMeshes(meshes) {
+  if (!meshes.length) return;
+  gl.disable(gl.BLEND);
+  gl.disable(gl.CULL_FACE);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(true);
+  for (const mesh of meshes) {
+    ensureWireframeBuffers(mesh);
+    drawMeshWebGl(mesh, 2, true);
+  }
+}
+function drawXrayShells(meshes) {
+  if (!meshes.length) return;
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.FRONT);
+  for (const mesh of meshes) drawMeshWebGl(mesh, 1);
+  gl.cullFace(gl.BACK);
+  for (const mesh of meshes) drawMeshWebGl(mesh, 1);
+  gl.disable(gl.CULL_FACE);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+function drawMeshWebGl(mesh, renderMode, wireframe = false) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, wireframe ? mesh.webgl.wirePositionBuffer : mesh.webgl.positionBuffer);
   gl.enableVertexAttribArray(attribs.position);
   gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.normalBuffer);
+  gl.bindBuffer(gl.ARRAY_BUFFER, wireframe ? mesh.webgl.wireNormalBuffer : mesh.webgl.normalBuffer);
   gl.enableVertexAttribArray(attribs.normal);
   gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+  gl.uniform1i(uniforms.renderMode, renderMode);
   gl.uniform3fv(uniforms.color, new Float32Array(mesh.material.color));
   gl.uniform1f(uniforms.opacity, mesh.material.opacity);
   gl.uniform1f(uniforms.specular, mesh.material.specular);
@@ -1567,6 +1760,10 @@ function drawMeshWebGl(mesh) {
   gl.uniform1f(uniforms.wrapDiffuse, mesh.material.wrapDiffuse);
   gl.uniform1f(uniforms.emission, mesh.material.emission);
   gl.uniform1f(uniforms.subsurface, mesh.material.subsurface);
+  if (wireframe) {
+    gl.drawArrays(gl.LINES, 0, mesh.webgl.wireDrawCount);
+    return;
+  }
   if (mesh.webgl.drawArrays) {
     gl.drawArrays(gl.TRIANGLES, 0, mesh.webgl.drawCount);
   } else {
@@ -1574,10 +1771,158 @@ function drawMeshWebGl(mesh) {
     gl.drawElements(gl.TRIANGLES, mesh.webgl.drawCount, mesh.webgl.indexType, 0);
   }
 }
+function createGridResources() {
+  const bounds = visibleBounds();
+  const extentX = Math.max(bounds.max[0] - bounds.min[0], 1);
+  const extentY = Math.max(bounds.max[1] - bounds.min[1], 1);
+  const margin = Math.max(extentX, extentY) * 0.18;
+  const minX = bounds.min[0] - margin;
+  const maxX = bounds.max[0] + margin;
+  const minY = bounds.min[1] - margin;
+  const maxY = bounds.max[1] + margin;
+  const z = bounds.min[2] - Math.max(extentX, extentY) * 0.02;
+  const vertices = [];
+  const normals = [];
+  const divisions = 20;
+  for (let i = 0; i <= divisions; i++) {
+    const t = i / divisions;
+    const x = minX + (maxX - minX) * t;
+    const y = minY + (maxY - minY) * t;
+    vertices.push(x, minY, z, x, maxY, z, minX, y, z, maxX, y, z);
+    for (let j = 0; j < 4; j++) normals.push(0, 0, 1);
+  }
+  const positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+  const normalBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+  return { positionBuffer, normalBuffer, drawCount: vertices.length / 3 };
+}
+function drawDepthAwareGrid(enabled) {
+  if (!enabled || !gridResources) return;
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gridResources.positionBuffer);
+  gl.enableVertexAttribArray(attribs.position);
+  gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gridResources.normalBuffer);
+  gl.enableVertexAttribArray(attribs.normal);
+  gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+  gl.uniform1i(uniforms.renderMode, 2);
+  gl.uniform3fv(uniforms.color, new Float32Array([0.72, 0.75, 0.73]));
+  gl.uniform1f(uniforms.opacity, 0.16);
+  gl.drawArrays(gl.LINES, 0, gridResources.drawCount);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+function createOutlineResources() {
+  const framebuffer = gl.createFramebuffer();
+  const texture = gl.createTexture();
+  const depth = gl.createRenderbuffer();
+  const quadBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+    gl.STATIC_DRAW
+  );
+  return { framebuffer, texture, depth, quadBuffer, width: 0, height: 0 };
+}
+function resizeOutlineResources() {
+  if (!outlineResources) return;
+  if (outlineResources.width === canvas.width && outlineResources.height === canvas.height) return;
+  outlineResources.width = canvas.width;
+  outlineResources.height = canvas.height;
+  gl.bindTexture(gl.TEXTURE_2D, outlineResources.texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    canvas.width,
+    canvas.height,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    null
+  );
+  gl.bindRenderbuffer(gl.RENDERBUFFER, outlineResources.depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, canvas.width, canvas.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, outlineResources.framebuffer);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    outlineResources.texture,
+    0
+  );
+  gl.framebufferRenderbuffer(
+    gl.FRAMEBUFFER,
+    gl.DEPTH_ATTACHMENT,
+    gl.RENDERBUFFER,
+    outlineResources.depth
+  );
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    throw new Error('X-ray outline framebuffer is incomplete');
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+function drawXrayOutlineMask(opaqueMeshes, xrayMeshes) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, outlineResources.framebuffer);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.0, 0.0, 0.0, 0.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(program);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.disable(gl.BLEND);
+  gl.disable(gl.CULL_FACE);
+  gl.depthMask(true);
+  gl.colorMask(false, false, false, false);
+  for (const mesh of opaqueMeshes) drawMeshWebGl(mesh, 3);
+  gl.colorMask(true, true, true, true);
+  gl.depthMask(false);
+  for (const mesh of xrayMeshes) drawMeshWebGl(mesh, 3);
+  gl.depthMask(true);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+function compositeXrayOutline() {
+  gl.useProgram(outlineProgram);
+  gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, outlineResources.texture);
+  gl.uniform1i(outlineUniforms.mask, 0);
+  gl.uniform2f(outlineUniforms.texelSize, 1 / canvas.width, 1 / canvas.height);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlineResources.quadBuffer);
+  gl.enableVertexAttribArray(outlineAttribs.position);
+  gl.vertexAttribPointer(outlineAttribs.position, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.disable(gl.BLEND);
+  gl.depthMask(true);
+}
+function drawSelectionAndGizmoOverlay() {
+  // This release has no selection/gizmo implementation. Keep this final pass
+  // explicit so those overlays remain above X-ray compositing when introduced.
+}
 function drawFallback2d() {
-  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+  ctx2d.fillStyle = currentDisplayMode === 'xray' ? '#313432' : '#111317';
+  ctx2d.fillRect(0, 0, canvas.width, canvas.height);
   const tris = [];
   const visibleMeshes = preparedMeshes.filter(mesh => visible[mesh.name]);
+  const fallbackXrayTargets = currentDisplayMode === 'xray'
+    ? selectXrayTargets(visibleMeshes)
+    : new Set();
   const depthRange = viewDepthRange(visibleMeshes);
   for (const mesh of visibleMeshes) {
     for (const face of mesh.faces) {
@@ -1585,7 +1930,15 @@ function drawFallback2d() {
       const b = worldToScreen(vertexAt(mesh.vertices, face[1]), depthRange);
       const c = worldToScreen(vertexAt(mesh.vertices, face[2]), depthRange);
       const depth = (a[2] + b[2] + c[2]) / 3;
-      tris.push({ a, b, c, depth, material: mesh.material });
+      const worldNormal = normalize3(cross3(
+        sub3(vertexAt(mesh.vertices, face[1]), vertexAt(mesh.vertices, face[0])),
+        sub3(vertexAt(mesh.vertices, face[2]), vertexAt(mesh.vertices, face[0]))
+      ));
+      const facing = Math.abs(mat3Vec(camera.orientation, worldNormal)[2]);
+      const renderMode = currentDisplayMode === 'wireframe'
+        ? 'wireframe'
+        : (fallbackXrayTargets.has(mesh) ? 'xray' : 'normal');
+      tris.push({ a, b, c, depth, material: mesh.material, facing, renderMode });
     }
   }
   tris.sort((p, q) => q.depth - p.depth);
@@ -1598,8 +1951,23 @@ function drawFallback2d() {
     ctx2d.lineTo(t.b[0], t.b[1]);
     ctx2d.lineTo(t.c[0], t.c[1]);
     ctx2d.closePath();
-    ctx2d.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${t.material.opacity})`;
-    ctx2d.fill();
+    if (t.renderMode === 'wireframe') {
+      ctx2d.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},1)`;
+      ctx2d.lineWidth = Math.max(devicePixelRatio, 1);
+      ctx2d.stroke();
+    } else if (t.renderMode === 'xray') {
+      const rim = Math.pow(clamp(1 - t.facing, 0, 1), 2);
+      const xray = Math.round((0.78 + 0.22 * rim) * 255);
+      const alpha = clamp(0.18 * (0.55 + (3.0 - 0.55) * rim), 0, 0.62);
+      ctx2d.fillStyle = `rgba(${xray},${xray},${xray},${alpha})`;
+      ctx2d.fill();
+      ctx2d.strokeStyle = 'rgba(255,255,255,0.58)';
+      ctx2d.lineWidth = Math.max(devicePixelRatio, 1);
+      ctx2d.stroke();
+    } else {
+      ctx2d.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${t.material.opacity})`;
+      ctx2d.fill();
+    }
   }
 }
 function worldToScreen(world, depthRange) {
@@ -1699,9 +2067,26 @@ uniform float uWarmth;
 uniform float uWrapDiffuse;
 uniform float uEmission;
 uniform float uSubsurface;
+uniform int uRenderMode;
 varying vec3 vNormal;
 varying vec3 vView;
 void main() {
+  if (uRenderMode == 1) {
+    float facing = abs(normalize(vNormal).z);
+    float rim = pow(clamp(1.0 - facing, 0.0, 1.0), 2.0);
+    vec3 xrayColor = mix(vec3(0.78), vec3(1.0), rim);
+    float xrayAlpha = clamp(0.18 * mix(0.55, 3.0, rim), 0.0, 0.62);
+    gl_FragColor = vec4(xrayColor, xrayAlpha);
+    return;
+  }
+  if (uRenderMode == 2) {
+    gl_FragColor = vec4(uColor, uOpacity);
+    return;
+  }
+  if (uRenderMode == 3) {
+    gl_FragColor = vec4(1.0);
+    return;
+  }
   vec3 normal = normalize(vNormal);
   if (!gl_FrontFacing) normal = -normal;
   vec3 keyLight = normalize(vec3(0.30, 0.68, 0.64));
@@ -1730,6 +2115,32 @@ void main() {
   color = color / (color + vec3(0.48));
   color = min(color * 1.28, vec3(1.0));
   gl_FragColor = vec4(color, uOpacity);
+}`;
+}
+function outlineVertexShaderSource() {
+  return `
+attribute vec2 aPosition;
+varying vec2 vUv;
+void main() {
+  vUv = aPosition * 0.5 + 0.5;
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}`;
+}
+function outlineFragmentShaderSource() {
+  return `
+precision mediump float;
+uniform sampler2D uMask;
+uniform vec2 uTexelSize;
+varying vec2 vUv;
+void main() {
+  float center = texture2D(uMask, vUv).r;
+  float neighbor = 0.0;
+  neighbor = max(neighbor, texture2D(uMask, vUv + vec2(uTexelSize.x, 0.0)).r);
+  neighbor = max(neighbor, texture2D(uMask, vUv - vec2(uTexelSize.x, 0.0)).r);
+  neighbor = max(neighbor, texture2D(uMask, vUv + vec2(0.0, uTexelSize.y)).r);
+  neighbor = max(neighbor, texture2D(uMask, vUv - vec2(0.0, uTexelSize.y)).r);
+  float edge = (1.0 - center) * neighbor;
+  gl_FragColor = vec4(1.0, 1.0, 1.0, edge * 0.58);
 }`;
 }
 function makeProgram(vertexSource, fragmentSource) {
