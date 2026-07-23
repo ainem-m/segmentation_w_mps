@@ -168,6 +168,7 @@ enum DicomRescueWorkflowState: String, CaseIterable {
     case editableReady
     case userModified
     case manualOnly
+    case sourceStackUnavailable
     case preparingNifti
     case validatingNifti
     case prepareFailed
@@ -180,6 +181,7 @@ enum DicomRescueWorkflowState: String, CaseIterable {
         case .editableReady: return "候補作成済み"
         case .userModified: return "手動調整中"
         case .manualOnly: return "手動調整が必要"
+        case .sourceStackUnavailable: return "画像stackを準備できません"
         case .preparingNifti: return "確定した寸法を適用中"
         case .validatingNifti: return "shape・spacingを確認中"
         case .prepareFailed: return "救済データを作成できませんでした"
@@ -1788,7 +1790,8 @@ final class AppState: ObservableObject {
         guard candidate.role == "primary",
               let dicomDir = lastDicomDirURL,
               FileManager.default.isExecutableFile(atPath: paths.normalizer.path) else {
-            rescueWorkflowState = .manualOnly
+            rescueWorkflowState = .sourceStackUnavailable
+            rescuePreviewStatus = "安全に並べた画像stackを作れないため、NIfTI作成へ進めません"
             return
         }
         let sessionDir = paths.runs.appendingPathComponent(
@@ -1861,8 +1864,8 @@ final class AppState: ObservableObject {
                 guard rc == 0,
                       FileManager.default.fileExists(atPath: volumeURL.path),
                       let manifestHash else {
-                    self?.rescueWorkflowState = .manualOnly
-                    self?.rescuePreviewStatus = "画像準備に失敗したため手動調整を使用します"
+                    self?.rescueWorkflowState = .sourceStackUnavailable
+                    self?.rescuePreviewStatus = "画像の形式または並び順を安全に確定できないため、NIfTI作成へ進めません"
                     return
                 }
                 let estimateJSON = sessionDir.appendingPathComponent("estimate/rescue_geometry.v2.json")

@@ -592,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         from totalsegmentator_wrapper_mac.rescue_pipeline import (
             PIPELINE_VERSION,
             RescuePipelineError,
+            create_estimate,
             create_preview,
             finalize_rescue,
             geometry_values_from_mapping,
@@ -630,20 +631,49 @@ def main(argv: list[str] | None = None) -> int:
                     references["sagittal"] = load_decoded_reference_image(
                         args.sagittal_reference
                     )
-                metadata = estimate_rescue_spacing(
-                    volume,
-                    source_manifest_sha256=args.source_manifest_sha256,
-                    spacing_hints_xyz=hints,
-                    reference_images=references,
-                    axial_slice_step_mm=args.axial_slice_step_mm,
-                    coronal_count=args.coronal_count,
-                    coronal_slice_step_mm=args.coronal_slice_step_mm,
-                    sagittal_count=args.sagittal_count,
-                    sagittal_slice_step_mm=args.sagittal_slice_step_mm,
-                    max_registration_evaluations=args.max_registration_evaluations,
-                    used_series=evidence.get("used_series", ()),
-                    used_dicom_tags=evidence.get("used_dicom_tags", ()),
-                )
+                try:
+                    metadata = estimate_rescue_spacing(
+                        volume,
+                        source_manifest_sha256=args.source_manifest_sha256,
+                        spacing_hints_xyz=hints,
+                        reference_images=references,
+                        axial_slice_step_mm=args.axial_slice_step_mm,
+                        coronal_count=args.coronal_count,
+                        coronal_slice_step_mm=args.coronal_slice_step_mm,
+                        sagittal_count=args.sagittal_count,
+                        sagittal_slice_step_mm=args.sagittal_slice_step_mm,
+                        max_registration_evaluations=args.max_registration_evaluations,
+                        used_series=evidence.get("used_series", ()),
+                        used_dicom_tags=evidence.get("used_dicom_tags", ()),
+                    )
+                except (RescuePipelineError, ValueError, TypeError, KeyError, AttributeError):
+                    sources = [
+                        str(value)
+                        for value in evidence.get("spacing_sources", ())
+                        if isinstance(value, str)
+                    ]
+                    sources.append("automatic_estimation_failed_manual_fallback")
+                    metadata = create_estimate(
+                        volume,
+                        spacing_hints_xyz=hints,
+                        source_manifest_sha256=args.source_manifest_sha256,
+                        spacing_sources=sources,
+                        used_series=evidence.get("used_series", ()),
+                        used_dicom_tags=evidence.get("used_dicom_tags", ()),
+                        registration={
+                            "metric": "multi_scale_normalized_mutual_information",
+                            "converged": False,
+                            "residual": None,
+                            "top2_score_margin": None,
+                            "ambiguous": True,
+                        },
+                    )
+                    metadata["estimate"]["status"] = "fallback_initial_candidate"
+                    metadata["estimate"]["confidence"]["overall"] = "unknown"
+                    metadata["estimate"]["confidence"]["convergence"] = False
+                    metadata["estimate"]["confidence"]["limitations"].append(
+                        "automatic_estimation_failed"
+                    )
             else:
                 geometry = json.loads(args.geometry.read_text(encoding="utf-8"))
                 if not isinstance(geometry, dict):

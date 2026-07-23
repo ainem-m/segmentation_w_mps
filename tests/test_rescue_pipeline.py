@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -277,6 +278,62 @@ class RescuePipelineTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertNotIn(secret, payload)
             self.assertNotIn(str(root), payload)
+
+    def test_cli_estimator_failure_degrades_to_previewable_manual_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            volume_path = root / "decoded.npy"
+            np.save(volume_path, np.arange(60, dtype=np.int16).reshape((3, 4, 5)))
+            estimate_path = root / "estimate.json"
+            preview_volume = root / "preview.npy"
+            preview_path = root / "preview.json"
+            with patch(
+                "totalsegmentator_wrapper_mac.rescue_estimation.estimate_rescue_spacing",
+                side_effect=RescuePipelineError("forced estimator failure"),
+            ), redirect_stdout(StringIO()):
+                estimate_code = main(
+                    [
+                        "dicom-rescue-estimate",
+                        "--volume",
+                        str(volume_path),
+                        "--source-manifest-sha256",
+                        "7" * 64,
+                        "--spacing-hints",
+                        "0.4,0.6,unknown",
+                        "--output",
+                        str(estimate_path),
+                    ]
+                )
+            estimate = json.loads(estimate_path.read_text(encoding="utf-8"))
+            self.assertEqual(estimate_code, 0)
+            self.assertEqual(
+                estimate["estimate"]["estimated_spacing_xyz"],
+                [0.4, 0.6, 1.0],
+            )
+            self.assertEqual(estimate["estimate"]["confidence"]["overall"], "unknown")
+            self.assertIn(
+                "automatic_estimation_failed",
+                estimate["estimate"]["confidence"]["limitations"],
+            )
+            self.assertIsNot(estimate.get("inference_started"), True)
+            with redirect_stdout(StringIO()):
+                preview_code = main(
+                    [
+                        "dicom-rescue-preview",
+                        "--volume",
+                        str(volume_path),
+                        "--geometry",
+                        str(estimate_path),
+                        "--output-volume",
+                        str(preview_volume),
+                        "--output",
+                        str(preview_path),
+                    ]
+                )
+            preview = json.loads(preview_path.read_text(encoding="utf-8"))
+            self.assertEqual(preview_code, 0)
+            self.assertEqual(len(preview["confirmation_token"]), 64)
+            self.assertFalse(preview["inference_started"])
 
     def test_cli_preview_finalize_accepts_minimal_geometry_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

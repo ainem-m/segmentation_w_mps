@@ -245,6 +245,7 @@ def create_estimate(
             "burned_in_annotation",
             "non_diagnostic_preview",
         ],
+        "inference_started": False,
     }
 
 

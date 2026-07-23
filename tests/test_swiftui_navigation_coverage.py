@@ -143,6 +143,8 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         export = body(STATE, "private func exportPrimaryRescueStackIfAvailable")
         self.assertIn("source_manifest.json", export)
         self.assertIn("startSecondaryCaptureSpacingEstimation", export)
+        self.assertIn(".sourceStackUnavailable", export)
+        self.assertIn("NIfTI作成へ進めません", export)
 
     def test_partial_geometry_rescue_uses_standard_tag_precedence(self):
         candidates = body(STATE, "func secondaryCaptureRescueCandidates(payload:")
