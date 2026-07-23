@@ -112,6 +112,10 @@ def write_preview_artifacts(
                 "path": str(path),
                 "width": int(display.shape[1]),
                 "height": int(display.shape[0]),
+                "row_spacing_mm": float(image.shape[0] * row_spacing / display.shape[0]),
+                "column_spacing_mm": float(
+                    image.shape[1] * column_spacing / display.shape[1]
+                ),
                 "min": minimum,
                 "max": maximum,
                 "uniform_or_empty": uniform,
@@ -780,9 +784,19 @@ def _safe_calibrations(value: Any) -> list[dict[str, Any]]:
             points = item.get("voxel_points_xyz")
             if isinstance(points, Sequence) and not isinstance(points, (str, bytes)):
                 try:
-                    safe["voxel_points_xyz"] = [
+                    parsed_points = [
                         [float(coordinate) for coordinate in point] for point in points
                     ]
+                    if (
+                        len(parsed_points) == 2
+                        and all(len(point) == 3 for point in parsed_points)
+                        and all(
+                            math.isfinite(coordinate) and coordinate >= 0
+                            for point in parsed_points
+                            for coordinate in point
+                        )
+                    ):
+                        safe["voxel_points_xyz"] = parsed_points
                 except (TypeError, ValueError):
                     pass
             axes = item.get("updated_axes")

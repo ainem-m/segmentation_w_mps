@@ -318,6 +318,8 @@ struct CTPreviewSlice: Identifiable, Equatable {
     let url: URL
     let width: Int
     let height: Int
+    let rowSpacingMM: Double?
+    let columnSpacingMM: Double?
     let minValue: Double
     let maxValue: Double
     let uniformOrEmpty: Bool
@@ -475,6 +477,10 @@ final class AppState: ObservableObject {
     @Published var rescueCalibrationAxis: RescueCalibrationAxis = .x
     @Published var rescueMeasuredLengthMM = 0.0
     @Published var rescueKnownLengthMM = 0.0
+    @Published var rescueMeasurementPlane = "axial"
+    @Published var rescueMeasurementStartNormalized: CGPoint?
+    @Published var rescueMeasurementEndNormalized: CGPoint?
+    @Published var rescuePreviewShapeXYZ: [Int] = []
     @Published var rescueInlineWarning = ""
     @Published var rescueConfirmationWasExplicit = false
     @Published var rescuePreviewRevision = 0
@@ -1754,6 +1760,8 @@ final class AppState: ObservableObject {
         rescueCropMaxZ = max(primary?.fileCount ?? 0, 1)
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
+        rescuePreviewShapeXYZ = []
+        clearRescueMeasurement()
         rescuePreviewMetadataInferenceStarted = false
         rescuePreviewStatus = "preview renderer未接続（AI推論は開始していません）"
         rescueCalibrationRecords = []
@@ -2047,6 +2055,8 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
+        rescuePreviewShapeXYZ = []
+        clearRescueMeasurement()
         rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
         rescuePreviewRevision &+= 1
         return true
@@ -2094,6 +2104,8 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
+        rescuePreviewShapeXYZ = []
+        clearRescueMeasurement()
         rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
@@ -2106,6 +2118,8 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
+        rescuePreviewShapeXYZ = []
+        clearRescueMeasurement()
         rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
@@ -2133,6 +2147,8 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
+        rescuePreviewShapeXYZ = []
+        clearRescueMeasurement()
         rescuePreviewStatus = "自動推定値へ戻しました。previewを更新してください"
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
@@ -2146,13 +2162,18 @@ final class AppState: ObservableObject {
             return
         }
         let scale = rescueKnownLengthMM / rescueMeasuredLengthMM
-        rescueCalibrationRecords.append([
+        var record: [String: Any] = [
             "axis": rescueCalibrationAxis.rawValue,
+            "plane": rescueMeasurementPlane,
             "measured_length_mm": rescueMeasuredLengthMM,
             "known_length_mm": rescueKnownLengthMM,
             "scale": scale,
             "method": "known_length_manual",
-        ])
+        ]
+        if let points = rescueMeasurementVoxelPoints() {
+            record["voxel_points_xyz"] = points
+        }
+        rescueCalibrationRecords.append(record)
         switch rescueCalibrationAxis {
         case .x:
             rescueSpacingX *= scale
@@ -2164,6 +2185,104 @@ final class AppState: ObservableObject {
             rescueSpacingZ *= scale
         }
         rescueSpacingDidChange(axis: rescueCalibrationAxis)
+    }
+
+    func updateRescueMeasurement(
+        plane: String,
+        startNormalized: CGPoint,
+        endNormalized: CGPoint
+    ) {
+        guard let slice = rescueMPRPreviewSlices.first(where: { $0.plane == plane }),
+              let rowSpacing = slice.rowSpacingMM,
+              let columnSpacing = slice.columnSpacingMM,
+              rowSpacing.isFinite,
+              columnSpacing.isFinite,
+              rowSpacing > 0,
+              columnSpacing > 0
+        else {
+            rescueInlineWarning = "この断面の物理寸法を読み取れないため、距離を計測できません。"
+            return
+        }
+        let start = CGPoint(
+            x: min(max(startNormalized.x, 0), 1),
+            y: min(max(startNormalized.y, 0), 1)
+        )
+        let end = CGPoint(
+            x: min(max(endNormalized.x, 0), 1),
+            y: min(max(endNormalized.y, 0), 1)
+        )
+        let horizontalMM = Double(end.x - start.x) * Double(slice.width) * columnSpacing
+        let verticalMM = Double(end.y - start.y) * Double(slice.height) * rowSpacing
+        let distance = hypot(horizontalMM, verticalMM)
+        guard distance.isFinite, distance > 0 else {
+            rescueInlineWarning = "2点を離して計測線を引いてください。"
+            return
+        }
+        rescueMeasurementPlane = plane
+        rescueMeasurementStartNormalized = start
+        rescueMeasurementEndNormalized = end
+        rescueMeasuredLengthMM = distance
+        rescueCalibrationAxis = measurementAxis(
+            plane: plane,
+            horizontalMM: horizontalMM,
+            verticalMM: verticalMM
+        )
+        rescueInlineWarning = ""
+    }
+
+    private func measurementAxis(
+        plane: String,
+        horizontalMM: Double,
+        verticalMM: Double
+    ) -> RescueCalibrationAxis {
+        let horizontalDominates = abs(horizontalMM) >= abs(verticalMM)
+        switch plane {
+        case "coronal":
+            return horizontalDominates ? .x : .z
+        case "sagittal":
+            return horizontalDominates ? .y : .z
+        default:
+            return horizontalDominates ? .x : .y
+        }
+    }
+
+    private func rescueMeasurementVoxelPoints() -> [[Double]]? {
+        guard rescuePreviewShapeXYZ.count == 3,
+              let start = rescueMeasurementStartNormalized,
+              let end = rescueMeasurementEndNormalized
+        else {
+            return nil
+        }
+        let maximum = rescuePreviewShapeXYZ.map { Double(max($0 - 1, 0)) }
+        func point(_ normalized: CGPoint) -> [Double] {
+            switch rescueMeasurementPlane {
+            case "coronal":
+                return [
+                    Double(normalized.x) * maximum[0],
+                    maximum[1] * 0.5,
+                    Double(normalized.y) * maximum[2],
+                ]
+            case "sagittal":
+                return [
+                    maximum[0] * 0.5,
+                    Double(normalized.x) * maximum[1],
+                    Double(normalized.y) * maximum[2],
+                ]
+            default:
+                return [
+                    Double(normalized.x) * maximum[0],
+                    Double(normalized.y) * maximum[1],
+                    maximum[2] * 0.5,
+                ]
+            }
+        }
+        return [point(start), point(end)]
+    }
+
+    func clearRescueMeasurement() {
+        rescueMeasurementStartNormalized = nil
+        rescueMeasurementEndNormalized = nil
+        rescueMeasuredLengthMM = 0
     }
 
     func applyRescuePreviewMetadata(_ metadataJSON: URL) {
@@ -2182,6 +2301,9 @@ final class AppState: ObservableObject {
         }
         rescueMPRPreviewSlices = rescuePreviewSlices(payload: payload)
         rescuePseudo3DPreviewURL = parsedRescuePseudo3DPreviewURL(payload: payload)
+        rescuePreviewShapeXYZ = (
+            (payload["preview"] as? [String: Any])?["shape"] as? [Any]
+        )?.compactMap(jsonInt) ?? []
         rescueConfirmationToken = (payload["confirmation_token"] as? String) ?? ""
         rescuePreviewStatus = rescueMPRPreviewSlices.isEmpty
             ? "preview artifact待機中（AI推論は開始していません）"
@@ -4186,6 +4308,8 @@ func viewerExportPreviewSlices(metadataJSON: URL) -> [CTPreviewSlice] {
                 url: URL(fileURLWithPath: path),
                 width: jsonInt(preview["width"]) ?? 0,
                 height: jsonInt(preview["height"]) ?? 0,
+                rowSpacingMM: nil,
+                columnSpacingMM: nil,
                 minValue: jsonDouble(preview["min"]) ?? 0.0,
                 maxValue: jsonDouble(preview["max"]) ?? 0.0,
                 uniformOrEmpty: (preview["uniform_or_empty"] as? Bool) ?? true
@@ -4213,6 +4337,8 @@ func rescuePreviewSlices(payload: [String: Any]) -> [CTPreviewSlice] {
             url: URL(fileURLWithPath: path),
             width: jsonInt(preview["width"]) ?? 0,
             height: jsonInt(preview["height"]) ?? 0,
+            rowSpacingMM: jsonDouble(preview["row_spacing_mm"]),
+            columnSpacingMM: jsonDouble(preview["column_spacing_mm"]),
             minValue: jsonDouble(preview["min"]) ?? 0,
             maxValue: jsonDouble(preview["max"]) ?? 0,
             uniformOrEmpty: (preview["uniform_or_empty"] as? Bool) ?? false

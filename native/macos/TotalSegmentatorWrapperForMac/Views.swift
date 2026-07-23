@@ -1204,29 +1204,63 @@ struct DicomRescueView: View {
                 }
 
                 GroupBox("既知の長さでキャリブレーション") {
-                    HStack {
-                        Picker("更新軸", selection: $state.rescueCalibrationAxis) {
-                            ForEach(RescueCalibrationAxis.allCases) { axis in
-                                Text(axis.displayName).tag(axis)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("計測する断面", selection: $state.rescueMeasurementPlane) {
+                            Text("AXIAL").tag("axial")
+                            Text("CORONAL").tag("coronal")
+                            Text("SAGITTAL").tag("sagittal")
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: state.rescueMeasurementPlane) { _ in
+                            state.clearRescueMeasurement()
+                        }
+                        if let slice = state.rescueMPRPreviewSlices.first(
+                            where: { $0.plane == state.rescueMeasurementPlane }
+                        ) {
+                            RescueMeasurementImage(
+                                slice: slice,
+                                startNormalized: state.rescueMeasurementStartNormalized,
+                                endNormalized: state.rescueMeasurementEndNormalized
+                            ) { start, end in
+                                state.updateRescueMeasurement(
+                                    plane: slice.plane,
+                                    startNormalized: start,
+                                    endNormalized: end
+                                )
                             }
+                            .frame(maxWidth: 460)
+                            Text("画像上で始点から終点までドラッグしてください。現在のspacingで距離を計算します。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("三方向プレビューを更新すると、画像上で距離を計測できます。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .frame(width: 140)
-                        TextField(
-                            "計測した長さ",
-                            value: $state.rescueMeasuredLengthMM,
-                            format: .number.precision(.fractionLength(0...4))
-                        )
-                        Text("mm")
-                        TextField(
-                            "既知の長さ",
-                            value: $state.rescueKnownLengthMM,
-                            format: .number.precision(.fractionLength(0...4))
-                        )
-                        Text("mm")
-                        Button("反映") {
-                            state.applyRescueKnownLengthCalibration()
+                        HStack {
+                            Picker("更新軸", selection: $state.rescueCalibrationAxis) {
+                                ForEach(RescueCalibrationAxis.allCases) { axis in
+                                    Text(axis.displayName).tag(axis)
+                                }
+                            }
+                            .frame(width: 140)
+                            TextField(
+                                "計測した長さ",
+                                value: $state.rescueMeasuredLengthMM,
+                                format: .number.precision(.fractionLength(0...4))
+                            )
+                            Text("mm")
+                            TextField(
+                                "既知の長さ",
+                                value: $state.rescueKnownLengthMM,
+                                format: .number.precision(.fractionLength(0...4))
+                            )
+                            Text("mm")
+                            Button("反映") {
+                                state.applyRescueKnownLengthCalibration()
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
 
@@ -1257,6 +1291,97 @@ struct DicomRescueView: View {
         } else {
             RescueMPRPlaceholder(plane: label, revision: state.rescuePreviewRevision)
         }
+    }
+}
+
+private struct RescueMeasurementImage: View {
+    let slice: CTPreviewSlice
+    let startNormalized: CGPoint?
+    let endNormalized: CGPoint?
+    let onMeasurement: (CGPoint, CGPoint) -> Void
+    @State private var dragStart: CGPoint?
+    @State private var dragEnd: CGPoint?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                Rectangle()
+                    .fill(Color.black.opacity(0.9))
+                if let image = loadPGMImage(slice.url) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                }
+                if let endpoints = displayedEndpoints(size: size) {
+                    Path { path in
+                        path.move(to: endpoints.0)
+                        path.addLine(to: endpoints.1)
+                    }
+                    .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    Circle()
+                        .fill(Color.yellow)
+                        .frame(width: 8, height: 8)
+                        .position(endpoints.0)
+                    Circle()
+                        .fill(Color.yellow)
+                        .frame(width: 8, height: 8)
+                        .position(endpoints.1)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if dragStart == nil {
+                            dragStart = clamped(value.startLocation, to: size)
+                        }
+                        dragEnd = clamped(value.location, to: size)
+                    }
+                    .onEnded { value in
+                        let start = dragStart ?? clamped(value.startLocation, to: size)
+                        let end = clamped(value.location, to: size)
+                        dragStart = nil
+                        dragEnd = nil
+                        guard size.width > 0, size.height > 0 else { return }
+                        onMeasurement(
+                            CGPoint(x: start.x / size.width, y: start.y / size.height),
+                            CGPoint(x: end.x / size.width, y: end.y / size.height)
+                        )
+                    }
+            )
+        }
+        .aspectRatio(
+            CGFloat(max(slice.width, 1)) / CGFloat(max(slice.height, 1)),
+            contentMode: .fit
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+        }
+        .accessibilityLabel("\(slice.label) 距離計測")
+        .accessibilityHint("画像上をドラッグして2点間の距離を計測します")
+    }
+
+    private func displayedEndpoints(size: CGSize) -> (CGPoint, CGPoint)? {
+        if let dragStart, let dragEnd {
+            return (dragStart, dragEnd)
+        }
+        guard let startNormalized, let endNormalized else {
+            return nil
+        }
+        return (
+            CGPoint(x: startNormalized.x * size.width, y: startNormalized.y * size.height),
+            CGPoint(x: endNormalized.x * size.width, y: endNormalized.y * size.height)
+        )
+    }
+
+    private func clamped(_ point: CGPoint, to size: CGSize) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 0), size.width),
+            y: min(max(point.y, 0), size.height)
+        )
     }
 }
 

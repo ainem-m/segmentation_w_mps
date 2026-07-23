@@ -182,6 +182,8 @@ class RescuePipelineTests(unittest.TestCase):
             self.assertEqual((axial["width"], axial["height"]), (3, 4))
             for item in outputs["mpr_preview"]:
                 self.assertTrue(Path(item["path"]).read_bytes().startswith(b"P5\n"))
+                self.assertGreater(item["row_spacing_mm"], 0)
+                self.assertGreater(item["column_spacing_mm"], 0)
             self.assertTrue(
                 Path(outputs["pseudo_3d_preview"]).read_bytes().startswith(b"P5\n")
             )
@@ -350,6 +352,10 @@ class RescuePipelineTests(unittest.TestCase):
             self.assertIn("evidence", preview)
             self.assertIn("algorithm", preview)
             self.assertEqual(preview["calibrations"][0]["known_length_mm"], 5.0)
+            self.assertEqual(
+                preview["calibrations"][0]["voxel_points_xyz"],
+                [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            )
             final = json.loads(final_json.read_text(encoding="utf-8"))
             self.assertEqual(final["workflow_status"], "finalized")
 
