@@ -58,6 +58,8 @@ def write_dicom(
     sop_instance_uid: str | None = None,
     series_number: int | None = 1,
     instance_number: int | None = None,
+    study_uid: str | None = None,
+    frame_of_reference_uid: str | None = None,
     series_uid: str = "1.2.826.0.1.3680043.10.543.1",
     description: str = "AXIAL CT",
     modality: str = "CT",
@@ -90,6 +92,10 @@ def write_dicom(
     data += elem_explicit(0x0008, 0x0008, "CS", image_type)
     data += elem_explicit(0x0008, 0x0060, "CS", modality)
     data += elem_explicit(0x0008, 0x103E, "LO", description)
+    if study_uid is not None:
+        data += elem_explicit(0x0020, 0x000D, "UI", study_uid)
+    if frame_of_reference_uid is not None:
+        data += elem_explicit(0x0020, 0x0052, "UI", frame_of_reference_uid)
     data += elem_explicit(0x0020, 0x000E, "UI", series_uid)
     if series_number is not None:
         data += elem_explicit(0x0020, 0x0011, "IS", str(series_number))
@@ -457,6 +463,8 @@ def test_geometry_evidence_and_secondary_capture_references(binary: Path) -> Non
             write_dicom(
                 root / "clean" / f"ct_{index:04d}.dcm",
                 series_number=190,
+                study_uid="1.2.3.study.geometry",
+                frame_of_reference_uid="1.2.3.frame.geometry",
                 series_uid="1.2.3.geometry.evidence",
                 instance_number=index + 1,
                 slice_thickness="0.9375",
@@ -482,6 +490,13 @@ def test_geometry_evidence_and_secondary_capture_references(binary: Path) -> Non
         clean = series_by_uid(payload, "1.2.3.geometry.evidence")
         assert clean["classification"]["status"] == "original_ct_geometry_ok"
         assert clean["classification"]["next_action"] == "convert_clean"
+        assert clean["study_key_sha256"] == hashlib.sha256(
+            b"1.2.3.study.geometry"
+        ).hexdigest()
+        assert clean["frame_of_reference_key_sha256"] == hashlib.sha256(
+            b"1.2.3.frame.geometry"
+        ).hexdigest()
+        assert "1.2.3.study.geometry" not in json.dumps(clean)
         assert clean["slice_thickness"]["present_count"] == 32
         assert clean["slice_thickness"]["valid_numeric_count"] == 32
         assert clean["slice_thickness"]["consistent"] is True

@@ -204,6 +204,8 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
         result.has_dicm_prefix = has_dicm_prefix(path);
         result.has_file_meta = !file.GetHeader().IsEmpty();
         result.transfer_syntax_uid = file.GetHeader().GetDataSetTransferSyntax().GetString();
+        result.study_instance_uid = top_level_string(file, gdcm::Tag(0x0020, 0x000d));
+        result.frame_of_reference_uid = top_level_string(file, gdcm::Tag(0x0020, 0x0052));
         result.series_instance_uid = top_level_string(file, gdcm::Tag(0x0020, 0x000e));
         result.sop_instance_uid = top_level_string(file, gdcm::Tag(0x0008, 0x0018));
         result.series_number = parse_int(top_level_string(file, gdcm::Tag(0x0020, 0x0011)));

@@ -21,6 +21,8 @@ struct GdcmProbe {
     std::uint64_t decoded_fnv1a64 = 0;
     std::string error;
     std::string transfer_syntax_uid;
+    std::string study_instance_uid;
+    std::string frame_of_reference_uid;
     std::string series_instance_uid;
     std::string sop_instance_uid;
     std::optional<int> series_number;

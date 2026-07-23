@@ -83,6 +83,8 @@ struct DicomMeta {
     bool has_dicm_prefix = false;
     bool has_file_meta = false;
     std::string transfer_syntax_uid;
+    std::string study_instance_uid;
+    std::string frame_of_reference_uid;
     std::string series_instance_uid;
     std::string sop_instance_uid;
     std::optional<int> series_number;
@@ -570,6 +572,8 @@ DicomMeta parse_dicom_file(const fs::path& path) {
     meta.has_dicm_prefix = probe.has_dicm_prefix;
     meta.has_file_meta = probe.has_file_meta;
     meta.transfer_syntax_uid = probe.transfer_syntax_uid;
+    meta.study_instance_uid = probe.study_instance_uid;
+    meta.frame_of_reference_uid = probe.frame_of_reference_uid;
     meta.series_instance_uid = probe.series_instance_uid;
     meta.sop_instance_uid = probe.sop_instance_uid;
     meta.series_number = probe.series_number;
@@ -1573,6 +1577,18 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     std::ostringstream out;
     out << pad << "{\n";
     out << pad2 << "\"series_key\": " << json_string(series.key) << ",\n";
+    out << pad2 << "\"study_key_sha256\": "
+        << json_optional_string(
+               first.study_instance_uid.empty()
+                   ? std::string{}
+                   : dicom_normalizer::sha256_hex(first.study_instance_uid))
+        << ",\n";
+    out << pad2 << "\"frame_of_reference_key_sha256\": "
+        << json_optional_string(
+               first.frame_of_reference_uid.empty()
+                   ? std::string{}
+                   : dicom_normalizer::sha256_hex(first.frame_of_reference_uid))
+        << ",\n";
     out << pad2 << "\"series_instance_uid\": " << json_optional_string(first.series_instance_uid) << ",\n";
     out << pad2 << "\"series_number\": " << json_optional_int(first.series_number) << ",\n";
     out << pad2 << "\"series_description\": " << json_optional_string(first.series_description) << ",\n";
