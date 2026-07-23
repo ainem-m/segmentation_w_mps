@@ -92,10 +92,11 @@ def run_surface_preview(
         readme_filename="README_SURFACE_PREVIEW.md",
     )
     html_path = output_dir / "index.html"
+    viewer_base_smoothing = smoothing_config_from_options(preset="none")
     preview_meshes = _build_preview_meshes(
         input_path=input_path,
         summary=summary,
-        smoothing=smoothing,
+        smoothing=viewer_base_smoothing,
         step_size=preview_step_size,
     )
     _write_offline_viewer(html_path, summary=summary, preview_meshes=preview_meshes)
@@ -123,6 +124,10 @@ def run_surface_preview(
         "fallback_renderer": "canvas2d",
         "camera_mode_default": "trackpad",
         "transparent_rendering": "jaw_depth_prepass_front_shell",
+        "runtime_smoothing": True,
+        "runtime_smoothing_presets": list(SMOOTH_PRESETS.keys()),
+        "material_default": "rich",
+        "material_presets": ["standard", "rich", "realistic", "neutral", "high_contrast"],
     }
     (output_dir / "preview_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
@@ -140,6 +145,18 @@ def resolve_surface_preview_input(
         resolved = input_path.resolve()
         return resolved, {"source": "explicit_input", "input": str(resolved)}
 
+    toothseg_fullspace = (
+        case_dir
+        / "segmentations"
+        / "toothseg"
+        / "toothseg_fdi_multilabel.nii.gz"
+    )
+    if toothseg_fullspace.exists():
+        return toothseg_fullspace, {
+            "source": "toothseg_fdi_multilabel",
+            "input": str(toothseg_fullspace.resolve()),
+        }
+
     teeth_fullspace = (
         case_dir
         / "segmentations"
@@ -152,6 +169,18 @@ def resolve_surface_preview_input(
             "input": str(teeth_fullspace.resolve()),
         }
 
+    dentalseg_fullspace = (
+        case_dir
+        / "segmentations"
+        / "dentalsegmentator"
+        / "dentalsegmentator_multilabel.nii.gz"
+    )
+    if dentalseg_fullspace.exists():
+        return dentalseg_fullspace, {
+            "source": "dentalsegmentator_multilabel",
+            "input": str(dentalseg_fullspace.resolve()),
+        }
+
     raw_totalseg = case_dir / "segmentations" / "raw_totalseg"
     if any((raw_totalseg / filename).exists() for filename, _label, _name in CRANIOFACIAL_SURFACE_LABELS):
         derived, metadata = build_craniofacial_surface_labelmap(case_dir=case_dir)
@@ -159,7 +188,8 @@ def resolve_surface_preview_input(
 
     raise FileNotFoundError(
         "No default surface-preview input found. Expected either "
-        f"{teeth_fullspace} or craniofacial masks under {raw_totalseg}."
+        f"{toothseg_fullspace}, {teeth_fullspace}, {dentalseg_fullspace}, "
+        f"or craniofacial masks under {raw_totalseg}."
     )
 
 
@@ -447,7 +477,13 @@ def group_specs(label_entries: list[dict[str, Any]]) -> dict[str, list[int]]:
         "jaws": [
             entry["label"]
             for entry in label_entries
-            if entry["name"] in {"lower_jawbone", "upper_jawbone"}
+            if entry["name"] in {
+                "lower_jawbone",
+                "upper_jawbone",
+                "mandible",
+                "upper_skull",
+                "maxilla_upper_skull",
+            }
         ],
     }
 
@@ -516,7 +552,8 @@ def safe_name(value: str) -> str:
 
 
 def is_dental_hard_tissue(name: str) -> bool:
-    if name in {
+    normalized = name.lower()
+    if normalized in {
         "bridge",
         "crown",
         "implant",
@@ -526,7 +563,7 @@ def is_dental_hard_tissue(name: str) -> bool:
         "teeth_lower",
     }:
         return True
-    return "fdi" in name and "pulp" not in name
+    return "fdi" in normalized and "pulp" not in normalized
 
 
 def write_markdown_summary(path: Path, summary: dict[str, Any]) -> None:
@@ -611,6 +648,8 @@ def _write_offline_viewer(
         "dataLabel": "選択したデータ",
         "labelCount": summary["label_count"],
         "smoothing": summary["smoothing"],
+        "smoothingPresets": _viewer_smoothing_presets(),
+        "materialPreset": "rich",
         "meshes": preview_meshes,
     }
     path.write_text(_html_document(payload), encoding="utf-8")
@@ -636,12 +675,20 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
 #panel h1 { font-size: 18px; margin: 0 0 12px; }
 #panel h2 { font-size: 14px; margin: 16px 0 8px; color: #cfe4e2; }
 #panel p, #panel label { font-size: 13px; line-height: 1.45; }
-#panel button { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
+#panel button, #panel select { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
 #panel button.active { background: #496078; border-color: #71839a; }
-#mode, #views { display: grid; gap: 6px; margin: 10px 0; }
+#mode, #views, .segmented { display: grid; gap: 6px; margin: 10px 0; }
 #mode { grid-template-columns: 1fr 1fr; }
+#displayControls { display: grid; gap: 10px; margin: 10px 0 14px; }
 #views { grid-template-columns: 1fr 1fr; }
-#views button { width: 100%; }
+#views button, .segmented button { width: 100%; }
+.segmented { grid-template-columns: 1fr 1fr; }
+.controlRow { display: grid; gap: 6px; }
+.controlLabel { color: #cfe4e2; font-size: 13px; font-weight: 700; }
+#geometryControl[hidden] { display: none; }
+#smoothingControl, #materialControl { display: grid; gap: 6px; margin: 10px 0; }
+#advancedControls { border-top: 1px solid #343941; margin-top: 12px; padding-top: 10px; }
+#advancedControls summary { color: #cfe4e2; cursor: pointer; font-size: 14px; font-weight: 700; }
 #layers label { display: block; margin: 8px 0; }
 canvas { width: 100%; height: 100%; display: block; background: #111317; touch-action: none; }
 code { color: #c9e2ff; }
@@ -652,7 +699,27 @@ code { color: #c9e2ff; }
   <aside id="panel">
     <h1>TotalSegmentator 3Dビューアー</h1>
     <p>データ: <code id="dataName"></code></p>
-    <p>このデータで検出された構造ラベル: <code id="labelCount"></code><br>表面平滑化: <code id="smooth"></code></p>
+    <p>検出された構造ラベル: <code id="labelCount"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
+    <h2>表示</h2>
+    <div id="displayControls">
+    <div id="geometryControl" class="controlRow" hidden>
+      <span class="controlLabel">形状</span>
+      <div class="segmented" id="geometryButtons">
+        <button id="geometryOriginal" type="button">元の形状</button>
+        <button id="geometrySdf" type="button">なめらか補完</button>
+      </div>
+    </div>
+    <label id="materialControl" class="controlRow">
+      <span class="controlLabel">質感</span>
+      <select id="materialPreset" aria-label="質感"></select>
+    </label>
+    </div>
+    <details id="advancedControls">
+      <summary>詳細設定</summary>
+      <h2>表面平滑化</h2>
+      <div id="smoothingControl">
+        <select id="smoothingPreset" aria-label="表面平滑化"></select>
+      </div>
     <h2>操作方法</h2>
     <div id="mode">
       <button id="modeTrackpad" class="active" type="button" aria-label="操作方法: トラックパッド">トラックパッド</button>
@@ -671,6 +738,7 @@ code { color: #c9e2ff; }
     </div>
     <h2>表示する構造</h2>
     <div id="layers"></div>
+    </details>
   </aside>
   <canvas id="view" aria-label="3Dデータ表示領域"></canvas>
 </div>
@@ -683,6 +751,16 @@ const MIN_ZOOM = 0.0001;
 const MAX_ZOOM = 1000.0;
 const MAX_ZOOM_LOG_DELTA_PER_INPUT = 3.0;
 const MAX_ARCBALL_STEP_PX = 12;
+const DEFAULT_SMOOTHING_PRESETS = {
+  none: { iterations: 0, lambda: 0.0, mu: 0.0 },
+  slicer_like: { iterations: 10, lambda: 0.5, mu: -0.53 },
+  medium: { iterations: 20, lambda: 0.5, mu: -0.53 },
+  strong: { iterations: 30, lambda: 0.5, mu: -0.53 }
+};
+const SMOOTHING_PRESETS = DATA.smoothingPresets || DEFAULT_SMOOTHING_PRESETS;
+const SMOOTHING_PRESET_ORDER = ['none', 'slicer_like', 'medium', 'strong'];
+const MATERIAL_MODE_ORDER = ['standard', 'rich', 'realistic', 'neutral', 'high_contrast'];
+const GEOMETRY_PRESET_ORDER = geometryPresetNames();
 let inputMode = 'trackpad';
 let dragging = null;
 let lastPointer = null;
@@ -700,25 +778,41 @@ const camera = {
   projection: 'Perspective'
 };
 const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));
+let currentGeometryPreset = normalizeGeometryPreset(DATA.geometryPreset || '');
+let currentMaterialMode = normalizeMaterialMode(DATA.materialPreset || 'rich');
 const preparedMeshes = DATA.meshes.map(prepareMesh);
+let currentSmoothingPreset = normalizeSmoothingPreset((DATA.smoothing && DATA.smoothing.preset) || 'slicer_like');
 let program = null;
 let attribs = null;
 let uniforms = null;
 let uintIndexExtension = null;
 document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
 document.getElementById('labelCount').textContent = DATA.labelCount;
-document.getElementById('smooth').textContent = smoothingLabel(DATA.smoothing.preset);
+const geometryControl = document.getElementById('geometryControl');
+const geometryOriginalButton = document.getElementById('geometryOriginal');
+const geometrySdfButton = document.getElementById('geometrySdf');
+const smoothingPresetSelect = document.getElementById('smoothingPreset');
+const materialPresetSelect = document.getElementById('materialPreset');
+populateGeometryControl();
+populateSmoothingControl();
+populateMaterialControl();
+applyMaterialMode(currentMaterialMode, false);
+applySmoothingPreset(currentSmoothingPreset, false);
 const layers = document.getElementById('layers');
-for (const mesh of DATA.meshes) {
+for (const mesh of preparedMeshes) {
   const label = document.createElement('label');
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.checked = visible[mesh.name];
   input.onchange = () => { visible[mesh.name] = input.checked; draw(); };
+  const countNode = document.createElement('span');
+  mesh.layerCountNode = countNode;
   label.appendChild(input);
-  label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name) + '（ポリゴン数: ' + mesh.faces.length + '）'));
+  label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name)));
+  label.appendChild(countNode);
   layers.appendChild(label);
 }
+updateLayerStats();
 document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
 document.getElementById('modeMouse').onclick = () => setInputMode('mouse');
 document.getElementById('viewFront').onclick = () => applyAxisView(0, 0);
@@ -763,6 +857,256 @@ function smoothingLabel(name) {
     strong: '強'
   };
   return labels[name] || name;
+}
+function geometryPresetNames() {
+  const names = [];
+  if (Array.isArray(DATA.geometryPresetOrder)) {
+    for (const name of DATA.geometryPresetOrder) {
+      if (!names.includes(name)) names.push(name);
+    }
+  }
+  for (const mesh of DATA.meshes || []) {
+    const variants = mesh.variants || {};
+    for (const name of Object.keys(variants)) {
+      if (!names.includes(name)) names.push(name);
+    }
+  }
+  if (!names.length) names.push('base');
+  return names;
+}
+function geometryPresetLabel(name) {
+  const preset = DATA.geometryPresets && DATA.geometryPresets[name];
+  if (typeof preset === 'string') return preset;
+  if (preset && typeof preset.label === 'string') return preset.label;
+  const labels = {
+    base: '標準',
+    original: '元の形状',
+    sdf: 'なめらか補完'
+  };
+  return labels[name] || name;
+}
+function normalizeGeometryPreset(name) {
+  if (GEOMETRY_PRESET_ORDER.includes(name)) return name;
+  if (GEOMETRY_PRESET_ORDER.includes('sdf')) return 'sdf';
+  if (GEOMETRY_PRESET_ORDER.includes('base')) return 'base';
+  return GEOMETRY_PRESET_ORDER[0] || 'base';
+}
+function hasGeometryVariants() {
+  return GEOMETRY_PRESET_ORDER.length > 1;
+}
+function materialModeLabel(name) {
+  const labels = {
+    standard: '標準',
+    rich: 'リッチ',
+    realistic: 'リアル',
+    neutral: 'ニュートラル',
+    high_contrast: '高コントラスト'
+  };
+  return labels[name] || name;
+}
+function smoothingPresetNames() {
+  const known = SMOOTHING_PRESET_ORDER.filter(name => Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, name));
+  const extra = Object.keys(SMOOTHING_PRESETS).filter(name => !known.includes(name)).sort();
+  return known.concat(extra);
+}
+function normalizeSmoothingPreset(name) {
+  if (Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, name)) return name;
+  if (Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, 'slicer_like')) return 'slicer_like';
+  if (Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, 'none')) return 'none';
+  const names = Object.keys(SMOOTHING_PRESETS);
+  return names.length ? names[0] : 'none';
+}
+function normalizeMaterialMode(name) {
+  if (name === 'clinical') return 'neutral';
+  if (MATERIAL_MODE_ORDER.includes(name)) return name;
+  return 'rich';
+}
+function populateGeometryControl() {
+  const hasVariants = hasGeometryVariants();
+  geometryControl.hidden = !hasVariants;
+  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
+  if (!hasVariants) return;
+  geometryOriginalButton.onclick = () => setGeometryPreset('original');
+  geometrySdfButton.onclick = () => setGeometryPreset('sdf');
+  updateGeometryButtons();
+}
+function populateSmoothingControl() {
+  smoothingPresetSelect.innerHTML = '';
+  for (const name of smoothingPresetNames()) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = smoothingLabel(name);
+    smoothingPresetSelect.appendChild(option);
+  }
+  smoothingPresetSelect.value = currentSmoothingPreset;
+  smoothingPresetSelect.onchange = () => setSmoothingPreset(smoothingPresetSelect.value);
+}
+function populateMaterialControl() {
+  materialPresetSelect.innerHTML = '';
+  for (const name of MATERIAL_MODE_ORDER) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = materialModeLabel(name);
+    materialPresetSelect.appendChild(option);
+  }
+  materialPresetSelect.value = currentMaterialMode;
+  materialPresetSelect.onchange = () => setMaterialMode(materialPresetSelect.value);
+}
+function setSmoothingPreset(name) {
+  const preset = normalizeSmoothingPreset(name);
+  currentSmoothingPreset = preset;
+  smoothingPresetSelect.value = preset;
+  applySmoothingPreset(preset, true);
+  draw();
+}
+function setGeometryPreset(name) {
+  const preset = normalizeGeometryPreset(name);
+  currentGeometryPreset = preset;
+  updateGeometryButtons();
+  for (const mesh of preparedMeshes) {
+    applyRawGeometry(mesh, geometryForPreset(mesh.raw, preset));
+  }
+  applySmoothingPreset(currentSmoothingPreset, false);
+  if (gl) {
+    for (const mesh of preparedMeshes) rebuildMeshBuffers(mesh);
+  }
+  updateLayerStats();
+  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
+  draw();
+}
+function updateGeometryButtons() {
+  if (!hasGeometryVariants()) return;
+  geometryOriginalButton.hidden = !GEOMETRY_PRESET_ORDER.includes('original');
+  geometrySdfButton.hidden = !GEOMETRY_PRESET_ORDER.includes('sdf');
+  geometryOriginalButton.classList.toggle('active', currentGeometryPreset === 'original');
+  geometrySdfButton.classList.toggle('active', currentGeometryPreset === 'sdf');
+}
+function setMaterialMode(name) {
+  applyMaterialMode(name, true);
+}
+function applyMaterialMode(name, redraw) {
+  currentMaterialMode = normalizeMaterialMode(name);
+  materialPresetSelect.value = currentMaterialMode;
+  for (const mesh of preparedMeshes) {
+    mesh.material = materialFor(mesh.name, mesh.baseRgb, mesh.baseOpacity, currentMaterialMode);
+  }
+  document.getElementById('materialModeLabel').textContent = materialModeLabel(currentMaterialMode);
+  if (redraw) draw();
+}
+function applySmoothingPreset(presetName, refreshGpu) {
+  for (const mesh of preparedMeshes) {
+    const config = effectiveSmoothingConfig(mesh.name, presetName);
+    const vertices = smoothMeshVertices(mesh, config);
+    mesh.vertices = verticesFinite(vertices) ? vertices : new Float32Array(mesh.baseVertices);
+    mesh.normals = computeVertexNormals(mesh.vertices, mesh.faces);
+    mesh.bounds = computeBounds(mesh.vertices);
+    if (refreshGpu) refreshMeshBuffers(mesh);
+  }
+  const smoothingModeLabel = document.getElementById('smoothingModeLabel');
+  if (smoothingModeLabel) smoothingModeLabel.textContent = smoothingLabel(presetName);
+}
+function geometryForPreset(raw, presetName) {
+  const variants = raw.variants || {};
+  const preset = normalizeGeometryPreset(presetName);
+  if (variants[preset]) return variants[preset];
+  if (variants.base) return variants.base;
+  return { vertices: raw.vertices, faces: raw.faces };
+}
+function applyRawGeometry(mesh, geometry) {
+  mesh.baseVertices = flattenVertices(geometry.vertices);
+  mesh.faces = geometry.faces;
+  mesh.vertices = new Float32Array(mesh.baseVertices);
+  mesh.normals = computeVertexNormals(mesh.vertices, mesh.faces);
+  mesh.bounds = computeBounds(mesh.vertices);
+  mesh.adjacency = null;
+}
+function flattenVertices(vertices) {
+  const out = new Float32Array(vertices.length * 3);
+  for (let i = 0; i < vertices.length; i++) out.set(vertices[i], i * 3);
+  return out;
+}
+function updateLayerStats() {
+  for (const mesh of preparedMeshes) {
+    if (mesh.layerCountNode) {
+      mesh.layerCountNode.textContent = '（ポリゴン数: ' + mesh.faces.length + '）';
+    }
+  }
+}
+function smoothingConfigForPreset(name) {
+  const preset = SMOOTHING_PRESETS[normalizeSmoothingPreset(name)] || DEFAULT_SMOOTHING_PRESETS.none;
+  const lambdaValue = preset.lambda !== undefined
+    ? preset.lambda
+    : (preset.lambda_value !== undefined ? preset.lambda_value : (preset.lambdaValue || 0));
+  return {
+    iterations: Math.max(0, Math.floor(Number(preset.iterations || 0))),
+    lambdaValue: Number(lambdaValue || 0),
+    mu: Number(preset.mu || 0)
+  };
+}
+function effectiveSmoothingConfig(meshName, presetName) {
+  const config = smoothingConfigForPreset(presetName);
+  if ((meshName === 'pulp' || meshName === 'all_nonzero') && config.iterations > 0) {
+    config.iterations = Math.min(config.iterations, 3);
+  }
+  return config;
+}
+function smoothMeshVertices(mesh, config) {
+  if (!config || config.iterations <= 0) return new Float32Array(mesh.baseVertices);
+  const adjacency = meshAdjacency(mesh);
+  let result = new Float32Array(mesh.baseVertices);
+  for (let i = 0; i < config.iterations; i++) {
+    result = laplacianSmoothStep(result, adjacency, config.lambdaValue);
+    result = laplacianSmoothStep(result, adjacency, config.mu);
+  }
+  return result;
+}
+function meshAdjacency(mesh) {
+  if (mesh.adjacency) return mesh.adjacency;
+  const vertexCount = mesh.baseVertices.length / 3;
+  const sets = Array.from({ length: vertexCount }, () => new Set());
+  for (const face of mesh.faces) {
+    addMeshEdge(sets, face[0], face[1]);
+    addMeshEdge(sets, face[1], face[2]);
+    addMeshEdge(sets, face[2], face[0]);
+  }
+  mesh.adjacency = sets.map(set => Array.from(set));
+  return mesh.adjacency;
+}
+function addMeshEdge(sets, a, b) {
+  if (a === b) return;
+  sets[a].add(b);
+  sets[b].add(a);
+}
+function laplacianSmoothStep(vertices, adjacency, weight) {
+  const out = new Float32Array(vertices.length);
+  for (let i = 0; i < adjacency.length; i++) {
+    const neighbors = adjacency[i];
+    const offset = i * 3;
+    if (!neighbors.length) {
+      out[offset] = vertices[offset];
+      out[offset + 1] = vertices[offset + 1];
+      out[offset + 2] = vertices[offset + 2];
+      continue;
+    }
+    let sx = 0, sy = 0, sz = 0;
+    for (const neighbor of neighbors) {
+      const source = neighbor * 3;
+      sx += vertices[source];
+      sy += vertices[source + 1];
+      sz += vertices[source + 2];
+    }
+    const scale = 1 / neighbors.length;
+    out[offset] = vertices[offset] + weight * (sx * scale - vertices[offset]);
+    out[offset + 1] = vertices[offset + 1] + weight * (sy * scale - vertices[offset + 1]);
+    out[offset + 2] = vertices[offset + 2] + weight * (sz * scale - vertices[offset + 2]);
+  }
+  return out;
+}
+function verticesFinite(vertices) {
+  for (let i = 0; i < vertices.length; i++) {
+    if (!Number.isFinite(vertices[i])) return false;
+  }
+  return true;
 }
 function resize() {
   const rect = canvas.getBoundingClientRect();
@@ -1007,7 +1351,15 @@ function initWebGl() {
     color: gl.getUniformLocation(program, 'uColor'),
     opacity: gl.getUniformLocation(program, 'uOpacity'),
     specular: gl.getUniformLocation(program, 'uSpecular'),
-    shininess: gl.getUniformLocation(program, 'uShininess')
+    shininess: gl.getUniformLocation(program, 'uShininess'),
+    ambient: gl.getUniformLocation(program, 'uAmbient'),
+    diffuseBoost: gl.getUniformLocation(program, 'uDiffuseBoost'),
+    rimStrength: gl.getUniformLocation(program, 'uRimStrength'),
+    rimPower: gl.getUniformLocation(program, 'uRimPower'),
+    warmth: gl.getUniformLocation(program, 'uWarmth'),
+    wrapDiffuse: gl.getUniformLocation(program, 'uWrapDiffuse'),
+    emission: gl.getUniformLocation(program, 'uEmission'),
+    subsurface: gl.getUniformLocation(program, 'uSubsurface')
   };
   for (const mesh of preparedMeshes) uploadMesh(mesh);
   gl.clearColor(0.067, 0.075, 0.090, 1.0);
@@ -1015,12 +1367,12 @@ function initWebGl() {
   gl.disable(gl.CULL_FACE);
 }
 function prepareMesh(raw) {
-  const vertices = new Float32Array(raw.vertices.length * 3);
-  for (let i = 0; i < raw.vertices.length; i++) vertices.set(raw.vertices[i], i * 3);
-  const normals = computeVertexNormals(vertices, raw.faces);
-  const bounds = computeBounds(vertices);
-  const material = materialFor(raw.name, hexToRgb(raw.color), raw.opacity);
-  return { name: raw.name, labels: raw.labels, faces: raw.faces, vertices, normals, bounds, material, webgl: null };
+  const baseRgb = hexToRgb(raw.color);
+  const baseOpacity = raw.opacity;
+  const material = materialFor(raw.name, baseRgb, baseOpacity, currentMaterialMode);
+  const mesh = { raw, name: raw.name, labels: raw.labels, faces: [], baseRgb, baseOpacity, baseVertices: new Float32Array(0), vertices: new Float32Array(0), normals: new Float32Array(0), bounds: null, material, webgl: null, adjacency: null, layerCountNode: null };
+  applyRawGeometry(mesh, geometryForPreset(raw, currentGeometryPreset));
+  return mesh;
 }
 function computeVertexNormals(vertices, faces) {
   const normals = new Float32Array(vertices.length);
@@ -1059,10 +1411,10 @@ function computeBounds(vertices) {
 function uploadMesh(mesh) {
   const positionBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.DYNAMIC_DRAW);
   const normalBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.DYNAMIC_DRAW);
   if (mesh.vertices.length / 3 <= 65535 || uintIndexExtension) {
     const indexArray = mesh.vertices.length / 3 > 65535
       ? new Uint32Array(mesh.faces.length * 3)
@@ -1083,10 +1435,36 @@ function uploadMesh(mesh) {
   }
   const expanded = expandFaces(mesh.vertices, mesh.normals, mesh.faces);
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, expanded.vertices, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, expanded.vertices, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, expanded.normals, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, expanded.normals, gl.DYNAMIC_DRAW);
   mesh.webgl = { positionBuffer, normalBuffer, indexBuffer: null, indexType: null, drawCount: expanded.vertices.length / 3, drawArrays: true };
+}
+function refreshMeshBuffers(mesh) {
+  if (!gl || !mesh.webgl) return;
+  if (mesh.webgl.drawArrays) {
+    const expanded = expandFaces(mesh.vertices, mesh.normals, mesh.faces);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, expanded.vertices, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.normalBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, expanded.normals, gl.DYNAMIC_DRAW);
+    mesh.webgl.drawCount = expanded.vertices.length / 3;
+    return;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.webgl.normalBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.DYNAMIC_DRAW);
+}
+function rebuildMeshBuffers(mesh) {
+  if (!gl) return;
+  if (mesh.webgl) {
+    gl.deleteBuffer(mesh.webgl.positionBuffer);
+    gl.deleteBuffer(mesh.webgl.normalBuffer);
+    if (mesh.webgl.indexBuffer) gl.deleteBuffer(mesh.webgl.indexBuffer);
+  }
+  mesh.webgl = null;
+  uploadMesh(mesh);
 }
 function expandFaces(vertices, normals, faces) {
   const outVertices = new Float32Array(faces.length * 9);
@@ -1181,6 +1559,14 @@ function drawMeshWebGl(mesh) {
   gl.uniform1f(uniforms.opacity, mesh.material.opacity);
   gl.uniform1f(uniforms.specular, mesh.material.specular);
   gl.uniform1f(uniforms.shininess, mesh.material.shininess);
+  gl.uniform1f(uniforms.ambient, mesh.material.ambient);
+  gl.uniform1f(uniforms.diffuseBoost, mesh.material.diffuseBoost);
+  gl.uniform1f(uniforms.rimStrength, mesh.material.rimStrength);
+  gl.uniform1f(uniforms.rimPower, mesh.material.rimPower);
+  gl.uniform1f(uniforms.warmth, mesh.material.warmth);
+  gl.uniform1f(uniforms.wrapDiffuse, mesh.material.wrapDiffuse);
+  gl.uniform1f(uniforms.emission, mesh.material.emission);
+  gl.uniform1f(uniforms.subsurface, mesh.material.subsurface);
   if (mesh.webgl.drawArrays) {
     gl.drawArrays(gl.TRIANGLES, 0, mesh.webgl.drawCount);
   } else {
@@ -1204,7 +1590,8 @@ function drawFallback2d() {
   }
   tris.sort((p, q) => q.depth - p.depth);
   for (const t of tris) {
-    const shade = Math.max(0.45, Math.min(1.1, 0.45 + (1.0 - t.depth) * 0.65));
+    const materialLift = (t.material.emission || 0) * 1.2 + (t.material.rimStrength || 0) * 0.10;
+    const shade = Math.max(0.45, Math.min(1.18, 0.45 + (1.0 - t.depth) * 0.65 + materialLift));
     const rgb = t.material.color.map(v => Math.round(v * 255 * shade));
     ctx2d.beginPath();
     ctx2d.moveTo(t.a[0], t.a[1]);
@@ -1304,20 +1691,44 @@ uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uSpecular;
 uniform float uShininess;
+uniform float uAmbient;
+uniform float uDiffuseBoost;
+uniform float uRimStrength;
+uniform float uRimPower;
+uniform float uWarmth;
+uniform float uWrapDiffuse;
+uniform float uEmission;
+uniform float uSubsurface;
 varying vec3 vNormal;
 varying vec3 vView;
 void main() {
   vec3 normal = normalize(vNormal);
   if (!gl_FrontFacing) normal = -normal;
-  vec3 keyLight = normalize(vec3(0.35, 0.65, 0.68));
-  vec3 fillLight = normalize(vec3(-0.55, -0.25, 0.55));
+  vec3 keyLight = normalize(vec3(0.30, 0.68, 0.64));
+  vec3 fillLight = normalize(vec3(-0.62, -0.22, 0.55));
+  vec3 backLight = normalize(vec3(-0.20, 0.36, -0.86));
   vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
-  float diffuse = 0.24
-    + max(dot(normal, keyLight), 0.0) * 0.72
-    + max(dot(normal, fillLight), 0.0) * 0.20;
+  float viewFacing = max(dot(normal, viewDir), 0.0);
+  float keyDiffuse = max((dot(normal, keyLight) + uWrapDiffuse) / (1.0 + uWrapDiffuse), 0.0);
+  float fillDiffuse = max(dot(normal, fillLight), 0.0);
+  float backDiffuse = max(dot(normal, backLight), 0.0);
+  float diffuse = uAmbient
+    + keyDiffuse * 0.68 * uDiffuseBoost
+    + fillDiffuse * 0.18
+    + backDiffuse * 0.14;
   vec3 halfDir = normalize(keyLight + viewDir);
-  float spec = pow(max(dot(normal, halfDir), 0.0), uShininess) * uSpecular;
-  vec3 color = min(uColor * diffuse + vec3(spec), vec3(1.0));
+  float specBase = max(dot(normal, halfDir), 0.0);
+  float spec = pow(specBase, uShininess) * uSpecular;
+  float broadSpec = pow(specBase, max(uShininess * 0.20, 2.0)) * uSpecular * 0.10;
+  float rim = pow(1.0 - viewFacing, uRimPower) * uRimStrength;
+  float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
+  vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
+  vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
+  vec3 highlight = vec3(spec) + warmColor * broadSpec;
+  vec3 glow = warmColor * rim + vec3(1.0, 0.64, 0.42) * subsurface + warmColor * uEmission;
+  vec3 color = warmColor * diffuse + highlight + glow + coolFill;
+  color = color / (color + vec3(0.48));
+  color = min(color * 1.28, vec3(1.0));
   gl_FragColor = vec4(color, uOpacity);
 }`;
 }
@@ -1338,14 +1749,144 @@ function compileShader(type, source) {
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
   return shader;
 }
-function materialFor(name, rgb, opacity) {
+function materialFor(name, rgb, opacity, mode) {
+  let color = rgb.map(v => v / 255);
   let specular = 0.22;
   let shininess = 32;
+  let ambient = 0.24;
+  let diffuseBoost = 1.0;
+  let rimStrength = 0.0;
+  let rimPower = 2.4;
+  let warmth = 0.0;
+  let wrapDiffuse = 0.0;
+  let emission = 0.0;
+  let subsurface = 0.0;
   if (name === 'dental_hard_tissue') { specular = 0.35; shininess = 48; }
   if (name === 'jaws') { specular = 0.18; shininess = 24; }
   if (name === 'pulp') { specular = 0.28; shininess = 36; }
   if (name === 'all_nonzero') { specular = 0.15; shininess = 20; }
-  return { color: rgb.map(v => v / 255), opacity, specular, shininess };
+  if (mode === 'rich') {
+    ambient = 0.25;
+    diffuseBoost = 1.04;
+    rimStrength = 0.16;
+    rimPower = 1.85;
+    warmth = 0.26;
+    wrapDiffuse = 0.16;
+    subsurface = 0.02;
+    if (name === 'dental_hard_tissue') {
+      color = [0.93, 0.86, 0.66];
+      specular = 0.62;
+      shininess = 148;
+      ambient = 0.24;
+      diffuseBoost = 0.88;
+      rimStrength = 0.12;
+      rimPower = 1.90;
+      warmth = 0.38;
+      wrapDiffuse = 0.06;
+      emission = 0.0;
+      subsurface = 0.018;
+    } else if (name === 'jaws') {
+      color = [0.83, 0.68, 0.49];
+      opacity = Math.max(opacity, 0.50);
+      specular = 0.11;
+      shininess = 22;
+      ambient = 0.40;
+      diffuseBoost = 0.82;
+      rimStrength = 0.10;
+      rimPower = 1.95;
+      warmth = 0.38;
+      wrapDiffuse = 0.34;
+      emission = 0.018;
+      subsurface = 0.055;
+    } else if (name === 'pulp') {
+      color = [0.98, 0.10, 0.16];
+      specular = 0.42;
+      shininess = 64;
+      ambient = 0.22;
+      diffuseBoost = 1.06;
+      rimStrength = 0.28;
+      rimPower = 1.40;
+      warmth = 0.04;
+      wrapDiffuse = 0.08;
+      emission = 0.105;
+      subsurface = 0.08;
+    } else if (name === 'all_nonzero') {
+      color = [0.60, 0.80, 0.92];
+      specular = 0.16;
+      shininess = 26;
+      ambient = 0.28;
+      rimStrength = 0.16;
+      warmth = 0.02;
+      wrapDiffuse = 0.18;
+      emission = 0.025;
+    }
+  } else if (mode === 'realistic') {
+    ambient = 0.27;
+    diffuseBoost = 0.95;
+    rimStrength = 0.10;
+    rimPower = 2.0;
+    warmth = 0.30;
+    wrapDiffuse = 0.10;
+    subsurface = 0.01;
+    if (name === 'dental_hard_tissue') {
+      color = [0.96, 0.91, 0.76];
+      specular = 0.58;
+      shininess = 86;
+      rimStrength = 0.16;
+      warmth = 0.42;
+      wrapDiffuse = 0.08;
+      subsurface = 0.02;
+    } else if (name === 'jaws') {
+      color = [0.70, 0.50, 0.30];
+      specular = 0.10;
+      shininess = 18;
+      ambient = 0.31;
+      diffuseBoost = 0.86;
+      rimStrength = 0.07;
+      warmth = 0.18;
+      wrapDiffuse = 0.18;
+      subsurface = 0.025;
+    } else if (name === 'pulp') {
+      color = [0.74, 0.13, 0.17];
+      specular = 0.30;
+      shininess = 42;
+      ambient = 0.22;
+      rimStrength = 0.08;
+      warmth = 0.05;
+      emission = 0.035;
+      subsurface = 0.04;
+    } else if (name === 'all_nonzero') {
+      color = [0.70, 0.82, 0.88];
+      specular = 0.08;
+      shininess = 18;
+      rimStrength = 0.06;
+      wrapDiffuse = 0.12;
+    }
+  } else if (mode === 'neutral') {
+    ambient = 0.32;
+    diffuseBoost = 0.78;
+    rimStrength = 0.02;
+    wrapDiffuse = 0.05;
+    shininess *= 0.75;
+    specular *= 0.55;
+    if (name === 'dental_hard_tissue') color = [0.91, 0.89, 0.80];
+    if (name === 'jaws') color = [0.70, 0.57, 0.38];
+    if (name === 'pulp') color = [0.75, 0.18, 0.20];
+  } else if (mode === 'high_contrast') {
+    ambient = 0.22;
+    diffuseBoost = 1.15;
+    rimStrength = 0.22;
+    rimPower = 1.7;
+    wrapDiffuse = 0.04;
+    emission = 0.02;
+    specular *= 0.90;
+    shininess *= 1.2;
+    if (name === 'dental_hard_tissue') color = [1.00, 0.96, 0.76];
+    if (name === 'jaws') color = [0.92, 0.62, 0.24];
+    if (name === 'pulp') { color = [1.00, 0.16, 0.22]; emission = 0.10; }
+    if (name === 'all_nonzero') color = [0.46, 0.80, 1.00];
+  }
+  return { color, opacity, specular, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
 }
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -1438,6 +1979,17 @@ def _smoothing_to_dict(smoothing: SmoothingConfig) -> dict[str, Any]:
         "iterations": smoothing.iterations,
         "lambda": smoothing.lambda_value,
         "mu": smoothing.mu,
+    }
+
+
+def _viewer_smoothing_presets() -> dict[str, dict[str, float | int]]:
+    return {
+        name: {
+            "iterations": int(values["iterations"]),
+            "lambda": float(values["lambda_value"]),
+            "mu": float(values["mu"]),
+        }
+        for name, values in SMOOTH_PRESETS.items()
     }
 
 

@@ -50,8 +50,9 @@ https://www.nitrc.org/plugins/mwiki/index.php/dcm2nii:MainPage
 | Scout/localizer | reject | keep |
 | Dose report / SR-like report | reject | improve SOP coverage |
 | DICOMDIR | index object classified as `dicomdir_only`; referenced file IDs counted | add deeper directory-record parsing only if real failures require it |
-| Compressed JPEG/JPEG-LS/JPEG2000/RLE | classified as `compressed_pixel_data`; optional DCMTK/GDCM tool availability reported | add actual transcode command after real samples justify it |
-| Enhanced CT multi-frame | classified as `needs_dicom_library` | add ITK/GDCM/DCMTK path later |
+| Compressed JPEG/JPEG-LS/JPEG2000/RLE | GDCM decodes pixels in-process; clean CT may be losslessly transcoded before dcm2niix | validate additional vendor samples |
+| Invalid compressed payload | hard `pixel_decode_failed`; no metadata-only fallback | keep |
+| Enhanced CT multi-frame | pixels decoded, but classified `enhanced_ct_geometry_unverified` | validate every shared/per-frame functional-group geometry item |
 | Missing geometry original CT | reject | normalize only with validated geometry source |
 
 ## Current C++ Additions
@@ -77,8 +78,9 @@ It also classifies:
 
 ```text
 DICOMDIR -> dicomdir_only / audit_referenced_files
-compressed pixel data -> compressed_pixel_data
-Enhanced CT or multi-frame CT -> needs_dicom_library
+compressed pixel data -> native GDCM decode, then normal geometry classification
+invalid compressed pixel data -> pixel_decode_failed
+Enhanced CT or multi-frame CT -> enhanced_ct_geometry_unverified
 single-file multi-frame Secondary Capture axial stack -> secondary_capture_rescue_candidate
 viewer/MPR export mixed geometry -> viewer_export_mpr_mixed_candidate
 ```
@@ -191,7 +193,11 @@ is coarse relative to in-plane spacing, the UI warns that 3D results may look
 stair-stepped and remain non-diagnostic preview.
 
 `doctor` reports whether optional transcoders are available. The current binary
-does not include native compressed pixel decoding.
+reports GDCM as its primary backend and includes native compressed pixel decoding
+and lossless transcoding. Optional command-line transcoders are diagnostic only;
+they are not a silent fallback. Synthetic codec fixtures cover JPEG, JPEG-LS,
+JPEG 2000, and RLE. Enhanced CT remains blocked from clean conversion until
+per-frame geometry validation is implemented.
 
 ## Safety Position
 

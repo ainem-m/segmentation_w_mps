@@ -23,6 +23,7 @@ class TeethExperimentalTests(unittest.TestCase):
             benchmark_path=Path("/case/logs/teeth_child_benchmark.json"),
             dry_run=True,
             force_split=True,
+            higher_order_resampling=True,
         )
 
         self.assertIn("totalsegmentator_wrapper_mac.teeth_mps_child", command)
@@ -30,6 +31,7 @@ class TeethExperimentalTests(unittest.TestCase):
         self.assertIn("--benchmark-json", command)
         self.assertIn("--dry-run", command)
         self.assertIn("--force-split", command)
+        self.assertIn("--higher-order-resampling", command)
 
     def test_patch_total_segmentator_device_converter_handles_strings_and_devices(self) -> None:
         ts_api = SimpleNamespace(convert_device_to_string=lambda device: None)
@@ -102,6 +104,61 @@ class TeethExperimentalTests(unittest.TestCase):
                     margin_mm=5.0,
                 )
 
+    def test_crop_allows_large_expanded_roi_when_raw_teeth_bbox_is_plausible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            affine = np.eye(4)
+            shape = (64, 64, 64)
+            input_path = root / "input.nii.gz"
+            nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.int16), affine), str(input_path))
+
+            upper = np.zeros(shape, dtype=np.uint8)
+            lower = np.zeros(shape, dtype=np.uint8)
+            upper[16:48, 16:48, 32:48] = 1
+            lower[16:48, 16:48, 16:32] = 1
+            upper_path = root / "teeth_upper.nii.gz"
+            lower_path = root / "teeth_lower.nii.gz"
+            nib.save(nib.Nifti1Image(upper, affine), str(upper_path))
+            nib.save(nib.Nifti1Image(lower, affine), str(lower_path))
+
+            metadata = crop_to_mask_bbox(
+                input_path=input_path,
+                mask_paths=[upper_path, lower_path],
+                output_path=root / "roi.nii.gz",
+                margin_mm=12.0,
+            )
+
+            self.assertEqual(metadata["margin_mm"], 12.0)
+            self.assertEqual(metadata["roi_shape"], [56, 56, 56])
+            self.assertGreater(metadata["voxel_volume_ratio"], 0.5)
+            self.assertFalse(metadata["near_whole_volume"])
+            self.assertTrue(metadata["expanded_near_whole_volume"])
+
+    def test_crop_rejects_near_whole_raw_teeth_bbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            affine = np.eye(4)
+            shape = (64, 64, 64)
+            input_path = root / "input.nii.gz"
+            nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.int16), affine), str(input_path))
+
+            upper = np.zeros(shape, dtype=np.uint8)
+            lower = np.zeros(shape, dtype=np.uint8)
+            upper[1:63, 1:63, 32:63] = 1
+            lower[1:63, 1:63, 1:32] = 1
+            upper_path = root / "teeth_upper.nii.gz"
+            lower_path = root / "teeth_lower.nii.gz"
+            nib.save(nib.Nifti1Image(upper, affine), str(upper_path))
+            nib.save(nib.Nifti1Image(lower, affine), str(lower_path))
+
+            with self.assertRaisesRegex(RuntimeError, "teeth mask bbox"):
+                crop_to_mask_bbox(
+                    input_path=input_path,
+                    mask_paths=[upper_path, lower_path],
+                    output_path=root / "roi.nii.gz",
+                    margin_mm=0.0,
+                )
+
     def test_reembed_labelmap_to_full_space_preserves_source_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -145,6 +202,7 @@ class TeethExperimentalTests(unittest.TestCase):
 
             def fake_run_command(**kwargs):
                 command = kwargs["command"]
+                self.assertIn("--higher-order-resampling", command)
                 benchmark_path = Path(command[command.index("--benchmark-json") + 1])
                 benchmark_path.parent.mkdir(parents=True, exist_ok=True)
                 benchmark_path.write_text(
@@ -175,6 +233,7 @@ class TeethExperimentalTests(unittest.TestCase):
                     skip_device_check=True,
                     experimental_teeth=True,
                     teeth_dry_run=True,
+                    higher_order_resampling=True,
                 )
 
             self.assertEqual(result.status, "success")
@@ -183,6 +242,8 @@ class TeethExperimentalTests(unittest.TestCase):
             )
             self.assertTrue(benchmark["experimental_teeth"]["enabled"])
             self.assertTrue(benchmark["experimental_teeth"]["dry_run"])
+            self.assertTrue(benchmark["run"]["higher_order_resampling"])
+            self.assertTrue(benchmark["experimental_teeth"]["higher_order_resampling"])
             self.assertTrue(benchmark["experimental_teeth"]["patch"]["patch_applied"])
             preflight = benchmark["experimental_teeth"]["craniofacial_preflight"]
             self.assertEqual(preflight["source"], "none")

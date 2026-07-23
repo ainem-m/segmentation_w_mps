@@ -1,0 +1,32 @@
+ToothSeg integration and model attribution notice
+
+Code
+----
+Project: MIC-DKFZ/ToothSeg
+Source: https://github.com/MIC-DKFZ/ToothSeg
+Pinned integration reference: b29d1017fa124f89645fa56f98649e3f3f43bdb0
+License: Apache License 2.0. The full Apache License 2.0 text is provided in
+TotalSegmentator-Apache-2.0.txt in this directory.
+
+Model checkpoints
+-----------------
+Title: ToothSeg
+Creators: Fabian Isensee; Niels van Nistelrooij; Lars Krämer;
+Shankeeth Vinayahalingam
+DOI: https://doi.org/10.5281/zenodo.14893540
+Source: https://zenodo.org/records/14893540
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License URL: https://creativecommons.org/licenses/by/4.0/
+
+The model checkpoints are downloaded separately on first use. The application
+records the DOI, source, checksum, and license in the local model metadata.
+
+Changes made by this project
+----------------------------
+This project adapts the published two-branch inference and self-correction
+workflow for a strict Apple Silicon MPS preview path, including a reduced
+semantic MPS patch plan, automatic dental ROI cropping, full-volume labelmap
+restoration, progress reporting, and local macOS application integration.
+
+This is an independent, unofficial integration. The original creators and
+upstream project do not endorse this application.

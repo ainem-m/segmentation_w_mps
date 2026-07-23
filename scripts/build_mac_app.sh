@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST_DIR="${ROOT}/dist"
+DIST_DIR="${TOTALSEGMENTATOR_WRAPPER_MAC_DIST_DIR:-${ROOT}/dist}"
 APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
@@ -10,15 +10,22 @@ MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 SWIFT_APP_SOURCE_DIR="${ROOT}/native/macos/TotalSegmentatorWrapperForMac"
+SWIFT_SOURCE_FILES=(
+  "${SWIFT_APP_SOURCE_DIR}/CommandBuilder.swift"
+  "${SWIFT_APP_SOURCE_DIR}/ProcessSupport.swift"
+  "${SWIFT_APP_SOURCE_DIR}/AppState.swift"
+  "${SWIFT_APP_SOURCE_DIR}/Views.swift"
+  "${SWIFT_APP_SOURCE_DIR}/TotalSegmentatorWrapperForMacApp.swift"
+)
 SWIFT_MODULE_CACHE_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_SWIFT_MODULE_CACHE_PATH:-${DIST_DIR}/swift_module_cache}"
 PYTHON_RUNTIME_SOURCE="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_PYTHON_RUNTIME_DIR:-${PYTHON_RUNTIME_DIR:-}}"
 PYTHON_RUNTIME_STRATEGY="external_python312_required"
 PYTHON_RUNTIME_EXECUTABLE_JSON="null"
 PYTHON_RUNTIME_BUNDLED_JSON="false"
 PYTHON_RUNTIME_BUNDLE_JSON="null"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.0}"
 BUILD_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_BUILD_ID:-}"
-DEPENDENCY_SET_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_SET_ID:-macos-arm64-py312-torch2.12-totalseg2.14.0-pydicom3}"
+DEPENDENCY_SET_ID="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_SET_ID:-macos-arm64-py312-torch2.12-totalseg2.14.0-nnunetv2.8.1-pydicom3-gdcm3.2-toothseg-acvl0.2-scipy1}"
 UPDATE_MANIFEST_URL="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_MANIFEST_URL:-}"
 UPDATE_ALLOWED_HOSTS="${TOTALSEGMENTATOR_WRAPPER_MAC_UPDATE_ALLOWED_HOSTS:-}"
 XCODE_DEVELOPER_DIR="${TOTALSEGMENTATOR_WRAPPER_MAC_XCODE_DEVELOPER_DIR:-}"
@@ -30,7 +37,16 @@ NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-}"
 APP_ENTITLEMENTS="${ROOT}/resources/entitlements/app.entitlements"
 PYTHON_ENTITLEMENTS="${ROOT}/resources/entitlements/python-runtime.entitlements"
 TOTALSEGMENTATOR_LICENSE_PATH="${ROOT}/resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt"
+TOOTHSEG_NOTICE_PATH="${ROOT}/resources/third_party/licenses/ToothSeg-NOTICE.txt"
 DCM2NIIX_LICENSE_PATH="${ROOT}/resources/third_party/licenses/dcm2niix-license.txt"
+DICOM_RUNTIME_LICENSE_PATHS=(
+  "${ROOT}/resources/third_party/licenses/GDCM-BSD-3-Clause.txt"
+  "${ROOT}/resources/third_party/licenses/GDCM-IJG-JPEG-README.txt"
+  "${ROOT}/resources/third_party/licenses/OpenJPEG-BSD-2-Clause.txt"
+  "${ROOT}/resources/third_party/licenses/CharLS-BSD-3-Clause.txt"
+  "${ROOT}/resources/third_party/licenses/json-c-MIT.txt"
+  "${ROOT}/resources/third_party/licenses/OpenSSL-Apache-2.0.txt"
+)
 LICENSE_MANUAL_OVERRIDES_PATH="${ROOT}/resources/third_party/licenses/manual-overrides.json"
 LICENSE_INVENTORY_SCRIPT="${ROOT}/scripts/generate_third_party_license_inventory.py"
 LICENSE_INVENTORY_ENV_DIR="${DIST_DIR}/license_inventory_env"
@@ -109,14 +125,7 @@ build_swiftui_frontend() {
     echo "SwiftUI app source directory not found: ${SWIFT_APP_SOURCE_DIR}" >&2
     exit 2
   fi
-  local swift_sources=(
-    "${SWIFT_APP_SOURCE_DIR}/CommandBuilder.swift"
-    "${SWIFT_APP_SOURCE_DIR}/ProcessSupport.swift"
-    "${SWIFT_APP_SOURCE_DIR}/AppState.swift"
-    "${SWIFT_APP_SOURCE_DIR}/Views.swift"
-    "${SWIFT_APP_SOURCE_DIR}/TotalSegmentatorWrapperForMacApp.swift"
-  )
-  for source in "${swift_sources[@]}"; do
+  for source in "${SWIFT_SOURCE_FILES[@]}"; do
     if [[ ! -f "${source}" ]]; then
       echo "SwiftUI app source missing: ${source}" >&2
       exit 2
@@ -137,7 +146,7 @@ build_swiftui_frontend() {
     -framework Combine \
     -framework CryptoKit \
     -o "${MACOS_DIR}/TotalSegmentatorWrapperForMac" \
-    "${swift_sources[@]}"
+    "${SWIFT_SOURCE_FILES[@]}"
   chmod 755 "${MACOS_DIR}/TotalSegmentatorWrapperForMac"
 }
 
@@ -157,11 +166,11 @@ codesign_developer_id() {
   find "${APP_DIR}" -type d -exec chmod u+rwx,go+rx {} +
   find "${APP_DIR}" -type f -exec chmod u+rw {} +
 
-  local sign_targets=(
-    "${MACOS_DIR}/TotalSegmentatorWrapperForMac"
-    "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
-    "${RESOURCES_DIR}/bin/dcm2niix"
-  )
+  local sign_targets=("${MACOS_DIR}/TotalSegmentatorWrapperForMac" "${RESOURCES_DIR}/bin/dcm2niix")
+  while IFS= read -r path; do
+    sign_targets+=("${path}")
+  done < <(find "${RESOURCES_DIR}/bin/lib" -type f -name "*.dylib" -print | sort)
+  sign_targets+=("${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer")
   if [[ -d "${RESOURCES_DIR}/python/cpython-3.12" ]]; then
     local python_framework_binary="${RESOURCES_DIR}/python/cpython-3.12/Frameworks/Python.framework/Versions/3.12/Python"
     local deferred_python_framework_binary=""
@@ -233,6 +242,12 @@ if [[ ! -f "${DCM2NIIX_LICENSE_PATH}" ]]; then
   echo "dcm2niix license text is missing: ${DCM2NIIX_LICENSE_PATH}" >&2
   exit 1
 fi
+for license_path in "${DICOM_RUNTIME_LICENSE_PATHS[@]}"; do
+  if [[ ! -f "${license_path}" ]]; then
+    echo "DICOM runtime license text is missing: ${license_path}" >&2
+    exit 1
+  fi
+done
 if [[ ! -f "${LICENSE_MANUAL_OVERRIDES_PATH}" ]]; then
   echo "Manual license override manifest is missing: ${LICENSE_MANUAL_OVERRIDES_PATH}" >&2
   exit 1
@@ -246,10 +261,11 @@ CONSTRAINTS_SHA256="$(sha256_file "${CONSTRAINTS_PATH}")"
 NORMALIZER_SHA256="$(sha256_file "${NORMALIZER_PATH}")"
 SAMPLE1_MANIFEST_SHA256="$(sha256_file "${SAMPLE1_MANIFEST_PATH}")"
 DCM2NIIX_SHA256="$(sha256_file "${DCM2NIIX_PATH}")"
+SWIFT_SOURCE_SHA256="$(cat "${SWIFT_SOURCE_FILES[@]}" | shasum -a 256 | awk '{print $1}')"
 DCM2NIIX_VERSION_JSON="$("${DCM2NIIX_PATH}" -h 2>&1 | awk 'BEGIN{fallback=""} /version|dcm2niix/{print; found=1; exit} NF && fallback==""{fallback=$0} END{if (!found) print fallback}' | first_json_line)"
 DCM2NIIX_SOURCE_JSON="$(json_string "$(basename "${DCM2NIIX_PATH}")")"
 if [[ -z "${BUILD_ID}" ]]; then
-  BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}"
+  BUILD_ID="app-${APP_VERSION}-${WHEEL_SHA256:0:12}-${CONSTRAINTS_SHA256:0:12}-${NORMALIZER_SHA256:0:12}-${DCM2NIIX_SHA256:0:12}-${SAMPLE1_MANIFEST_SHA256:0:12}-${SWIFT_SOURCE_SHA256:0:12}"
 fi
 UPDATE_MANIFEST_URL_JSON="$(json_string "${UPDATE_MANIFEST_URL}")"
 UPDATE_ALLOWED_HOSTS_JSON="$(json_string_list "${UPDATE_ALLOWED_HOSTS}")"
@@ -264,17 +280,24 @@ if [[ -d "${APP_DIR}" ]]; then
   chmod -R u+rwX "${APP_DIR}" || true
 fi
 rm -rf "${APP_DIR}"
-mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/sample1" "${RESOURCES_DIR}/licenses"
+mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESOURCES_DIR}/constraints" "${RESOURCES_DIR}/sample1" "${RESOURCES_DIR}/model_comparison" "${RESOURCES_DIR}/licenses"
 
 build_swiftui_frontend
 cp "${WHEEL_PATH}" "${RESOURCES_DIR}/wheels/"
 cp "${CONSTRAINTS_PATH}" "${RESOURCES_DIR}/constraints/"
 cp "${NORMALIZER_PATH}" "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
+cp -R "${ROOT}/build/dicom_normalizer/lib" "${RESOURCES_DIR}/bin/lib"
 cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"
 cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"
+cp "${TOOTHSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/ToothSeg-NOTICE.txt"
 cp "${DCM2NIIX_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/dcm2niix-license.txt"
+for license_path in "${DICOM_RUNTIME_LICENSE_PATHS[@]}"; do
+  cp "${license_path}" "${RESOURCES_DIR}/licenses/$(basename "${license_path}")"
+done
 rsync -a "${ROOT}/resources/sample1/" "${RESOURCES_DIR}/sample1/"
+rsync -a "${ROOT}/resources/model_comparison/" "${RESOURCES_DIR}/model_comparison/"
 chmod 755 "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
+chmod 755 "${RESOURCES_DIR}/bin/lib"/*.dylib
 chmod 755 "${RESOURCES_DIR}/bin/dcm2niix"
 
 if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
@@ -285,6 +308,10 @@ if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
   fi
   mkdir -p "${RESOURCES_DIR}/python"
   rsync -a "${PYTHON_RUNTIME_SOURCE}/" "${RESOURCES_DIR}/python/cpython-3.12/"
+  bundled_site_packages="${RESOURCES_DIR}/python/cpython-3.12/lib/python3.12/site-packages"
+  if [[ -L "${bundled_site_packages}" && ! -e "${bundled_site_packages}" ]]; then
+    rm "${bundled_site_packages}"
+  fi
   chmod 755 "${RESOURCES_DIR}/python/cpython-3.12/bin/python3.12"
   PYTHON_RUNTIME_STRATEGY="bundled_python312"
   PYTHON_RUNTIME_EXECUTABLE_JSON='"python/cpython-3.12/bin/python3.12"'
@@ -310,7 +337,7 @@ if [[ -z "${LICENSE_SITE_PACKAGES}" ]]; then
   rm -rf "${LICENSE_INVENTORY_ENV_DIR}"
   "${LICENSE_INVENTORY_BASE_PYTHON}" -m venv "${LICENSE_INVENTORY_ENV_DIR}"
   LICENSE_INVENTORY_ENV_PYTHON="${LICENSE_INVENTORY_ENV_DIR}/bin/python"
-  "${LICENSE_INVENTORY_ENV_PYTHON}" -m pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps]" >/dev/null
+  "${LICENSE_INVENTORY_ENV_PYTHON}" -m pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps,dentalseg,toothseg]" >/dev/null
   LICENSE_SITE_PACKAGES="$("${LICENSE_INVENTORY_ENV_PYTHON}" -c 'import site; print(next(path for path in site.getsitepackages() if path.endswith("site-packages")))')"
 fi
 if [[ ! -d "${LICENSE_SITE_PACKAGES}" ]]; then
@@ -381,6 +408,7 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
   "dcm2niix_version": ${DCM2NIIX_VERSION_JSON},
   "dcm2niix_source": ${DCM2NIIX_SOURCE_JSON},
   "sample1_manifest_sha256": "${SAMPLE1_MANIFEST_SHA256}",
+  "swift_source_sha256": "${SWIFT_SOURCE_SHA256}",
   "python_runtime": {
     "strategy": "${PYTHON_RUNTIME_STRATEGY}",
     "env": "TOTALSEGMENTATOR_WRAPPER_MAC_PYTHON_312",
@@ -408,8 +436,10 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     "wheel": "$(basename "${WHEEL_PATH}")",
     "constraints": "constraints/macos-arm64-py312.txt",
     "dicom_normalizer": "bin/totalsegmentator-wrapper-dicom-normalizer",
+    "dicom_normalizer_libraries": "bin/lib",
     "dcm2niix": "bin/dcm2niix",
     "totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt",
+    "toothseg_notice": "licenses/ToothSeg-NOTICE.txt",
     "dcm2niix_license": "licenses/dcm2niix-license.txt",
     "third_party_license_inventory": "licenses/third_party_license_inventory.json",
     "third_party_license_summary": "licenses/THIRD_PARTY_LICENSES.txt",
@@ -420,6 +450,13 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
       "precomputed_teeth_labelmap": "sample1/teeth_result/teeth_multilabel_fullspace.nii.gz",
       "manifest": "sample1/sample_manifest.json",
       "notices": "sample1/THIRD_PARTY_NOTICES.txt"
+    },
+    "model_comparison": {
+      "root": "model_comparison",
+      "totalsegmentator": "model_comparison/totalseg.png",
+      "dentalsegmentator": "model_comparison/dentalseg.png",
+      "individual_teeth_beta": "model_comparison/individual.png",
+      "toothseg": "model_comparison/toothseg.png"
     }
   },
   "notarized": ${NOTARIZED_JSON}
@@ -442,6 +479,12 @@ TotalSegmentator
 - License: Apache-2.0
 - Bundled license text: Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt
 
+ToothSeg
+- Upstream: https://github.com/MIC-DKFZ/ToothSeg
+- Code license: Apache-2.0
+- Separately downloaded model license: CC BY 4.0
+- Attribution and model DOI: Contents/Resources/licenses/ToothSeg-NOTICE.txt
+
 dcm2niix
 - Bundled executable: Contents/Resources/bin/dcm2niix
 - Build input executable name: $(basename "${DCM2NIIX_PATH}")
@@ -450,7 +493,19 @@ dcm2niix
 - Upstream: https://github.com/rordenlab/dcm2niix
 - Bundled license text: Contents/Resources/licenses/dcm2niix-license.txt
 
+GDCM DICOM runtime
+- Bundled runtime: Contents/Resources/bin/totalsegmentator-wrapper-dicom-normalizer
+- Bundled libraries: Contents/Resources/bin/lib
+- GDCM license: Contents/Resources/licenses/GDCM-BSD-3-Clause.txt
+- GDCM IJG JPEG notice: Contents/Resources/licenses/GDCM-IJG-JPEG-README.txt
+- OpenJPEG license: Contents/Resources/licenses/OpenJPEG-BSD-2-Clause.txt
+- CharLS license: Contents/Resources/licenses/CharLS-BSD-3-Clause.txt
+- json-c license: Contents/Resources/licenses/json-c-MIT.txt
+- OpenSSL license: Contents/Resources/licenses/OpenSSL-Apache-2.0.txt
+
 Sample 1 notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
+Comparison images in Contents/Resources/model_comparison are non-clinical preview
+renders derived from bundled Sample 1. The same Sample 1 source notices apply.
 TotalSegmentator Wrapper for Mac is a non-clinical preview and is not for diagnosis or treatment planning.
 TXT
 

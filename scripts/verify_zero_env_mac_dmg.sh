@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg}"
-EXPECTED_APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION:-0.1.2}"
+DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.2.0-20260722-gdcm-toothseg-arm64.dmg}"
+EXPECTED_APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION:-0.2.0}"
 
 if [[ ! -f "${DMG_PATH}" ]]; then
   echo "DMG not found: ${DMG_PATH}" >&2

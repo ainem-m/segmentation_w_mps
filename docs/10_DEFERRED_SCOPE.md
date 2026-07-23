@@ -68,11 +68,16 @@ ONNX/Core ML could reduce dependency size and improve native distribution, but n
 
 Initial inference should use PyTorch/TotalSegmentator directly.
 
-## Why DentalSegmentator exact mode is deferred
+## DentalSegmentator exact mode status
 
-DentalSegmentator is contextually important because prior audience interest came from it. However, the new public angle is Mac/MPS speed. TotalSegmentator already provides a supported MPS route and dental-relevant tasks.
+DentalSegmentator is contextually important because prior audience interest came
+from it. It is no longer purely deferred: the Mac preview now includes an
+explicit opt-in nnU-Net DentalSegmentator backend for the arch/jaw preview path.
 
-DentalSegmentator exact mode can be Phase 2 if people request it.
+Keep the scope narrow. The supported app path is MPS-focused, uses the Zenodo
+`Dataset112_DentalSegmentator_v100` weights, writes a multilabel preview
+labelmap, and must not silently fallback to TotalSegmentator. Individual tooth
+labels, ONNX/Core ML conversion, and a Slicer extension remain deferred.
 
 ## Why Slicer extension is deferred
 

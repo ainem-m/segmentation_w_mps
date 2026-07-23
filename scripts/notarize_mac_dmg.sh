@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT}/dist"
 APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.1.2}"
-DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260708-modelsetup}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.0}"
+DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260722-gdcm-toothseg}"
 DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg}"
 NOTARY_DIR="${DIST_DIR}/notary"
 NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-totalsegmentator-wrapper-mac-notary}"
@@ -37,6 +37,13 @@ if ! xcodebuild -version >/dev/null 2>&1; then
 fi
 if ! security find-identity -v -p codesigning | grep -F "${CODESIGN_IDENTITY}" >/dev/null 2>&1; then
   echo "Developer ID codesigning identity not found in keychain: ${CODESIGN_IDENTITY}" >&2
+  exit 2
+fi
+if ! xcrun notarytool history \
+  --keychain-profile "${NOTARY_PROFILE}" \
+  --output-format json >/dev/null 2>&1; then
+  echo "Notary keychain profile is missing or unusable: ${NOTARY_PROFILE}" >&2
+  echo "Store valid notarytool credentials before building the notarized release." >&2
   exit 2
 fi
 

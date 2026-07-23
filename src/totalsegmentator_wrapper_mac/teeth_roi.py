@@ -96,6 +96,21 @@ def crop_to_mask_bbox(
     lo = coords.min(axis=0)
     hi = coords.max(axis=0) + 1
     raw_size = hi - lo
+    raw_voxel_volume_ratio = float(np.prod(raw_size) / np.prod(source_shape))
+    raw_axis_extent_ratios = [
+        float(raw_size[index] / source_shape[index])
+        for index in range(3)
+    ]
+    raw_near_whole_volume = (
+        raw_voxel_volume_ratio > NEAR_WHOLE_VOLUME_RATIO_THRESHOLD
+        or max(raw_axis_extent_ratios) > NEAR_WHOLE_AXIS_EXTENT_THRESHOLD
+    )
+    if raw_near_whole_volume:
+        raise RuntimeError(
+            "Implausibly large teeth mask bbox: "
+            f"voxel_volume_ratio={raw_voxel_volume_ratio:.3f}, "
+            f"axis_extent_ratios={[round(value, 3) for value in raw_axis_extent_ratios]}"
+        )
     margin_vox = np.ceil(margin_mm / spacing).astype(int)
 
     lo = np.maximum(lo - margin_vox, 0)
@@ -110,16 +125,10 @@ def crop_to_mask_bbox(
         float(roi_size[index] / source_shape[index])
         for index in range(3)
     ]
-    near_whole_volume = (
+    expanded_near_whole_volume = (
         voxel_volume_ratio > NEAR_WHOLE_VOLUME_RATIO_THRESHOLD
         or max(axis_extent_ratios) > NEAR_WHOLE_AXIS_EXTENT_THRESHOLD
     )
-    if near_whole_volume:
-        raise RuntimeError(
-            "Implausibly large teeth ROI: "
-            f"voxel_volume_ratio={voxel_volume_ratio:.3f}, "
-            f"axis_extent_ratios={[round(value, 3) for value in axis_extent_ratios]}"
-        )
 
     slices = tuple(slice(int(start), int(stop)) for start, stop in zip(lo, hi, strict=True))
     cropped_data = np.asanyarray(image.dataobj)[slices]
@@ -148,7 +157,8 @@ def crop_to_mask_bbox(
         "roi_shape": [int(value) for value in roi_size],
         "axis_extent_ratios": axis_extent_ratios,
         "voxel_volume_ratio": voxel_volume_ratio,
-        "near_whole_volume": near_whole_volume,
+        "near_whole_volume": raw_near_whole_volume,
+        "expanded_near_whole_volume": expanded_near_whole_volume,
         "near_whole_volume_thresholds": {
             "voxel_volume_ratio": NEAR_WHOLE_VOLUME_RATIO_THRESHOLD,
             "axis_extent_ratio": NEAR_WHOLE_AXIS_EXTENT_THRESHOLD,
@@ -159,6 +169,9 @@ def crop_to_mask_bbox(
             "start": [int(value) for value in coords.min(axis=0)],
             "stop": [int(value) for value in coords.max(axis=0) + 1],
             "size": [int(value) for value in raw_size],
+            "voxel_volume_ratio": raw_voxel_volume_ratio,
+            "axis_extent_ratios": raw_axis_extent_ratios,
+            "near_whole_volume": raw_near_whole_volume,
         },
         "roi_bbox": {
             "start": [int(value) for value in lo],
@@ -167,7 +180,7 @@ def crop_to_mask_bbox(
             "volume_ratio": voxel_volume_ratio,
             "voxel_volume_ratio": voxel_volume_ratio,
             "axis_extent_ratios": axis_extent_ratios,
-            "near_whole_volume": near_whole_volume,
+            "near_whole_volume": expanded_near_whole_volume,
         },
         "slices": {
             axis: [int(lo[index]), int(hi[index])]

@@ -48,6 +48,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--force-split", action="store_true")
+    parser.add_argument("--higher-order-resampling", action="store_true")
     parser.add_argument("--nr-thr-resamp", type=int, default=1)
     parser.add_argument("--nr-thr-saving", type=int, default=1)
     parser.add_argument("--require-totalseg-version", default="2.14.0")
@@ -210,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         "task": "teeth",
         "device_requested": "mps",
         "precision_policy": "fp32_only_no_autocast_requested",
+        "higher_order_resampling": bool(args.higher_order_resampling),
         "started_at_utc": utc_now(),
         "argv": sys.argv if argv is None else argv,
         "platform": {
@@ -294,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             statistics=False,
             radiomics=False,
             no_derived_masks=True,
+            higher_order_resampling=args.higher_order_resampling,
         )
 
         if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):

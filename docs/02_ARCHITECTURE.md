@@ -175,11 +175,11 @@ Initial backend:
 
 ```text
 TotalSegmentatorBackend
+DentalSegmentatorNNUNetBackend (explicit opt-in, MPS-focused app path)
 ```
 
 Future backends:
 
 ```text
-DentalSegmentatorNNUNetBackend
 DentalSegmentatorONNXBackend
 ```

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +12,11 @@ import nibabel as nib
 import numpy as np
 
 from totalsegmentator_wrapper_mac.surface_preview import (
+    resolve_surface_preview_input,
     effective_smoothing_for_group,
     effective_smoothing_for_label,
     export_labelmap_surfaces,
+    is_dental_hard_tissue,
     mask_to_mesh,
     run_surface_preview,
     smoothing_config_from_options,
@@ -28,6 +32,75 @@ SYNTHETIC_LABELS = {
 
 
 class SurfacePreviewTests(unittest.TestCase):
+    def test_uppercase_fdi_labels_are_visible_as_dental_hard_tissue_by_default(self) -> None:
+        self.assertTrue(is_dental_hard_tissue("FDI 11"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = Path(tmp) / "case"
+            labelmap = case_dir / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            _write_toothseg_labelmap_with_sidecar(labelmap)
+
+            summary = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                smoothing=smoothing_config_from_options(preset="none"),
+            )
+
+            groups = {group["name"]: group["labels"] for group in summary["groups"]}
+            self.assertEqual(groups["dental_hard_tissue"], [11, 12])
+            preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
+            self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
+            html = (case_dir / "surface_preview" / "index.html").read_text(encoding="utf-8")
+            self.assertIn('"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true', html)
+            self.assertIn(
+                "const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));",
+                html,
+            )
+
+    def test_toothseg_smoothing_changes_mesh_without_changing_fdi_labelmap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = Path(tmp) / "case"
+            labelmap = case_dir / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            _write_toothseg_labelmap_with_sidecar(labelmap)
+            before = hashlib.sha256(labelmap.read_bytes()).hexdigest()
+
+            off = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                output_dir=case_dir / "preview_off",
+                smoothing=smoothing_config_from_options(preset="none"),
+            )
+            on = run_surface_preview(
+                case_dir=case_dir,
+                input_path=labelmap,
+                output_dir=case_dir / "preview_on",
+                smoothing=smoothing_config_from_options(preset="slicer_like"),
+            )
+
+            after = hashlib.sha256(labelmap.read_bytes()).hexdigest()
+            off_stl = Path(next(group for group in off["groups"] if group["name"] == "dental_hard_tissue")["stl"])
+            on_stl = Path(next(group for group in on["groups"] if group["name"] == "dental_hard_tissue")["stl"])
+            self.assertEqual(before, after)
+            self.assertNotEqual(hashlib.sha256(off_stl.read_bytes()).hexdigest(), hashlib.sha256(on_stl.read_bytes()).hexdigest())
+            self.assertNotEqual(
+                hashlib.sha256((case_dir / "preview_off" / "index.html").read_bytes()).hexdigest(),
+                hashlib.sha256((case_dir / "preview_on" / "index.html").read_bytes()).hexdigest(),
+            )
+            self.assertEqual(off["smoothing"]["preset"], "none")
+            self.assertEqual(on["smoothing"]["preset"], "slicer_like")
+
+    def test_resolve_prefers_toothseg_fdi_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp)
+            toothseg = case / "segmentations" / "toothseg" / "toothseg_fdi_multilabel.nii.gz"
+            toothseg.parent.mkdir(parents=True)
+            nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.uint8), np.eye(4)), str(toothseg))
+
+            resolved, metadata = resolve_surface_preview_input(case_dir=case, input_path=None)
+
+            self.assertEqual(resolved, toothseg)
+            self.assertEqual(metadata["source"], "toothseg_fdi_multilabel")
+
     def test_marching_cubes_stl_export_creates_non_empty_binary_stl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -133,6 +206,16 @@ class SurfacePreviewTests(unittest.TestCase):
                 saved_summary["viewer"]["transparent_rendering"],
                 "jaw_depth_prepass_front_shell",
             )
+            self.assertTrue(saved_summary["viewer"]["runtime_smoothing"])
+            self.assertEqual(
+                saved_summary["viewer"]["runtime_smoothing_presets"],
+                ["none", "slicer_like", "medium", "strong"],
+            )
+            self.assertEqual(saved_summary["viewer"]["material_default"], "rich")
+            self.assertEqual(
+                saved_summary["viewer"]["material_presets"],
+                ["standard", "rich", "realistic", "neutral", "high_contrast"],
+            )
             self.assertEqual(saved_summary["preview"]["step_size"], 2)
             preview_opacity = {
                 mesh["name"]: mesh["opacity"]
@@ -151,12 +234,52 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("TotalSegmentator 3Dビューアー", html)
             self.assertIn("データ: <code id=\"dataName\"></code>", html)
             self.assertNotIn("inputName", html)
+            self.assertIn("形状: <code id=\"geometryModeLabel\"></code>", html)
+            self.assertIn("表面平滑化: <code id=\"smoothingModeLabel\"></code>", html)
+            self.assertIn("id=\"geometryControl\"", html)
+            self.assertIn("id=\"displayControls\"", html)
+            self.assertIn("id=\"geometryOriginal\"", html)
+            self.assertIn("id=\"geometrySdf\"", html)
+            self.assertIn("geometryPresetNames", html)
+            self.assertIn("setGeometryPreset", html)
+            self.assertIn("updateGeometryButtons", html)
+            self.assertIn("applyRawGeometry", html)
+            self.assertIn("rebuildMeshBuffers", html)
+            self.assertIn("元の形状", html)
+            self.assertIn("なめらか補完", html)
+            self.assertIn("詳細設定", html)
             self.assertIn("トラックパッド", html)
             self.assertIn("マウス", html)
             self.assertIn("操作方法", html)
             self.assertIn("標準方向", html)
             self.assertIn("全体に合わせる", html)
             self.assertIn("表面平滑化", html)
+            self.assertIn("id=\"smoothingPreset\"", html)
+            self.assertIn("smoothingModeLabel", html)
+            self.assertNotIn("getElementById('smooth')", html)
+            self.assertIn("smoothingPresets", html)
+            self.assertIn("applySmoothingPreset", html)
+            self.assertIn("setSmoothingPreset", html)
+            self.assertIn("smoothMeshVertices", html)
+            self.assertIn("meshAdjacency", html)
+            self.assertIn("laplacianSmoothStep", html)
+            self.assertIn("refreshMeshBuffers", html)
+            self.assertIn("質感", html)
+            self.assertIn("id=\"materialPreset\"", html)
+            self.assertIn("materialPreset", html)
+            self.assertIn("materialModeLabel", html)
+            self.assertIn("applyMaterialMode", html)
+            self.assertIn("setMaterialMode", html)
+            self.assertIn("uRimStrength", html)
+            self.assertIn("uAmbient", html)
+            self.assertIn("uWrapDiffuse", html)
+            self.assertIn("uEmission", html)
+            self.assertIn("uSubsurface", html)
+            self.assertIn("リッチ", html)
+            self.assertIn("リアル", html)
+            self.assertIn("ニュートラル", html)
+            self.assertIn("高コントラスト", html)
+            self.assertNotIn("臨床", html)
             self.assertIn("ポリゴン数", html)
             self.assertIn("meshDisplayName", html)
             self.assertIn("歯", html)
@@ -183,6 +306,9 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("usesFrontShellTransparency", html)
             self.assertIn("gl.colorMask(false, false, false, false)", html)
             self.assertIn("gl.blendFuncSeparate", html)
+            defined_ids = set(re.findall(r'id="([^"]+)"', html))
+            referenced_static_ids = set(re.findall(r"getElementById\('([^']+)'\)", html))
+            self.assertLessEqual(referenced_static_ids, defined_ids)
 
     def test_surface_preview_records_custom_preview_step_size_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -286,6 +412,19 @@ def _write_synthetic_labelmap(path: Path) -> Path:
     data[10:13, 10:13, 10:14] = 51
     image = nib.Nifti1Image(data, np.eye(4))
     nib.save(image, str(path))
+    return path
+
+
+def _write_toothseg_labelmap_with_sidecar(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = np.zeros((36, 36, 36), dtype=np.uint8)
+    data[7:20, 8:21, 7:25] = 11
+    data[20:31, 15:29, 10:30] = 12
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(path))
+    path.with_name(path.name + ".labels.json").write_text(
+        json.dumps({"labels": {"11": "FDI 11", "12": "FDI 12"}}),
+        encoding="utf-8",
+    )
     return path
 
 

@@ -27,6 +27,19 @@ FORBIDDEN_WRITE_PREFIXES = (
     Path("/System"),
 )
 DEFAULT_TOTALSEG_WEIGHT_TASK_IDS = (115, 297, 113)
+DENTALSEGMENTATOR_DATASET_ID = "112"
+DENTALSEGMENTATOR_DATASET_NAME = "Dataset112_DentalSegmentator_v100"
+DENTALSEGMENTATOR_MODEL_FILENAME = "Dataset112_DentalSegmentator_v100.zip"
+DENTALSEGMENTATOR_MODEL_MD5 = "b71cd5230168d28a4f71b078265b76be"
+DENTALSEGMENTATOR_MODEL_URL = (
+    "https://zenodo.org/api/records/10829675/files/"
+    "Dataset112_DentalSegmentator_v100.zip/content"
+)
+DENTALSEGMENTATOR_ZENODO_DOI = "10.5281/zenodo.10829675"
+TOOTHSEG_MODEL_FILENAME = "ToothSeg.zip"
+TOOTHSEG_MODEL_MD5 = "5d8dd061cce9529943567aeba3271143"
+TOOTHSEG_MODEL_URL = "https://zenodo.org/records/14893540/files/ToothSeg.zip?download=1"
+TOOTHSEG_ZENODO_DOI = "10.5281/zenodo.14893540"
 
 
 CommandRunner = Callable[[list[str], Path | None, dict[str, str] | None], subprocess.CompletedProcess[str]]
@@ -148,6 +161,12 @@ def create_setup_directories(paths: SetupPaths, *, dry_run: bool) -> SetupStep:
         paths.env_dir,
         paths.wheels_dir,
         paths.models_dir,
+        dentalsegmentator_model_root(paths),
+        dentalsegmentator_model_root(paths) / "nnUNet_raw",
+        dentalsegmentator_model_root(paths) / "nnUNet_preprocessed",
+        dentalsegmentator_model_root(paths) / "nnUNet_results",
+        toothseg_model_root(paths),
+        toothseg_model_root(paths) / "nnUNet_results",
         paths.cases_dir,
         paths.logs_dir,
         paths.cache_dir,
@@ -171,7 +190,7 @@ def build_wheel_install_command(
 ) -> list[str]:
     target = str(wheel)
     if allow_network:
-        target = f"{target}[dicom,mps]"
+        target = f"{target}[dicom,mps,dentalseg,toothseg]"
         command = [str(venv_python), "-m", "pip", "install"]
         if constraints is not None:
             command.extend(["-c", str(constraints)])
@@ -229,6 +248,48 @@ def build_totalseg_weights_command(
     return command
 
 
+def dentalsegmentator_model_root(paths: SetupPaths) -> Path:
+    return paths.models_dir / "dentalsegmentator"
+
+
+def toothseg_model_root(paths: SetupPaths) -> Path:
+    return paths.models_dir / "toothseg"
+
+
+def build_dentalseg_weights_command(
+    venv_python: Path,
+    model_root: Path,
+    *,
+    model_url: str = DENTALSEGMENTATOR_MODEL_URL,
+    expected_md5: str = DENTALSEGMENTATOR_MODEL_MD5,
+    dataset_id: str = DENTALSEGMENTATOR_DATASET_ID,
+    dataset_name: str = DENTALSEGMENTATOR_DATASET_NAME,
+) -> list[str]:
+    command = [
+        str(venv_python),
+        "-m",
+        "totalsegmentator_wrapper_mac.dentalsegmentator_setup",
+        "--model-url",
+        model_url,
+        "--model-zip",
+        str(model_root / DENTALSEGMENTATOR_MODEL_FILENAME),
+        "--expected-md5",
+        expected_md5,
+        "--nnunet-results",
+        str(model_root / "nnUNet_results"),
+        "--nnunet-raw",
+        str(model_root / "nnUNet_raw"),
+        "--nnunet-preprocessed",
+        str(model_root / "nnUNet_preprocessed"),
+        "--dataset-id",
+        dataset_id,
+        "--dataset-name",
+        dataset_name,
+    ]
+    validate_safe_command(command)
+    return command
+
+
 def build_setup_environment(paths: SetupPaths, *, dicom_normalizer: Path | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -242,6 +303,10 @@ def build_setup_environment(paths: SetupPaths, *, dicom_normalizer: Path | None 
     env["MPLCONFIGDIR"] = str(paths.cache_dir / "matplotlib")
     env["TOTALSEG_HOME_DIR"] = str(paths.models_dir / "totalsegmentator")
     env["TOTALSEG_WEIGHTS_PATH"] = str(paths.models_dir / "totalsegmentator" / "weights")
+    dentalseg_root = dentalsegmentator_model_root(paths)
+    env["nnUNet_raw"] = str(dentalseg_root / "nnUNet_raw")
+    env["nnUNet_preprocessed"] = str(dentalseg_root / "nnUNet_preprocessed")
+    env["nnUNet_results"] = str(dentalseg_root / "nnUNet_results")
     if dicom_normalizer is not None:
         env["TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER"] = str(dicom_normalizer)
     return env
@@ -269,6 +334,7 @@ def run_setup(
     skip_install: bool = False,
     skip_mps_check: bool = False,
     use_existing_env: bool = False,
+    skip_dentalseg_model: bool = False,
     progress_log: Path | None = None,
     home: Path | None = None,
     runner: CommandRunner | None = None,
@@ -459,6 +525,55 @@ def run_setup(
             result.reason = "weights_download_failed"
             return _finalize_result(result, write_state=not dry_run)
         _write_progress(progress_log, "download_totalseg_weights", weights_step.status, "モデルの取得が完了しました。")
+
+        if skip_dentalseg_model:
+            dentalseg_weights_step = SetupStep(
+                name="download_dentalseg_weights",
+                status="skipped",
+                error="DentalSegmentator model preparation was deferred by --skip-dentalseg-model.",
+            )
+            steps.append(dentalseg_weights_step)
+            _write_progress(
+                progress_log,
+                "download_dentalseg_weights",
+                "skipped",
+                "DentalSegmentatorモデルの準備は後で行います。",
+            )
+        else:
+            _write_progress(
+                progress_log,
+                "download_dentalseg_weights",
+                "running",
+                "DentalSegmentatorモデルを取得しています。数分かかることがあります。",
+            )
+            dentalseg_weights_step = _execute_step(
+                "download_dentalseg_weights",
+                build_dentalseg_weights_command(
+                    venv_python,
+                    dentalsegmentator_model_root(paths),
+                ),
+                paths.logs_dir,
+                runner,
+                env=build_setup_environment(paths),
+                dry_run=dry_run or skip_install,
+            )
+            steps.append(dentalseg_weights_step)
+            if dentalseg_weights_step.status == "failed":
+                _write_progress(
+                    progress_log,
+                    "download_dentalseg_weights",
+                    "failed",
+                    "DentalSegmentatorモデルの取得に失敗しました。",
+                )
+                result.status = "failed"
+                result.reason = "dentalseg_weights_download_failed"
+                return _finalize_result(result, write_state=not dry_run)
+            _write_progress(
+                progress_log,
+                "download_dentalseg_weights",
+                dentalseg_weights_step.status,
+                "DentalSegmentatorモデルの取得が完了しました。",
+            )
 
         doctor_json = paths.logs_dir / "doctor.json"
         _write_progress(progress_log, "doctor", "running", "MPSとCT確認用部品を確認しています。")
