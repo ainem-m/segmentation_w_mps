@@ -12,6 +12,7 @@ from totalsegmentator_wrapper_mac.dicom_normalizer_bridge import (
     inspect_dicom_normalizer,
     run_dicom_normalizer_audit,
     run_dicom_normalizer_convert_clean,
+    run_dicom_normalizer_export_rescue_stack,
     run_dicom_normalizer_prepare_rescue,
     run_dicom_normalizer_prepare_viewer_export,
 )
@@ -142,6 +143,17 @@ def build_parser() -> argparse.ArgumentParser:
     dicom_rescue.add_argument("--dcm2niix", type=Path, default=None)
     dicom_rescue.add_argument("--timeout-sec", type=int, default=900)
 
+    dicom_export_rescue_stack = subparsers.add_parser(
+        "dicom-normalizer-export-rescue-stack",
+        help="Export a deterministic decoded Secondary Capture stack and safe source manifest.",
+    )
+    dicom_export_rescue_stack.add_argument("--dicom-dir", required=True, type=Path)
+    dicom_export_rescue_stack.add_argument("--output", required=True, type=Path)
+    dicom_export_rescue_stack.add_argument("--series-number", type=int, default=None)
+    dicom_export_rescue_stack.add_argument("--series-key", default=None)
+    dicom_export_rescue_stack.add_argument("--binary", type=Path, default=None)
+    dicom_export_rescue_stack.add_argument("--timeout-sec", type=int, default=900)
+
     dicom_viewer_export = subparsers.add_parser(
         "dicom-normalizer-prepare-viewer-export",
         help="Launch the external C++ DICOM normalizer viewer/MPR export rescue path.",
@@ -154,6 +166,47 @@ def build_parser() -> argparse.ArgumentParser:
     dicom_viewer_export.add_argument("--binary", type=Path, default=None)
     dicom_viewer_export.add_argument("--dcm2niix", type=Path, default=None)
     dicom_viewer_export.add_argument("--timeout-sec", type=int, default=900)
+
+    rescue_estimate = subparsers.add_parser(
+        "dicom-rescue-estimate",
+        help="Create an editable spacing candidate from a native-decoded XYZ volume.",
+    )
+    rescue_estimate.add_argument("--volume", required=True, type=Path)
+    rescue_estimate.add_argument("--source-manifest-sha256", required=True)
+    rescue_estimate.add_argument(
+        "--spacing-hints",
+        default="unknown,unknown,unknown",
+        help="X,Y,Z millimetres; use 'unknown' for unavailable axes.",
+    )
+    rescue_estimate.add_argument("--evidence", type=Path, default=None)
+    rescue_estimate.add_argument("--coronal-reference", type=Path, default=None)
+    rescue_estimate.add_argument("--sagittal-reference", type=Path, default=None)
+    rescue_estimate.add_argument("--axial-slice-step-mm", type=float, default=None)
+    rescue_estimate.add_argument("--coronal-count", type=int, default=None)
+    rescue_estimate.add_argument("--coronal-slice-step-mm", type=float, default=None)
+    rescue_estimate.add_argument("--sagittal-count", type=int, default=None)
+    rescue_estimate.add_argument("--sagittal-slice-step-mm", type=float, default=None)
+    rescue_estimate.add_argument("--max-registration-evaluations", type=int, default=64)
+    rescue_estimate.add_argument("--output", required=True, type=Path)
+
+    rescue_preview = subparsers.add_parser(
+        "dicom-rescue-preview",
+        help="Apply confirmed rescue geometry to a preview volume without inference.",
+    )
+    rescue_preview.add_argument("--volume", required=True, type=Path)
+    rescue_preview.add_argument("--geometry", required=True, type=Path)
+    rescue_preview.add_argument("--output-volume", required=True, type=Path)
+    rescue_preview.add_argument("--output", required=True, type=Path)
+
+    rescue_finalize = subparsers.add_parser(
+        "dicom-rescue-finalize",
+        help="Write and read back pseudo-NIfTI after explicit geometry confirmation.",
+    )
+    rescue_finalize.add_argument("--volume", required=True, type=Path)
+    rescue_finalize.add_argument("--geometry", required=True, type=Path)
+    rescue_finalize.add_argument("--confirmation-token", required=True)
+    rescue_finalize.add_argument("--output-nifti", required=True, type=Path)
+    rescue_finalize.add_argument("--output", required=True, type=Path)
 
     run = subparsers.add_parser("run", help="Run TotalSegmentator and write case logs.")
     run.add_argument("--input", required=True, type=Path)
@@ -504,6 +557,18 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.status == "success" else result.returncode or 1
 
+    if args.command == "dicom-normalizer-export-rescue-stack":
+        result = run_dicom_normalizer_export_rescue_stack(
+            dicom_dir=args.dicom_dir,
+            output_dir=args.output,
+            series_number=args.series_number,
+            series_key=args.series_key,
+            binary=args.binary,
+            timeout_sec=args.timeout_sec,
+        )
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        return 0 if result.status == "success" else result.returncode or 1
+
     if args.command == "dicom-normalizer-prepare-viewer-export":
         result = run_dicom_normalizer_prepare_viewer_export(
             dicom_dir=args.dicom_dir,
@@ -517,6 +582,115 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.status == "success" else result.returncode or 1
+
+    if args.command in {
+        "dicom-rescue-estimate",
+        "dicom-rescue-preview",
+        "dicom-rescue-finalize",
+    }:
+        from totalsegmentator_wrapper_mac.rescue_geometry import safe_rescue_error
+        from totalsegmentator_wrapper_mac.rescue_pipeline import (
+            PIPELINE_VERSION,
+            RescuePipelineError,
+            create_preview,
+            finalize_rescue,
+            geometry_values_from_mapping,
+            load_decoded_reference_image,
+            load_decoded_volume,
+            write_decoded_volume,
+            write_metadata,
+        )
+        from totalsegmentator_wrapper_mac.rescue_estimation import estimate_rescue_spacing
+
+        source_hash: str | None = getattr(args, "source_manifest_sha256", None)
+        stage = args.command.removeprefix("dicom-rescue-")
+        try:
+            volume = load_decoded_volume(args.volume)
+            if args.command == "dicom-rescue-estimate":
+                raw_hints = [value.strip() for value in args.spacing_hints.split(",")]
+                if len(raw_hints) != 3:
+                    raise RescuePipelineError("spacing hints must contain X,Y,Z")
+                hints = tuple(
+                    None if value.lower() in {"", "unknown", "none", "null"} else float(value)
+                    for value in raw_hints
+                )
+                evidence: dict[str, object] = {}
+                if args.evidence is not None:
+                    loaded_evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
+                    if not isinstance(loaded_evidence, dict):
+                        raise RescuePipelineError("rescue evidence must be a JSON object")
+                    evidence = loaded_evidence
+                references = {}
+                if args.coronal_reference is not None:
+                    references["coronal"] = load_decoded_reference_image(
+                        args.coronal_reference
+                    )
+                if args.sagittal_reference is not None:
+                    references["sagittal"] = load_decoded_reference_image(
+                        args.sagittal_reference
+                    )
+                metadata = estimate_rescue_spacing(
+                    volume,
+                    source_manifest_sha256=args.source_manifest_sha256,
+                    spacing_hints_xyz=hints,
+                    reference_images=references,
+                    axial_slice_step_mm=args.axial_slice_step_mm,
+                    coronal_count=args.coronal_count,
+                    coronal_slice_step_mm=args.coronal_slice_step_mm,
+                    sagittal_count=args.sagittal_count,
+                    sagittal_slice_step_mm=args.sagittal_slice_step_mm,
+                    max_registration_evaluations=args.max_registration_evaluations,
+                    used_series=evidence.get("used_series", ()),
+                    used_dicom_tags=evidence.get("used_dicom_tags", ()),
+                )
+            else:
+                geometry = json.loads(args.geometry.read_text(encoding="utf-8"))
+                if not isinstance(geometry, dict):
+                    raise RescuePipelineError("rescue geometry must be a JSON object")
+                estimated, confirmed, source_hash, transform = geometry_values_from_mapping(geometry)
+                if args.command == "dicom-rescue-preview":
+                    preview, metadata = create_preview(
+                        volume,
+                        estimated_spacing_xyz=estimated,
+                        confirmed_spacing_xyz=confirmed,
+                        transform=transform,
+                        source_manifest_sha256=source_hash,
+                        estimate_metadata=geometry,
+                    )
+                    write_decoded_volume(args.output_volume, preview)
+                else:
+                    metadata = finalize_rescue(
+                        volume,
+                        output_path=args.output_nifti,
+                        estimated_spacing_xyz=estimated,
+                        confirmed_spacing_xyz=confirmed,
+                        transform=transform,
+                        source_manifest_sha256=source_hash,
+                        confirmation_token=args.confirmation_token,
+                        estimate_metadata=geometry,
+                    )
+            write_metadata(args.output, metadata)
+            print(json.dumps(metadata, indent=2, ensure_ascii=False))
+            return 0
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            json.JSONDecodeError,
+            RescuePipelineError,
+        ):
+            error = safe_rescue_error(
+                code=f"rescue_{stage}_failed",
+                stage=stage,
+                reason="rescue request was invalid or could not be completed",
+                tool_version=PIPELINE_VERSION,
+                source_hash=source_hash,
+            )
+            write_metadata(args.output, error)
+            print(json.dumps(error, indent=2, ensure_ascii=False), file=sys.stderr)
+            return 2
 
     if args.command == "run":
         from totalsegmentator_wrapper_mac.runner_totalseg import run_totalsegmentator

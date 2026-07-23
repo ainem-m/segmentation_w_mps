@@ -158,6 +158,41 @@ def build_dicom_normalizer_prepare_rescue_command(
     return command
 
 
+def build_dicom_normalizer_export_rescue_stack_command(
+    *,
+    dicom_dir: Path,
+    output_dir: Path,
+    series_number: int | None = None,
+    series_key: str | None = None,
+    binary: str | Path | None = None,
+    project_root: Path | None = None,
+) -> list[str]:
+    resolved_binary = find_dicom_normalizer_binary(
+        explicit=binary,
+        project_root=project_root,
+    )
+    if resolved_binary is None:
+        raise FileNotFoundError(
+            "totalsegmentator-wrapper-dicom-normalizer binary not found. Build it with "
+            "`scripts/build_dicom_normalizer_mac.sh` or set TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER."
+        )
+    if series_number is None and not series_key:
+        raise ValueError("series_number or series_key is required")
+    command = [
+        str(resolved_binary),
+        "export-rescue-stack",
+        "--dicom-dir",
+        str(dicom_dir),
+        "--output",
+        str(output_dir),
+    ]
+    if series_number is not None:
+        command.extend(["--series-number", str(series_number)])
+    else:
+        command.extend(["--series-key", str(series_key)])
+    return command
+
+
 def build_dicom_normalizer_convert_clean_command(
     *,
     dicom_dir: Path,
@@ -630,6 +665,57 @@ def run_dicom_normalizer_prepare_rescue(
         returncode=proc.returncode,
         command=command,
         output_json=str(output_dir / "rescue_metadata.json"),
+        stdout=proc.stdout,
+        stderr=proc.stderr,
+        binary=command[0],
+    )
+
+
+def run_dicom_normalizer_export_rescue_stack(
+    *,
+    dicom_dir: Path,
+    output_dir: Path,
+    series_number: int | None = None,
+    series_key: str | None = None,
+    binary: str | Path | None = None,
+    project_root: Path | None = None,
+    timeout_sec: int = 900,
+) -> DicomNormalizerResult:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        command = build_dicom_normalizer_export_rescue_stack_command(
+            dicom_dir=dicom_dir,
+            output_dir=output_dir,
+            series_number=series_number,
+            series_key=series_key,
+            binary=binary,
+            project_root=project_root,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return DicomNormalizerResult(
+            status="failed",
+            returncode=127,
+            command=[],
+            output_json=str(output_dir / "source_manifest.json"),
+            stdout="",
+            stderr="",
+            binary=None,
+            error=str(exc),
+        )
+
+    proc = subprocess.run(  # noqa: S603
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_sec,
+        check=False,
+    )
+    return DicomNormalizerResult(
+        status="success" if proc.returncode == 0 else "failed",
+        returncode=proc.returncode,
+        command=command,
+        output_json=str(output_dir / "source_manifest.json"),
         stdout=proc.stdout,
         stderr=proc.stderr,
         binary=command[0],
