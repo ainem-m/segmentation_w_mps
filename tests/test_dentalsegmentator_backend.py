@@ -242,7 +242,7 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
 
 def _write_fake_nnunet_predict(path: Path) -> Path:
     path.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import argparse\n"
         "from pathlib import Path\n"
         "import nibabel as nib\n"
