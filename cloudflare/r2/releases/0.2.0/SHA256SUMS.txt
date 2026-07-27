@@ -1,0 +1,1 @@
+a46dc4b2d25c0c7c086d10019f966e3e54437bfe7d8978f0da3a9ab7ed8c95a4  TotalSegmentator Wrapper for Mac-0.2.0-20260727-autoupdate-arm64.dmg
