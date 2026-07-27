@@ -348,6 +348,95 @@ class SurfacePreviewTests(unittest.TestCase):
                 "small structures may be under-sampled",
             )
 
+    def test_xray_display_mode_contract_is_encoded_in_offline_viewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case_dir = root / "case"
+            labelmap = (
+                case_dir
+                / "segmentations"
+                / "teeth_experimental"
+                / "teeth_multilabel_fullspace.nii.gz"
+            )
+            _write_synthetic_labelmap(labelmap)
+
+            with mock.patch(
+                "totalsegmentator_wrapper_mac.surface_preview.label_name_map",
+                return_value=SYNTHETIC_LABELS,
+            ):
+                summary = run_surface_preview(
+                    case_dir=case_dir,
+                    smoothing=smoothing_config_from_options(preset="none"),
+                )
+
+            viewer = summary["viewer"]
+            self.assertEqual(viewer["display_mode_default"], "normal")
+            self.assertEqual(viewer["display_modes"], ["normal", "wireframe", "xray"])
+            self.assertEqual(viewer["xray"]["surface_color"], [1.0, 1.0, 1.0])
+            self.assertEqual(viewer["xray"]["base_alpha"], 0.18)
+            self.assertEqual(viewer["xray"]["outline_alpha"], 0.58)
+            self.assertEqual(viewer["xray"]["outline_radius_physical_pixels"], 1)
+            self.assertEqual(viewer["xray"]["background"], "#313432")
+            self.assertEqual(viewer["xray"]["compositing"], "back_then_front")
+            self.assertEqual(
+                viewer["xray"]["target_strategy"],
+                "translucent_layers_else_all",
+            )
+            self.assertFalse(viewer["xray"]["depth_write"])
+
+            html = (case_dir / "surface_preview" / "index.html").read_text(encoding="utf-8")
+            for element_id in ["displayNormal", "displayWireframe", "displayXray"]:
+                self.assertIn(f'id="{element_id}"', html)
+            self.assertIn("const DISPLAY_MODE_ORDER = ['normal', 'wireframe', 'xray'];", html)
+            self.assertIn("function setDisplayMode(name)", html)
+            self.assertIn("function drawXrayShells(meshes)", html)
+            self.assertIn("function selectXrayTargets(meshes)", html)
+            self.assertIn(
+                "const translucent = meshes.filter(mesh => mesh.material.opacity < 0.995);",
+                html,
+            )
+            self.assertIn(
+                "visibleMeshes.filter(mesh => !xrayTargets.has(mesh))",
+                html,
+            )
+            self.assertIn("gl.cullFace(gl.FRONT)", html)
+            self.assertIn("gl.cullFace(gl.BACK)", html)
+            self.assertIn("gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)", html)
+            self.assertIn("gl.depthMask(false)", html)
+            self.assertIn("float facing = abs(normalize(vNormal).z);", html)
+            self.assertIn("float rim = pow(clamp(1.0 - facing, 0.0, 1.0), 2.0);", html)
+            self.assertIn("vec3 xrayColor = mix(vec3(0.78), vec3(1.0), rim);", html)
+            self.assertIn(
+                "float xrayAlpha = clamp(0.18 * mix(0.55, 3.0, rim), 0.0, 0.62);",
+                html,
+            )
+            self.assertIn("function drawXrayOutlineMask", html)
+            self.assertIn("function compositeXrayOutline", html)
+            self.assertIn("gl.uniform2f(outlineUniforms.texelSize, 1 / canvas.width, 1 / canvas.height)", html)
+            self.assertIn("vec4(1.0, 1.0, 1.0, edge * 0.58)", html)
+            self.assertIn("canvas.width = Math.max(1, Math.floor(rect.width * devicePixelRatio));", html)
+            self.assertIn("gl.clearColor(0.1921569, 0.2039216, 0.1960784, 1.0)", html)
+            self.assertIn("function drawDepthAwareGrid", html)
+            self.assertIn("function drawSelectionAndGizmoOverlay", html)
+            draw_body = html[
+                html.index("function drawWebGl()") : html.index(
+                    "function applySceneUniforms"
+                )
+            ]
+            expected_order = [
+                "for (const mesh of opaque)",
+                "drawDepthAwareGrid",
+                "drawXrayShells",
+                "drawXrayOutlineMask",
+                "compositeXrayOutline",
+                "drawSelectionAndGizmoOverlay",
+            ]
+            positions = [draw_body.index(token) for token in expected_order]
+            self.assertEqual(positions, sorted(positions))
+            self.assertAlmostEqual(0.18 * 0.55, 0.099)
+            self.assertAlmostEqual(0.18 * 3.0, 0.54)
+            self.assertLessEqual(0.18 * 3.0, 0.62)
+
     def test_surface_preview_rejects_invalid_preview_step_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
