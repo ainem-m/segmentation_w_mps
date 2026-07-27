@@ -172,7 +172,7 @@ class ToothSegBackendTests(unittest.TestCase):
 
             fake_predict = root / "fake_nnunet.py"
             fake_predict.write_text(
-                """#!/usr/bin/env python3
+                f"""#!{sys.executable}
 import sys
 from pathlib import Path
 import nibabel as nib
