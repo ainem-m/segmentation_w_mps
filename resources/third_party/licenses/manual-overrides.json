@@ -60,6 +60,15 @@
       "reason": "Attention terms are from bundled third-party notices inside pandas LICENSE. The wheel includes pandas-3.0.3.dist-info/LICENSE, and the inventory copies it."
     },
     {
+      "package": "pandas",
+      "version": "3.0.5",
+      "license": "BSD-3-Clause with bundled third-party notices",
+      "source_url": "https://pypi.org/project/pandas/3.0.5/",
+      "reviewed_at": "2026-07-27",
+      "decision": "accepted",
+      "reason": "Attention terms are from bundled third-party notices inside pandas LICENSE. The wheel includes pandas-3.0.5.dist-info/LICENSE, and the inventory copies it."
+    },
+    {
       "package": "matplotlib",
       "version": "3.11.0",
       "license": "Matplotlib License with bundled third-party notices",
