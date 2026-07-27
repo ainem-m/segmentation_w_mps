@@ -28,6 +28,7 @@ GROUP_COLORS = {
 
 PREVIEW_STEP_SIZE_WARNING_THRESHOLD = 4
 PREVIEW_STEP_SIZE_WARNING = "small structures may be under-sampled"
+VIEWER_BUNDLE_FILENAME = "viewer_bundle.js"
 
 CRANIOFACIAL_SURFACE_LABELS: tuple[tuple[str, int, str], ...] = (
     ("mandible.nii.gz", 1, "lower_jawbone"),
@@ -99,7 +100,11 @@ def run_surface_preview(
         smoothing=viewer_base_smoothing,
         step_size=preview_step_size,
     )
-    _write_offline_viewer(html_path, summary=summary, preview_meshes=preview_meshes)
+    viewer_bundle_path = _write_offline_viewer(
+        html_path,
+        summary=summary,
+        preview_meshes=preview_meshes,
+    )
     summary["html_viewer"] = str(html_path.resolve())
     summary["preview"] = {
         "step_size": preview_step_size,
@@ -144,6 +149,7 @@ def run_surface_preview(
             "outline_radius_physical_pixels": 1,
             "background": "#313432",
         },
+        "script_bundle": str(viewer_bundle_path.resolve()),
     }
     (output_dir / "preview_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
@@ -659,7 +665,7 @@ def _write_offline_viewer(
     *,
     summary: dict[str, Any],
     preview_meshes: list[dict[str, Any]],
-) -> None:
+) -> Path:
     payload = {
         "dataLabel": "選択したデータ",
         "labelCount": summary["label_count"],
@@ -668,12 +674,53 @@ def _write_offline_viewer(
         "materialPreset": "rich",
         "meshes": preview_meshes,
     }
-    path.write_text(_html_document(payload), encoding="utf-8")
+    document = _html_document(payload)
+    index_html, bundle_js = _externalize_viewer_script(
+        document,
+        bundle_filename=VIEWER_BUNDLE_FILENAME,
+    )
+    bundle_path = path.with_name(VIEWER_BUNDLE_FILENAME)
+    path.write_text(index_html, encoding="utf-8")
+    bundle_path.write_text(bundle_js, encoding="utf-8")
+    return bundle_path
 
 
 def _html_document(payload: dict[str, Any]) -> str:
     payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     return _webgl_html_document(payload_json)
+
+
+def _externalize_viewer_script(
+    document: str,
+    *,
+    bundle_filename: str,
+) -> tuple[str, str]:
+    script_open = "<script>\n"
+    script_close = "\n</script>"
+    script_end = document.rfind(script_close)
+    script_start = document.rfind(script_open, 0, script_end)
+    if script_start < 0 or script_end <= script_start:
+        raise ValueError("Viewer document does not contain the expected inline script")
+    body_start = script_start + len(script_open)
+    bundle_js = document[body_start:script_end] + "\n"
+    loader_script = """<script>
+(function () {
+  requestAnimationFrame(function () {
+    const bundle = document.createElement('script');
+    bundle.src = '__BUNDLE_FILENAME__';
+    bundle.onerror = function () {
+      window.showViewerLoadError('必要な表示データを読み込めませんでした。結果フォルダ内のファイルを移動せず、ページを再読み込みしてください。');
+    };
+    document.head.appendChild(bundle);
+  });
+})();
+</script>""".replace("__BUNDLE_FILENAME__", bundle_filename)
+    index_html = (
+        document[:script_start]
+        + loader_script
+        + document[script_end + len(script_close):]
+    )
+    return index_html, bundle_js
 
 
 
@@ -686,6 +733,19 @@ def _webgl_html_document(payload_json: str) -> str:
 <title>TotalSegmentator 3Dビューアー</title>
 <style>
 body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#loadingOverlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: #111317; opacity: 1; visibility: visible; transition: opacity 160ms ease, visibility 160ms ease; }
+#loadingOverlay.is-complete { opacity: 0; visibility: hidden; pointer-events: none; }
+#loadingOverlay.is-error .loadingSpinner { display: none; }
+#loadingOverlay.is-error .loadingCard { border-color: #a96e68; }
+.loadingCard { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; width: min(420px, 100%); padding: 18px 20px; border: 1px solid #46515d; border-radius: 12px; background: #20242a; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
+.loadingSpinner { width: 28px; height: 28px; border: 3px solid #46515d; border-top-color: #9bc9d0; border-radius: 50%; animation: loadingSpin 0.9s linear infinite; }
+#loadingTitle { margin: 0 0 5px; font-size: 16px; font-weight: 700; }
+#loadingDetail { margin: 0; color: #c8d0d8; font-size: 13px; line-height: 1.5; }
+@keyframes loadingSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #loadingOverlay { transition: none; }
+  .loadingSpinner { animation: none; border-top-color: #46515d; }
+}
 #app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
 #panel { padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
 #panel h1 { font-size: 18px; margin: 0 0 12px; }
@@ -712,6 +772,35 @@ code { color: #c9e2ff; }
 </style>
 </head>
 <body>
+<div id="loadingOverlay" role="status" aria-live="polite" aria-busy="true">
+  <div class="loadingCard">
+    <div class="loadingSpinner" aria-hidden="true"></div>
+    <div>
+      <p id="loadingTitle">3Dデータを読み込んでいます</p>
+      <p id="loadingDetail">データ量によって、表示までしばらくかかることがあります。</p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const overlay = document.getElementById('loadingOverlay');
+  const title = document.getElementById('loadingTitle');
+  const detail = document.getElementById('loadingDetail');
+  window.showViewerLoadError = function (message) {
+    if (overlay.getAttribute('aria-busy') !== 'true') return;
+    overlay.setAttribute('aria-busy', 'false');
+    overlay.classList.add('is-error');
+    title.textContent = '3D表示を準備できませんでした';
+    detail.textContent = message;
+  };
+  window.addEventListener('error', function () {
+    window.showViewerLoadError('3D表示の準備中にエラーが発生しました。ページを再読み込みしてください。繰り返す場合は、結果フォルダのログを確認してください。');
+  });
+  window.addEventListener('unhandledrejection', function () {
+    window.showViewerLoadError('3D表示の準備中にエラーが発生しました。ページを再読み込みしてください。繰り返す場合は、結果フォルダのログを確認してください。');
+  });
+})();
+</script>
 <div id="app">
   <aside id="panel">
     <h1>TotalSegmentator 3Dビューアー</h1>
@@ -807,7 +896,7 @@ const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisi
 let currentGeometryPreset = normalizeGeometryPreset(DATA.geometryPreset || '');
 let currentMaterialMode = normalizeMaterialMode(DATA.materialPreset || 'rich');
 let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'normal');
-const preparedMeshes = DATA.meshes.map(prepareMesh);
+let preparedMeshes = [];
 let currentSmoothingPreset = normalizeSmoothingPreset((DATA.smoothing && DATA.smoothing.preset) || 'slicer_like');
 let program = null;
 let attribs = null;
@@ -818,8 +907,9 @@ let outlineUniforms = null;
 let outlineResources = null;
 let gridResources = null;
 let uintIndexExtension = null;
-document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
-document.getElementById('labelCount').textContent = DATA.labelCount;
+const loadingOverlay = document.getElementById('loadingOverlay');
+const loadingTitle = document.getElementById('loadingTitle');
+const loadingDetail = document.getElementById('loadingDetail');
 const geometryControl = document.getElementById('geometryControl');
 const geometryOriginalButton = document.getElementById('geometryOriginal');
 const geometrySdfButton = document.getElementById('geometrySdf');
@@ -828,47 +918,92 @@ const materialPresetSelect = document.getElementById('materialPreset');
 const displayNormalButton = document.getElementById('displayNormal');
 const displayWireframeButton = document.getElementById('displayWireframe');
 const displayXrayButton = document.getElementById('displayXray');
-populateGeometryControl();
-populateSmoothingControl();
-populateMaterialControl();
-populateDisplayModeControl();
-applyMaterialMode(currentMaterialMode, false);
-applySmoothingPreset(currentSmoothingPreset, false);
-const layers = document.getElementById('layers');
-for (const mesh of preparedMeshes) {
-  const label = document.createElement('label');
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.checked = visible[mesh.name];
-  input.onchange = () => { visible[mesh.name] = input.checked; draw(); };
-  const countNode = document.createElement('span');
-  mesh.layerCountNode = countNode;
-  label.appendChild(input);
-  label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name)));
-  label.appendChild(countNode);
-  layers.appendChild(label);
+scheduleViewerInitialization();
+
+function scheduleViewerInitialization() {
+  requestAnimationFrame(() => {
+    setLoadingPhase(
+      '3D表示を準備しています',
+      '形状と表示候補を準備しています。'
+    );
+    setTimeout(initializeViewer, 0);
+  });
 }
-updateLayerStats();
-document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
-document.getElementById('modeMouse').onclick = () => setInputMode('mouse');
-document.getElementById('viewFront').onclick = () => applyAxisView(0, 0);
-document.getElementById('viewBack').onclick = () => applyAxisView(180, 0);
-document.getElementById('viewLeft').onclick = () => applyAxisView(270, 0);
-document.getElementById('viewRight').onclick = () => applyAxisView(90, 0);
-document.getElementById('viewTop').onclick = () => applyAxisView(0, 89);
-document.getElementById('viewBottom').onclick = () => applyAxisView(0, 271);
-document.getElementById('fitAll').onclick = () => { fitAll(); draw(); };
-document.getElementById('reset').onclick = () => { resetCamera(); draw(); };
-if (gl) initWebGl();
-resetCamera();
-fitAll();
-window.onresize = resize;
-canvas.addEventListener('pointerdown', onPointerDown);
-canvas.addEventListener('pointermove', onPointerMove);
-canvas.addEventListener('pointerup', onPointerUp);
-canvas.addEventListener('pointercancel', onPointerUp);
-canvas.addEventListener('wheel', onWheel, { passive: false });
-canvas.addEventListener('contextmenu', event => event.preventDefault());
+
+function initializeViewer() {
+  try {
+    preparedMeshes = DATA.meshes.map(prepareMesh);
+    document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
+    document.getElementById('labelCount').textContent = DATA.labelCount;
+    populateGeometryControl();
+    populateSmoothingControl();
+    populateMaterialControl();
+    populateDisplayModeControl();
+    applyMaterialMode(currentMaterialMode, false);
+    applySmoothingPreset(currentSmoothingPreset, false);
+    const layers = document.getElementById('layers');
+    for (const mesh of preparedMeshes) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = visible[mesh.name];
+      input.onchange = () => { visible[mesh.name] = input.checked; draw(); };
+      const countNode = document.createElement('span');
+      mesh.layerCountNode = countNode;
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' ' + meshDisplayName(mesh.name)));
+      label.appendChild(countNode);
+      layers.appendChild(label);
+    }
+    updateLayerStats();
+    document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
+    document.getElementById('modeMouse').onclick = () => setInputMode('mouse');
+    document.getElementById('viewFront').onclick = () => applyAxisView(0, 0);
+    document.getElementById('viewBack').onclick = () => applyAxisView(180, 0);
+    document.getElementById('viewLeft').onclick = () => applyAxisView(270, 0);
+    document.getElementById('viewRight').onclick = () => applyAxisView(90, 0);
+    document.getElementById('viewTop').onclick = () => applyAxisView(0, 89);
+    document.getElementById('viewBottom').onclick = () => applyAxisView(0, 271);
+    document.getElementById('fitAll').onclick = () => { fitAll(); draw(); };
+    document.getElementById('reset').onclick = () => { resetCamera(); draw(); };
+    if (gl) initWebGl();
+    resetCamera();
+    fitAll();
+    window.onresize = resize;
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+    resize();
+    requestAnimationFrame(finishViewerLoading);
+  } catch (error) {
+    console.error('3Dビューアーの初期化に失敗しました', error);
+    failViewerLoading();
+  }
+}
+
+function setLoadingPhase(title, detail) {
+  loadingTitle.textContent = title;
+  loadingDetail.textContent = detail;
+}
+
+function finishViewerLoading() {
+  loadingOverlay.setAttribute('aria-busy', 'false');
+  loadingOverlay.setAttribute('aria-hidden', 'true');
+  loadingOverlay.classList.add('is-complete');
+}
+
+function failViewerLoading() {
+  loadingOverlay.setAttribute('aria-busy', 'false');
+  loadingOverlay.classList.add('is-error');
+  setLoadingPhase(
+    '3D表示を準備できませんでした',
+    'ページを再読み込みしてください。繰り返す場合は、結果フォルダのログを確認してください。'
+  );
+}
+
 function setInputMode(mode) {
   inputMode = mode;
   document.getElementById('modeTrackpad').classList.toggle('active', mode === 'trackpad');
@@ -2372,7 +2507,6 @@ function normalize3(v) {
   return length > 1e-8 ? [v[0]/length, v[1]/length, v[2]/length] : [0, 0, 1];
 }
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
-resize();
 </script>
 </body>
 </html>

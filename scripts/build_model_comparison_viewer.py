@@ -6,7 +6,10 @@ import json
 import re
 from pathlib import Path
 
-from totalsegmentator_wrapper_mac.surface_preview import _html_document
+from totalsegmentator_wrapper_mac.surface_preview import (
+    VIEWER_BUNDLE_FILENAME,
+    _html_document,
+)
 
 
 DATA_PATTERN = re.compile(r"const DATA = (\{.*?\});\nconst canvas", re.DOTALL)
@@ -20,9 +23,18 @@ def parse_source(value: str) -> tuple[str, str, Path]:
 
 
 def read_payload(path: Path) -> dict:
-    match = DATA_PATTERN.search(path.read_text(encoding="utf-8"))
+    document = path.read_text(encoding="utf-8")
+    match = DATA_PATTERN.search(document)
+    payload_path = path
     if match is None:
-        raise ValueError(f"embedded viewer payload not found: {path}")
+        payload_path = path.with_name(VIEWER_BUNDLE_FILENAME)
+        if not payload_path.exists():
+            raise ValueError(
+                f"viewer payload not found in {path} or {payload_path}"
+            )
+        match = DATA_PATTERN.search(payload_path.read_text(encoding="utf-8"))
+    if match is None:
+        raise ValueError(f"viewer payload not found: {payload_path}")
     return json.loads(match.group(1))
 
 
@@ -120,8 +132,7 @@ def build_comparison_viewer(*, sources: list[tuple[str, str, Path]], output: Pat
         "(mesh.kind || mesh.name) === 'jaws'",
     )
     html = html.replace(
-        "updateLayerStats();",
-        "updateLayerStats();\n"
+        "function setInputMode(mode) {",
         "function selectComparisonModel(modelKey) {\n"
         "  for (const mesh of preparedMeshes) {\n"
         "    const checked = mesh.model === modelKey && !!mesh.modelDefaultVisible;\n"
@@ -138,7 +149,8 @@ def build_comparison_viewer(*, sources: list[tuple[str, str, Path]], output: Pat
         "  camera.orientation = orthonormalizeOrientation(mat3Multiply(roll, base));\n"
         "  camera.pan = [Number(preset.pan[0]), Number(preset.pan[1])];\n"
         "  draw();\n"
-        "}",
+        "}\n"
+        "function setInputMode(mode) {",
         1,
     )
     if "comparisonModel" not in html or "selectComparisonModel" not in html:
