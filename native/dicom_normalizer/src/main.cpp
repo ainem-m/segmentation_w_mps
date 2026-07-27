@@ -21,6 +21,8 @@
 #include <unistd.h>
 
 #include "gdcm_import.h"
+#include "rescue_stack.h"
+#include "sha256.h"
 
 namespace fs = std::filesystem;
 
@@ -81,6 +83,8 @@ struct DicomMeta {
     bool has_dicm_prefix = false;
     bool has_file_meta = false;
     std::string transfer_syntax_uid;
+    std::string study_instance_uid;
+    std::string frame_of_reference_uid;
     std::string series_instance_uid;
     std::string sop_instance_uid;
     std::optional<int> series_number;
@@ -109,8 +113,12 @@ struct DicomMeta {
     bool geometry_from_functional_groups = false;
     std::uint64_t decoded_bytes = 0;
     std::uint64_t decoded_fnv1a64 = 0;
-    std::string slice_thickness;
+    bool has_slice_thickness = false;
+    bool has_spacing_between_slices = false;
+    std::optional<double> slice_thickness;
+    std::optional<double> spacing_between_slices;
     std::string burned_in_annotation;
+    std::string content_sha256;
 };
 
 struct SeriesSummary {
@@ -564,6 +572,8 @@ DicomMeta parse_dicom_file(const fs::path& path) {
     meta.has_dicm_prefix = probe.has_dicm_prefix;
     meta.has_file_meta = probe.has_file_meta;
     meta.transfer_syntax_uid = probe.transfer_syntax_uid;
+    meta.study_instance_uid = probe.study_instance_uid;
+    meta.frame_of_reference_uid = probe.frame_of_reference_uid;
     meta.series_instance_uid = probe.series_instance_uid;
     meta.sop_instance_uid = probe.sop_instance_uid;
     meta.series_number = probe.series_number;
@@ -593,11 +603,22 @@ DicomMeta parse_dicom_file(const fs::path& path) {
     meta.geometry_from_functional_groups = probe.geometry_from_functional_groups;
     meta.decoded_bytes = probe.decoded_bytes;
     meta.decoded_fnv1a64 = probe.decoded_fnv1a64;
+    meta.has_slice_thickness = probe.has_slice_thickness;
+    meta.has_spacing_between_slices = probe.has_spacing_between_slices;
     meta.slice_thickness = probe.slice_thickness;
+    meta.spacing_between_slices = probe.spacing_between_slices;
     meta.burned_in_annotation = probe.burned_in_annotation;
     if (meta.parsed && meta.sop_class_uid.empty() && meta.series_instance_uid.empty()) {
         meta.parsed = false;
         meta.error = "missing_dicom_identity_tags";
+    }
+    if (meta.parsed) {
+        try {
+            meta.content_sha256 = dicom_normalizer::sha256_file_hex(path);
+        } catch (...) {
+            meta.parsed = false;
+            meta.error = "content_sha256_failed";
+        }
     }
     return meta;
 }
@@ -683,6 +704,67 @@ double median_sorted(std::vector<double> values) {
         return values[mid];
     }
     return (values[mid - 1] + values[mid]) * 0.5;
+}
+
+std::optional<double> projected_slice_spacing_mm(const SeriesSummary& series) {
+    if (series.files.size() < 2) {
+        return std::nullopt;
+    }
+    const DicomMeta& first = series.files.front();
+    if (!first.has_image_orientation_patient) {
+        return std::nullopt;
+    }
+    const auto normal = normalize3(cross3(
+        normalize3(row_cosines(first.image_orientation_patient)),
+        normalize3(column_cosines(first.image_orientation_patient))));
+    if (!(norm3(normal) > 0.0)) {
+        return std::nullopt;
+    }
+    std::vector<double> positions;
+    positions.reserve(series.files.size());
+    for (const auto& item : series.files) {
+        bool same_orientation = true;
+        for (std::size_t axis = 0; axis < first.image_orientation_patient.size(); ++axis) {
+            if (std::abs(
+                    item.image_orientation_patient[axis]
+                    - first.image_orientation_patient[axis]) > 1e-4) {
+                same_orientation = false;
+                break;
+            }
+        }
+        if (!item.has_image_position_patient
+            || !item.has_image_orientation_patient
+            || !same_orientation) {
+            return std::nullopt;
+        }
+        positions.push_back(dot3(item.image_position_patient, normal));
+    }
+    std::sort(positions.begin(), positions.end());
+    std::vector<double> differences;
+    differences.reserve(positions.size() - 1);
+    for (std::size_t index = 1; index < positions.size(); ++index) {
+        const double difference = std::abs(positions[index] - positions[index - 1]);
+        if (difference > 1e-6) {
+            differences.push_back(difference);
+        }
+    }
+    if (differences.size() + 1 != positions.size()) {
+        return std::nullopt;
+    }
+    const double spacing = median_sorted(differences);
+    if (!(spacing > 0.0) || !std::isfinite(spacing)) {
+        return std::nullopt;
+    }
+    const double tolerance = std::max(0.10, spacing * 0.05);
+    if (std::any_of(
+            differences.begin(),
+            differences.end(),
+            [spacing, tolerance](double difference) {
+                return std::abs(difference - spacing) > tolerance;
+            })) {
+        return std::nullopt;
+    }
+    return spacing;
 }
 
 std::vector<ViewerExportGroup> build_viewer_export_groups(const SeriesSummary& series) {
@@ -865,6 +947,8 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
     int max_number_of_frames = 0;
     int compressed_count = 0;
     int pixel_decode_failure_count = 0;
+    bool instance_order_unambiguous = true;
+    std::set<int> seen_instance_numbers;
     for (const auto& item : series.files) {
         pixel_spacing_count += item.has_pixel_spacing ? 1 : 0;
         position_count += item.has_image_position_patient ? 1 : 0;
@@ -872,6 +956,10 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         max_number_of_frames = std::max(max_number_of_frames, item.number_of_frames.value_or(0));
         compressed_count += is_compressed_transfer_syntax(item.transfer_syntax_uid) ? 1 : 0;
         pixel_decode_failure_count += item.has_pixel_data && !item.pixel_decode_ok ? 1 : 0;
+        if (!item.instance_number.has_value()
+            || !seen_instance_numbers.insert(*item.instance_number).second) {
+            instance_order_unambiguous = false;
+        }
     }
     const int effective_frame_count = std::max(file_count, max_number_of_frames);
 
@@ -963,8 +1051,11 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         || contains_word(image_type_text, "SCREEN SAVE");
     const bool axial_like = contains_word(description_upper, "AXIAL")
         || contains_word(image_type_text, "AXIAL");
-    const bool non_axial_mpr = contains_word(description_upper, "CORONAL")
-        || contains_word(description_upper, "SAGITTAL");
+    const bool coronal_like = contains_word(description_upper, "CORONAL")
+        || contains_word(image_type_text, "CORONAL");
+    const bool sagittal_like = contains_word(description_upper, "SAGITTAL")
+        || contains_word(image_type_text, "SAGITTAL");
+    const bool non_axial_mpr = coronal_like || sagittal_like;
 
     if (is_secondary_capture) {
         if (effective_frame_count >= kMinVolumeSlices && shape_consistent && axial_like && !non_axial_mpr) {
@@ -984,6 +1075,27 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
                 "prepare_rescue_with_explicit_spacing",
                 false,
                 "Manual pseudo-volume rescue may be possible, but output must remain rescue/non-diagnostic.");
+        }
+        const bool explicit_reference_plane =
+            !axial_like && (coronal_like != sagittal_like);
+        if (effective_frame_count >= kMinVolumeSlices
+            && shape_consistent
+            && explicit_reference_plane) {
+            return make(
+                "secondary_capture_reference_candidate",
+                "C: reference only",
+                "C: reference only",
+                {
+                    "secondary_capture",
+                    "geometry_not_trusted",
+                    "reference_only",
+                    coronal_like ? "explicit_coronal" : "explicit_sagittal",
+                    "not_primary_axial_volume",
+                },
+                "",
+                "use_as_rescue_reference_series",
+                false,
+                "Use only as a reference series for geometry estimation and preview alignment.");
         }
         return make(
             "reject",
@@ -1088,6 +1200,37 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
                 "select_viewer_export_group",
                 false,
                 "Viewer/MPR export-like mixed geometry. Select one geometry group for non-diagnostic preview rescue; prefer original axial CT if available.");
+        }
+        const bool orientation_axial_like = first.has_image_orientation_patient
+            && [&first]() {
+                const auto normal = normalize3(cross3(
+                    normalize3(row_cosines(first.image_orientation_patient)),
+                    normalize3(column_cosines(first.image_orientation_patient))));
+                const auto plane = plane_label_from_normal(normal);
+                return plane == "axial_like" || plane == "oblique_axial_like";
+            }();
+        const bool explicit_axial_stack = axial_like || orientation_axial_like;
+        if (effective_frame_count >= kMinVolumeSlices
+            && shape_consistent
+            && instance_order_unambiguous
+            && explicit_axial_stack) {
+            std::vector<std::string> rescue_reasons = reasons;
+            rescue_reasons.push_back("partial_standard_geometry");
+            rescue_reasons.push_back("manual_confirmation_required");
+            if (orientation_axial_like) {
+                rescue_reasons.push_back("axial_orientation_from_iop");
+            } else {
+                rescue_reasons.push_back("axial_label_seed");
+            }
+            return make(
+                "geometry_rescue_candidate",
+                "B: partial geometry rescue",
+                "C: rescue only",
+                rescue_reasons,
+                "",
+                "estimate_missing_geometry_then_confirm",
+                false,
+                "Some standard CT geometry is missing or inconsistent. Preserve available tags, estimate only missing axes, and require preview confirmation.");
         }
         return make(
             "reject",
@@ -1370,6 +1513,115 @@ std::string viewer_export_groups_json(const std::vector<ViewerExportGroup>& grou
     return out.str();
 }
 
+std::string numeric_tag_evidence_json(
+    const SeriesSummary& series,
+    bool DicomMeta::*has_value,
+    const std::optional<double> DicomMeta::*value
+) {
+    int present_count = 0;
+    std::vector<double> values;
+    for (const auto& item : series.files) {
+        present_count += item.*has_value ? 1 : 0;
+        if ((item.*value).has_value()) {
+            values.push_back(*(item.*value));
+        }
+    }
+    std::sort(values.begin(), values.end());
+    std::vector<double> unique_values;
+    for (const double candidate : values) {
+        if (unique_values.empty() || std::abs(candidate - unique_values.back()) > 1e-6) {
+            unique_values.push_back(candidate);
+        }
+    }
+    const bool consistent =
+        present_count > 0
+        && static_cast<int>(values.size()) == present_count
+        && unique_values.size() == 1;
+
+    std::ostringstream out;
+    out << "{"
+        << "\"present_count\": " << present_count
+        << ", \"valid_numeric_count\": " << values.size()
+        << ", \"consistent\": " << json_bool(consistent)
+        << ", \"values_mm\": [";
+    for (std::size_t index = 0; index < unique_values.size(); ++index) {
+        if (index > 0) {
+            out << ", ";
+        }
+        out << unique_values[index];
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string ordered_content_manifest_json(const SeriesSummary& series, int indent) {
+    struct Entry {
+        std::optional<int> instance_number;
+        std::string content_sha256;
+    };
+    std::vector<Entry> entries;
+    entries.reserve(series.files.size());
+    for (const auto& file : series.files) {
+        entries.push_back({file.instance_number, file.content_sha256});
+    }
+    std::sort(entries.begin(), entries.end(), [](const Entry& lhs, const Entry& rhs) {
+        if (lhs.instance_number.has_value() != rhs.instance_number.has_value()) {
+            return lhs.instance_number.has_value();
+        }
+        if (lhs.instance_number != rhs.instance_number) {
+            return lhs.instance_number < rhs.instance_number;
+        }
+        return lhs.content_sha256 < rhs.content_sha256;
+    });
+
+    bool ordering_ambiguous = false;
+    std::set<int> seen_instances;
+    std::ostringstream canonical;
+    for (const auto& entry : entries) {
+        if (!entry.instance_number.has_value()
+            || !seen_instances.insert(*entry.instance_number).second) {
+            ordering_ambiguous = true;
+        }
+        canonical << "I:";
+        if (entry.instance_number.has_value()) {
+            canonical << *entry.instance_number;
+        } else {
+            canonical << "null";
+        }
+        canonical << "\tH:" << entry.content_sha256 << "\n";
+    }
+
+    const std::string pad(indent, ' ');
+    const std::string pad2(indent + 2, ' ');
+    const std::string pad4(indent + 4, ' ');
+    std::ostringstream out;
+    out << "{\n";
+    out << pad2 << "\"algorithm\": \"sha256\",\n";
+    out << pad2 << "\"ordering\": \"instance_number_then_content_sha256\",\n";
+    out << pad2 << "\"ordering_ambiguous\": " << json_bool(ordering_ambiguous) << ",\n";
+    out << pad2 << "\"entry_count\": " << entries.size() << ",\n";
+    out << pad2 << "\"manifest_sha256\": "
+        << json_string(dicom_normalizer::sha256_hex(canonical.str())) << ",\n";
+    out << pad2 << "\"entries\": [";
+    if (!entries.empty()) {
+        out << "\n";
+        for (std::size_t index = 0; index < entries.size(); ++index) {
+            out << pad4 << "{\"ordinal\": " << (index + 1)
+                << ", \"instance_number\": " << json_optional_int(entries[index].instance_number)
+                << ", \"content_sha256\": " << json_string(entries[index].content_sha256)
+                << "}";
+            if (index + 1 != entries.size()) {
+                out << ",";
+            }
+            out << "\n";
+        }
+        out << pad2;
+    }
+    out << "]\n";
+    out << pad << "}";
+    return out.str();
+}
+
 std::string summary_json(const SeriesSummary& series, const OptionalTools& tools, int indent) {
     const DicomMeta& first = series.files.front();
     const auto classification = classify_series(series, tools);
@@ -1423,6 +1675,18 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     std::ostringstream out;
     out << pad << "{\n";
     out << pad2 << "\"series_key\": " << json_string(series.key) << ",\n";
+    out << pad2 << "\"study_key_sha256\": "
+        << json_optional_string(
+               first.study_instance_uid.empty()
+                   ? std::string{}
+                   : dicom_normalizer::sha256_hex(first.study_instance_uid))
+        << ",\n";
+    out << pad2 << "\"frame_of_reference_key_sha256\": "
+        << json_optional_string(
+               first.frame_of_reference_uid.empty()
+                   ? std::string{}
+                   : dicom_normalizer::sha256_hex(first.frame_of_reference_uid))
+        << ",\n";
     out << pad2 << "\"series_instance_uid\": " << json_optional_string(first.series_instance_uid) << ",\n";
     out << pad2 << "\"series_number\": " << json_optional_int(first.series_number) << ",\n";
     out << pad2 << "\"series_description\": " << json_optional_string(first.series_description) << ",\n";
@@ -1461,8 +1725,38 @@ std::string summary_json(const SeriesSummary& series, const OptionalTools& tools
     out << pad2 << "\"image_orientation_patient_consistent\": " << json_bool(orientation_consistent) << ",\n";
     out << pad2 << "\"has_pixel_spacing\": " << json_bool(pixel_spacing_count == static_cast<int>(series.files.size())) << ",\n";
     out << pad2 << "\"pixel_spacing_count\": " << pixel_spacing_count << ",\n";
+    out << pad2 << "\"pixel_spacing_mm\": ";
+    if (pixel_spacing_count == static_cast<int>(series.files.size())
+        && pixel_spacing_consistent
+        && first.pixel_spacing[0] > 0.0
+        && first.pixel_spacing[1] > 0.0) {
+        out << "{\"row\": " << first.pixel_spacing[0]
+            << ", \"column\": " << first.pixel_spacing[1] << "}";
+    } else {
+        out << "null";
+    }
+    out << ",\n";
     out << pad2 << "\"image_position_patient_count\": " << position_count << ",\n";
     out << pad2 << "\"image_orientation_patient_count\": " << orientation_count << ",\n";
+    out << pad2 << "\"projected_slice_spacing_mm\": ";
+    if (const auto spacing = projected_slice_spacing_mm(series); spacing.has_value()) {
+        out << *spacing;
+    } else {
+        out << "null";
+    }
+    out << ",\n";
+    out << pad2 << "\"slice_thickness\": "
+        << numeric_tag_evidence_json(
+               series, &DicomMeta::has_slice_thickness, &DicomMeta::slice_thickness)
+        << ",\n";
+    out << pad2 << "\"spacing_between_slices\": "
+        << numeric_tag_evidence_json(
+               series,
+               &DicomMeta::has_spacing_between_slices,
+               &DicomMeta::spacing_between_slices)
+        << ",\n";
+    out << pad2 << "\"ordered_content_manifest\": "
+        << ordered_content_manifest_json(series, indent + 2) << ",\n";
     out << pad2 << "\"burned_in_annotation_counts\": {";
     bool first_count = true;
     for (const auto& [key, value] : burned_in_counts) {
@@ -1528,6 +1822,7 @@ std::string doctor_json(const OptionalTools& tools) {
     out << "    \"audit\": true,\n";
     out << "    \"convert_clean\": true,\n";
     out << "    \"prepare_rescue\": true,\n";
+    out << "    \"export_rescue_stack\": true,\n";
     out << "    \"prepare_viewer_export\": true,\n";
     out << "    \"native_compressed_pixel_decode\": true,\n";
     out << "    \"native_lossless_transcode\": true,\n";
@@ -2459,6 +2754,119 @@ int prepare_viewer_export(const Args& args) {
     return 1;
 }
 
+std::string rescue_stack_source_manifest_json(
+    const Classification& classification,
+    const dicom_normalizer::RescueStackResult& stack
+) {
+    std::ostringstream canonical;
+    for (const auto& entry : stack.entries) {
+        canonical << "I:" << entry.instance_number
+            << "\tH:" << entry.content_sha256 << "\n";
+    }
+    std::ostringstream out;
+    out << "{\n";
+    out << "  \"schema\": \"totalsegmentator_wrapper_mac.rescue_stack.v1\",\n";
+    out << "  \"status\": \"success\",\n";
+    out << "  \"classification\": " << json_string(classification.status) << ",\n";
+    out << "  \"array\": {\n";
+    out << "    \"file\": \"preview_stack.npy\",\n";
+    out << "    \"shape_xyz\": [" << stack.size_x << ", " << stack.size_y
+        << ", " << stack.size_z << "],\n";
+    out << "    \"size_x\": " << stack.size_x << ",\n";
+    out << "    \"size_y\": " << stack.size_y << ",\n";
+    out << "    \"size_z\": " << stack.size_z << ",\n";
+    out << "    \"axis_order\": [\"x\", \"y\", \"z\"],\n";
+    out << "    \"storage_order\": \"x_fastest\",\n";
+    out << "    \"fortran_order\": true,\n";
+    out << "    \"dtype\": " << json_string(stack.dtype) << ",\n";
+    out << "    \"photometric_interpretation\": "
+        << json_string(stack.photometric_interpretation) << "\n";
+    out << "  },\n";
+    out << "  \"ordering\": {\n";
+    out << "    \"source\": \"instance_number\",\n";
+    out << "    \"ambiguous\": false,\n";
+    out << "    \"direction\": \"ascending\"\n";
+    out << "  },\n";
+    out << "  \"source\": {\n";
+    out << "    \"algorithm\": \"sha256\",\n";
+    out << "    \"manifest_sha256\": "
+        << json_string(dicom_normalizer::sha256_hex(canonical.str())) << ",\n";
+    out << "    \"entry_count\": " << stack.entries.size() << ",\n";
+    out << "    \"entries\": [";
+    if (!stack.entries.empty()) {
+        out << "\n";
+        for (std::size_t index = 0; index < stack.entries.size(); ++index) {
+            const auto& entry = stack.entries[index];
+            out << "      {\"ordinal\": " << entry.ordinal
+                << ", \"instance_number\": " << entry.instance_number
+                << ", \"content_sha256\": " << json_string(entry.content_sha256)
+                << "}";
+            if (index + 1 != stack.entries.size()) {
+                out << ",";
+            }
+            out << "\n";
+        }
+        out << "    ";
+    }
+    out << "]\n";
+    out << "  }\n";
+    out << "}\n";
+    return out.str();
+}
+
+int export_rescue_stack(const Args& args) {
+    if (!args.series_number.has_value() && args.series_key.empty()) {
+        throw std::runtime_error(
+            "--series-number or --series-key is required for export-rescue-stack");
+    }
+    int skipped = 0;
+    const auto series = audit_directory(args.dicom_dir, skipped);
+    const auto selected = find_requested_series(series, args);
+    if (!selected.has_value()) {
+        throw std::runtime_error("series not found: " + requested_series_description(args));
+    }
+    const auto classification = classify_series(*selected, detect_optional_tools());
+    if (classification.status != "secondary_capture_rescue_candidate"
+        && classification.status != "geometry_rescue_candidate"
+        && classification.status != "secondary_capture_reference_candidate") {
+        throw std::runtime_error(
+            "export-rescue-stack requires a geometry rescue or reference candidate");
+    }
+
+    std::vector<dicom_normalizer::RescueStackInput> inputs;
+    inputs.reserve(selected->files.size());
+    for (const auto& file : selected->files) {
+        inputs.push_back({
+            file.source_path,
+            file.instance_number,
+            file.content_sha256,
+        });
+    }
+    const fs::path stack_path = args.output / "preview_stack.npy";
+    fs::create_directories(args.output);
+    fs::permissions(
+        args.output,
+        fs::perms::owner_all,
+        fs::perm_options::replace);
+    const auto result =
+        dicom_normalizer::export_rescue_stack_npy(std::move(inputs), stack_path);
+    fs::permissions(
+        stack_path,
+        fs::perms::owner_read | fs::perms::owner_write,
+        fs::perm_options::replace);
+    const fs::path manifest_path = args.output / "source_manifest.json";
+    write_text(
+        manifest_path,
+        rescue_stack_source_manifest_json(classification, result));
+    fs::permissions(
+        manifest_path,
+        fs::perms::owner_read | fs::perms::owner_write,
+        fs::perm_options::replace);
+    std::cout << "wrote " << stack_path << "\n";
+    std::cout << "wrote " << manifest_path << "\n";
+    return 0;
+}
+
 int prepare_rescue(const Args& args) {
     if (!args.series_number.has_value() && args.series_key.empty()) {
         throw std::runtime_error("--series-number or --series-key is required for prepare-rescue");
@@ -2474,9 +2882,10 @@ int prepare_rescue(const Args& args) {
     }
     const auto tools = detect_optional_tools();
     const auto classification = classify_series(*selected, tools);
-    if (classification.status != "secondary_capture_rescue_candidate") {
+    if (classification.status != "secondary_capture_rescue_candidate"
+        && classification.status != "geometry_rescue_candidate") {
         throw std::runtime_error(
-            "prepare-rescue requires secondary_capture_rescue_candidate, got "
+            "prepare-rescue requires a geometry rescue candidate, got "
             + classification.status);
     }
 
@@ -2601,6 +3010,8 @@ void print_usage() {
         << "--output <artifact_dir>\n"
         << "  totalsegmentator-wrapper-dicom-normalizer prepare-rescue --dicom-dir <dir> (--series-number <n>|--series-key <key>) "
         << "--patched-spacing X,Y,Z --output <artifact_dir>\n\n"
+        << "  totalsegmentator-wrapper-dicom-normalizer export-rescue-stack --dicom-dir <dir> "
+        << "(--series-number <n>|--series-key <key>) --output <artifact_dir>\n"
         << "  totalsegmentator-wrapper-dicom-normalizer prepare-viewer-export --dicom-dir <dir> "
         << "(--series-number <n>|--series-key <key>) --group-id <gNNN> --output <artifact_dir>\n\n"
         << "Current phase:\n"
@@ -2626,6 +3037,7 @@ Args parse_args(int argc, char** argv) {
         && args.command != "audit"
         && args.command != "convert-clean"
         && args.command != "prepare-rescue"
+        && args.command != "export-rescue-stack"
         && args.command != "prepare-viewer-export") {
         throw std::runtime_error("unsupported command: " + args.command);
     }
@@ -2681,6 +3093,9 @@ int main(int argc, char** argv) {
         }
         if (args.command == "prepare-rescue") {
             return prepare_rescue(args);
+        }
+        if (args.command == "export-rescue-stack") {
+            return export_rescue_stack(args);
         }
         if (args.command == "prepare-viewer-export") {
             return prepare_viewer_export(args);

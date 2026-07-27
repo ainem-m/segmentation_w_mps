@@ -1,6 +1,7 @@
 #include "gdcm_import.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -67,6 +68,20 @@ std::optional<int> parse_int(const std::string& value) {
     try {
         if (const auto cleaned = trim(value); !cleaned.empty()) {
             return std::stoi(cleaned);
+        }
+    } catch (...) {
+    }
+    return std::nullopt;
+}
+
+std::optional<double> parse_double(const std::string& value) {
+    try {
+        if (const auto cleaned = trim(value); !cleaned.empty()) {
+            std::size_t consumed = 0;
+            const double parsed = std::stod(cleaned, &consumed);
+            if (consumed == cleaned.size() && std::isfinite(parsed)) {
+                return parsed;
+            }
         }
     } catch (...) {
     }
@@ -189,6 +204,8 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
         result.has_dicm_prefix = has_dicm_prefix(path);
         result.has_file_meta = !file.GetHeader().IsEmpty();
         result.transfer_syntax_uid = file.GetHeader().GetDataSetTransferSyntax().GetString();
+        result.study_instance_uid = top_level_string(file, gdcm::Tag(0x0020, 0x000d));
+        result.frame_of_reference_uid = top_level_string(file, gdcm::Tag(0x0020, 0x0052));
         result.series_instance_uid = top_level_string(file, gdcm::Tag(0x0020, 0x000e));
         result.sop_instance_uid = top_level_string(file, gdcm::Tag(0x0008, 0x0018));
         result.series_number = parse_int(top_level_string(file, gdcm::Tag(0x0020, 0x0011)));
@@ -199,7 +216,13 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
         result.sop_class_name = file.GetHeader().GetMediaStorageAsString();
         result.image_type = split_backslash(top_level_string(file, gdcm::Tag(0x0008, 0x0008)));
         result.number_of_frames = parse_int(top_level_string(file, gdcm::Tag(0x0028, 0x0008)));
-        result.slice_thickness = top_level_string(file, gdcm::Tag(0x0018, 0x0050));
+        const auto slice_thickness = top_level_string(file, gdcm::Tag(0x0018, 0x0050));
+        result.has_slice_thickness = !slice_thickness.empty();
+        result.slice_thickness = parse_double(slice_thickness);
+        const auto spacing_between_slices =
+            top_level_string(file, gdcm::Tag(0x0018, 0x0088));
+        result.has_spacing_between_slices = !spacing_between_slices.empty();
+        result.spacing_between_slices = parse_double(spacing_between_slices);
         result.burned_in_annotation = top_level_string(file, gdcm::Tag(0x0028, 0x0301));
         result.has_pixel_data = data_set.FindDataElement(gdcm::Tag(0x7fe0, 0x0010))
             || data_set.FindDataElement(gdcm::Tag(0x7fe0, 0x0008))
@@ -235,7 +258,8 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
         result.samples_per_pixel = static_cast<int>(pixel_format.GetSamplesPerPixel());
         result.bits_allocated = static_cast<int>(pixel_format.GetBitsAllocated());
         result.pixel_representation = static_cast<int>(pixel_format.GetPixelRepresentation());
-        result.photometric_interpretation = image.GetPhotometricInterpretation().GetString();
+        result.photometric_interpretation =
+            trim(image.GetPhotometricInterpretation().GetString());
 
         const auto buffer_length = image.GetBufferLength();
         if (buffer_length == 0 || buffer_length > kMaxDecodedBytes
@@ -262,6 +286,50 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
         return result;
     } catch (...) {
         result.error = "gdcm_unknown_exception";
+        return result;
+    }
+}
+
+GdcmDecodedImage decode_dicom_image(const fs::path& path) {
+    GdcmDecodedImage result;
+    try {
+        gdcm::ImageReader reader;
+        reader.SetFileName(path.c_str());
+        if (!reader.Read()) {
+            result.error = "gdcm_image_reader_failed";
+            return result;
+        }
+        const auto& image = reader.GetImage();
+        const auto& pixel_format = image.GetPixelFormat();
+        result.columns = static_cast<int>(image.GetColumns());
+        result.rows = static_cast<int>(image.GetRows());
+        result.number_of_frames = image.GetNumberOfDimensions() >= 3
+            ? static_cast<int>(image.GetDimension(2))
+            : 1;
+        result.samples_per_pixel = static_cast<int>(pixel_format.GetSamplesPerPixel());
+        result.bits_allocated = static_cast<int>(pixel_format.GetBitsAllocated());
+        result.bits_stored = static_cast<int>(pixel_format.GetBitsStored());
+        result.high_bit = static_cast<int>(pixel_format.GetHighBit());
+        result.pixel_representation = static_cast<int>(pixel_format.GetPixelRepresentation());
+        result.photometric_interpretation =
+            trim(image.GetPhotometricInterpretation().GetString());
+
+        const auto length = image.GetBufferLength();
+        if (length == 0 || length > kMaxDecodedBytes
+            || length > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max())) {
+            result.error = "gdcm_invalid_decoded_buffer_length";
+            return result;
+        }
+        result.pixels.resize(static_cast<std::size_t>(length));
+        if (!image.GetBuffer(reinterpret_cast<char*>(result.pixels.data()))) {
+            result.error = "gdcm_pixel_decode_failed";
+            result.pixels.clear();
+            return result;
+        }
+        result.ok = true;
+        return result;
+    } catch (...) {
+        result.error = "gdcm_decode_exception";
         return result;
     }
 }

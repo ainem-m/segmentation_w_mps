@@ -33,7 +33,10 @@ def body(source: str, declaration: str) -> str:
 class SwiftUINavigationCoverageTests(unittest.TestCase):
     def test_all_current_screens_are_rendered_and_labeled(self):
         screens = set(re.findall(r"case ([A-Za-z][A-Za-z0-9_]*)", body(STATE, "enum AppScreen")))
-        self.assertEqual(screens, {"setup", "start", "inputAndCreation", "running", "ctPreview", "result"})
+        self.assertEqual(
+            screens,
+            {"setup", "start", "inputAndCreation", "running", "dicomRescue", "ctPreview", "result"},
+        )
         root = body(VIEWS, "struct RootView")
         header = body(VIEWS, "struct HeaderView")
         for screen in screens:
@@ -58,6 +61,193 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("手元のCTを選ぶ", shared_input)
         self.assertIn("別のCTを選ぶ", shared_input)
         self.assertIn("NextPhaseButton(", shared_input)
+
+    def test_secondary_capture_rescue_has_an_explicit_confirmation_gate(self):
+        app_screen = body(STATE, "enum AppScreen")
+        self.assertIn("case dicomRescue", app_screen)
+        root = body(VIEWS, "struct RootView")
+        self.assertIn("case .dicomRescue:", root)
+        self.assertIn("DicomRescueView()", root)
+
+        audit = body(STATE, "func runDicomAudit")
+        clean_branch = audit.index("let cleanCandidates")
+        rescue_branch = audit.index("let rescueCandidates")
+        viewer_branch = audit.index("let viewerExportCandidates")
+        self.assertLess(clean_branch, rescue_branch)
+        self.assertLess(rescue_branch, viewer_branch)
+        self.assertIn("secondaryCaptureRescueCandidates", audit)
+        self.assertIn("beginSecondaryCaptureRescue", audit)
+
+        rescue_view = body(VIEWS, "struct DicomRescueView")
+        for text in (
+            "三方向の形が自然に見えるよう、画像の端を動かしてください。",
+            "同じ色のハンドルは連動します。",
+            "推定の確かさ",
+            "理由を見る",
+            "推定形状に戻す",
+            "スライス順を反転",
+            "画像の向きを修正",
+            "この形状で作成",
+            "別のCTを選ぶ",
+            "AXIAL",
+            "CORONAL",
+            "SAGITTAL",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, rescue_view)
+        self.assertIn("rescueRotationQuarterTurns", rescue_view)
+        self.assertIn("rescueAxisPermutation", rescue_view)
+        self.assertIn("rescueMPRPreviewSlices", rescue_view)
+        self.assertIn("rescueConfirmationUnavailableReason", rescue_view)
+        self.assertIn("rescueImageUpdateFailed", rescue_view)
+        self.assertIn("chooseAnotherCTFromRescue", rescue_view)
+        self.assertIn("RescueStretchPlaneCard", rescue_view)
+        self.assertIn("horizontalAxis: .x", rescue_view)
+        self.assertIn("verticalAxis: .y", rescue_view)
+        self.assertIn("verticalAxis: .z", rescue_view)
+        for removed_control in (
+            "RescueSpacingEditor",
+            "RescueMeasurementImage",
+            "既知の長さ",
+            "rescuePseudo3DPreviewURL",
+            "rescueCropMinX",
+            "TextField(",
+            "Stepper(",
+        ):
+            with self.subTest(removed_control=removed_control):
+                self.assertNotIn(removed_control, rescue_view)
+
+        stretch_slider = body(VIEWS, "private struct RescueStretchSlider")
+        self.assertIn("Slider(", stretch_slider)
+        self.assertIn("log2(", stretch_slider)
+        self.assertIn("pow(2, position)", stretch_slider)
+        self.assertIn("case .x: return .blue", stretch_slider)
+        self.assertIn("case .y: return .green", stretch_slider)
+        self.assertIn("case .z: return .orange", stretch_slider)
+
+        mpr_canvas = body(VIEWS, "private struct RescueMPRCanvas")
+        self.assertIn("if isUpdating, imageURL != nil", mpr_canvas)
+        self.assertIn("画像を更新中", mpr_canvas)
+        self.assertNotIn('Text("preview', mpr_canvas)
+
+        begin_stretch = body(STATE, "func beginRescueStretchAdjustment")
+        self.assertIn('rescueConfirmationToken = ""', begin_stretch)
+        set_stretch = body(STATE, "func setRescueStretchSpacing")
+        self.assertIn("rescueXYLocked = false", set_stretch)
+        self.assertIn("rescueSpacingX = clamped", set_stretch)
+        self.assertIn("rescueSpacingY = clamped", set_stretch)
+        self.assertIn("rescueSpacingZ = clamped", set_stretch)
+        finish_stretch = body(STATE, "func finishRescueStretchAdjustment")
+        self.assertIn("rescueSpacingDidChange(axis: axis)", finish_stretch)
+
+        transform_change = body(STATE, "func rescueTransformDidChange")
+        self.assertNotIn("rescueMPRPreviewSlices = []", transform_change)
+        self.assertNotIn("rescuePreviewShapeXYZ = []", transform_change)
+        self.assertIn("scheduleRescuePreviewUpdate()", transform_change)
+
+        choose_another = body(STATE, "func chooseAnotherCTFromRescue")
+        self.assertIn("guard !isRunning", choose_another)
+        self.assertIn("resetSecondaryCaptureRescue()", choose_another)
+        self.assertIn("runDicomAudit(dicomDir: url)", choose_another)
+        self.assertIn("prepareNiftiInput(url)", choose_another)
+
+        unavailable_reason = body(STATE, "var rescueConfirmationUnavailableReason")
+        for text in (
+            "画像を更新しています",
+            "三方向の画像を確認すると作成できます",
+            "画像の更新に失敗しました",
+        ):
+            self.assertIn(text, unavailable_reason)
+
+        confirm = body(STATE, "func confirmSecondaryCaptureRescue")
+        self.assertIn("canFinalizeRescueTransform", confirm)
+        self.assertIn("finalizeSecondaryCaptureRescue()", confirm)
+        self.assertNotIn("dicomPrepareRescueCommand", confirm)
+        self.assertNotIn("CommandBuilder.runCommand", confirm)
+        prepared = body(STATE, "private func acceptPreparedRescueNifti")
+        self.assertIn("guard rescueConfirmationWasExplicit", prepared)
+        self.assertIn("startRun()", prepared)
+        self.assertNotIn("寸法を確認してください", STATE)
+
+    def test_rescue_command_uses_existing_prepare_rescue_cli_contract(self):
+        command = body(COMMANDS, "static func dicomPrepareRescueCommand")
+        self.assertIn('"dicom-normalizer-prepare-rescue"', command)
+        self.assertIn('"--patched-spacing"', command)
+        self.assertIn("spacing.commandValue", command)
+        self.assertIn('"--series-key"', command)
+        export_stack = body(COMMANDS, "static func dicomExportRescueStackCommand")
+        self.assertIn('"export-rescue-stack"', export_stack)
+        self.assertIn('"--series-key"', export_stack)
+        for declaration, subcommand in (
+            ("static func dicomRescueEstimateCommand", "dicom-rescue-estimate"),
+            ("static func dicomRescuePreviewCommand", "dicom-rescue-preview"),
+            ("static func dicomRescueFinalizeCommand", "dicom-rescue-finalize"),
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertIn(f'"{subcommand}"', body(COMMANDS, declaration))
+        finalize = body(COMMANDS, "static func dicomRescueFinalizeCommand")
+        self.assertIn('"--confirmation-token"', finalize)
+        begin_rescue = body(STATE, "func beginSecondaryCaptureRescue")
+        self.assertIn("exportPrimaryRescueStackIfAvailable", begin_rescue)
+        export = body(STATE, "private func exportPrimaryRescueStackIfAvailable")
+        self.assertIn("source_manifest.json", export)
+        self.assertIn("startSecondaryCaptureSpacingEstimation", export)
+        self.assertIn(".sourceStackUnavailable", export)
+        self.assertIn("三方向の画像を安全に準備できませんでした", export)
+        self.assertNotIn("NIfTI作成へ進めません", export)
+        private_directory = body(STATE, "private func makeRescueDirectoryPrivate")
+        self.assertIn(".posixPermissions: 0o700", private_directory)
+        self.assertIn("permissions.intValue & 0o777 == 0o700", private_directory)
+
+    def test_partial_geometry_rescue_uses_standard_tag_precedence(self):
+        candidates = body(STATE, "func secondaryCaptureRescueCandidates(payload:")
+        self.assertIn('"geometry_rescue_candidate"', candidates)
+        self.assertIn('"pixel_spacing_mm"', candidates)
+        self.assertIn('"spacing_between_slices"', candidates)
+        self.assertIn('"projected_slice_spacing_mm"', candidates)
+
+        candidate = body(STATE, "struct SecondaryCaptureRescueCandidate")
+        self.assertIn("x: validSpacing(pixelSpacingColumn)", candidate)
+        self.assertIn("y: validSpacing(pixelSpacingRow)", candidate)
+        projected = candidate.index("validSpacing(projectedSliceSpacing)")
+        between = candidate.index("validSpacing(spacingBetweenSlices)")
+        thickness = candidate.index("validSpacing(sliceThickness)")
+        self.assertLess(projected, between)
+        self.assertLess(between, thickness)
+
+        estimate = body(STATE, "func startSecondaryCaptureSpacingEstimation")
+        self.assertIn("selectedCandidate?.pixelSpacingColumn", estimate)
+        self.assertIn("selectedCandidate?.pixelSpacingRow", estimate)
+        self.assertIn('"SpacingBetweenSlices"', estimate)
+        self.assertIn('"IPPProjectedSliceSpacing"', estimate)
+        self.assertIn("selectedCandidate?.preferredSliceStep", estimate)
+
+    def test_rescue_estimate_metadata_is_localized_before_display(self):
+        display = body(STATE, "func rescueEvidenceDisplayText")
+        for token in (
+            "x_spacing_uses_fallback",
+            "y_spacing_uses_fallback",
+            "z_spacing_uses_fallback",
+            "series_count_crop_and_zoom_unknown",
+            "screen_capture_crop_offset_and_zoom_may_be_non_unique",
+            "registration_not_validated_on_target_real_data",
+            "registration_evidence_unavailable",
+            "large_border_or_burned_in_overlay_candidate",
+            "fallback_initial_candidate",
+            "tri_planar_registration",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, display)
+        self.assertIn("画像だけでは推定の確かさを十分に判断できません", display)
+
+        confidence = body(STATE, "var rescueConfidenceDisplayText")
+        self.assertIn('case "unknown"', confidence)
+        self.assertIn('return "未推定"', confidence)
+        self.assertNotIn("default: return rescueConfidence", confidence)
+
+        apply_metadata = body(STATE, "func applyRescueEstimateMetadata")
+        self.assertIn(".map(rescueEvidenceDisplayText)", apply_metadata)
+        self.assertIn("seenEvidence", apply_metadata)
 
     def test_creation_choices_offer_equal_default_and_other_routes_without_toothseg(self):
         creation = body(STATE, "enum CreationChoice")
@@ -131,9 +321,11 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         shared_input = body(VIEWS, "struct InputAndCreationView")
         self.assertIn("#if DEBUG", APP_ENTRY)
         self.assertIn("appState.applyUIPreview()", app)
+        self.assertIn(".defaultSize(width: 1280, height: 800)", app)
         self.assertIn('arguments.firstIndex(of: "--ui-preview")', preview)
         self.assertIn('"input-advanced"', preview)
         self.assertIn('"input-comparison"', preview)
+        self.assertIn('"dicom-rescue"', preview)
         self.assertIn('scenario == "input-advanced"', preview)
         self.assertIn("creationChoice = .individualTeethBeta", preview)
         self.assertIn('guard !isUIPreviewMode else { return }', body(STATE, "private func saveUserSettings"))
@@ -229,7 +421,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
                 self.assertIn(label, VIEWS)
 
     def test_every_phase_uses_the_component_matching_its_navigation_role(self):
-        self.assertEqual(VIEWS.count("NextPhaseButton("), 9)
+        self.assertEqual(VIEWS.count("NextPhaseButton("), 10)
 
         setup = body(VIEWS, "struct SetupView")
         start = body(VIEWS, "struct StartChoiceView")

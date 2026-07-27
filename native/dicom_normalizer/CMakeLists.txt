@@ -13,6 +13,8 @@ find_package(
 add_executable(totalsegmentator-wrapper-dicom-normalizer
   src/main.cpp
   src/gdcm_import.cpp
+  src/rescue_stack.cpp
+  src/sha256.cpp
 )
 
 target_compile_features(totalsegmentator-wrapper-dicom-normalizer PRIVATE cxx_std_20)

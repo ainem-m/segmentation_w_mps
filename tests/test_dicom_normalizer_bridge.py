@@ -14,6 +14,7 @@ from totalsegmentator_wrapper_mac.dicom_normalizer_bridge import (
     build_dicom_normalizer_audit_command,
     build_dicom_normalizer_convert_clean_command,
     build_dicom_normalizer_doctor_command,
+    build_dicom_normalizer_export_rescue_stack_command,
     build_dicom_normalizer_prepare_rescue_command,
     build_dicom_normalizer_prepare_viewer_export_command,
     find_dicom_normalizer_binary,
@@ -21,6 +22,7 @@ from totalsegmentator_wrapper_mac.dicom_normalizer_bridge import (
     run_dicom_normalizer_audit,
     run_dicom_normalizer_convert_clean,
     run_dicom_normalizer_doctor,
+    run_dicom_normalizer_export_rescue_stack,
     run_dicom_normalizer_prepare_viewer_export,
 )
 
@@ -60,6 +62,23 @@ class DicomNormalizerBridgeTests(unittest.TestCase):
             self.assertIn("200", command)
             self.assertIn("--patched-spacing", command)
             self.assertIn("0.6,0.6,0.9375", command)
+
+    def test_build_export_rescue_stack_command_uses_series_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = _write_fake_binary(root / "totalsegmentator-wrapper-dicom-normalizer")
+            command = build_dicom_normalizer_export_rescue_stack_command(
+                dicom_dir=root / "dicom",
+                output_dir=root / "stack",
+                series_key="safe-series-key",
+                binary=binary,
+                project_root=root / "unused",
+            )
+
+            self.assertEqual(command[1], "export-rescue-stack")
+            self.assertIn("--series-key", command)
+            self.assertIn("safe-series-key", command)
+            self.assertNotIn("--series-number", command)
 
     def test_build_convert_clean_command_uses_series_number(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,6 +314,27 @@ class DicomNormalizerBridgeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertTrue((output_dir / "viewer_export_metadata.json").exists())
 
+    def test_run_export_rescue_stack_reports_source_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = _write_fake_binary(root / "normalizer")
+            dicom_dir = root / "dicom"
+            dicom_dir.mkdir()
+            output_dir = root / "stack"
+
+            result = run_dicom_normalizer_export_rescue_stack(
+                dicom_dir=dicom_dir,
+                output_dir=output_dir,
+                series_number=7,
+                binary=binary,
+                project_root=root / "unused",
+            )
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(result.output_json, str(output_dir / "source_manifest.json"))
+            self.assertTrue((output_dir / "source_manifest.json").exists())
+            self.assertTrue((output_dir / "preview_stack.npy").exists())
+
 
 def _write_fake_binary(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -321,6 +361,11 @@ def _write_fake_binary(path: Path) -> Path:
         "    import os\n"
         "    os.makedirs(out, exist_ok=True)\n"
         "    out = os.path.join(out, 'rescue_metadata.json')\n"
+        "elif sys.argv[1] == 'export-rescue-stack':\n"
+        "    import os\n"
+        "    os.makedirs(out, exist_ok=True)\n"
+        "    open(os.path.join(out, 'preview_stack.npy'), 'wb').write(b'fake-npy')\n"
+        "    out = os.path.join(out, 'source_manifest.json')\n"
         "open(out, 'w', encoding='utf-8').write(json.dumps({'status': 'fake'}))\n"
         "print('fake normalizer ok')\n",
         encoding="utf-8",

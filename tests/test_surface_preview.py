@@ -20,6 +20,12 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     mask_to_mesh,
     run_surface_preview,
     smoothing_config_from_options,
+    _externalize_viewer_script,
+    _html_document,
+)
+from scripts.build_model_comparison_viewer import (
+    build_comparison_viewer,
+    read_payload,
 )
 
 
@@ -50,11 +56,16 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(groups["dental_hard_tissue"], [11, 12])
             preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
             self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
-            html = (case_dir / "surface_preview" / "index.html").read_text(encoding="utf-8")
-            self.assertIn('"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true', html)
+            bundle = (
+                case_dir / "surface_preview" / "viewer_bundle.js"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                '"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true',
+                bundle,
+            )
             self.assertIn(
                 "const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));",
-                html,
+                bundle,
             )
 
     def test_toothseg_smoothing_changes_mesh_without_changing_fdi_labelmap(self) -> None:
@@ -83,8 +94,12 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertNotEqual(hashlib.sha256(off_stl.read_bytes()).hexdigest(), hashlib.sha256(on_stl.read_bytes()).hexdigest())
             self.assertNotEqual(
-                hashlib.sha256((case_dir / "preview_off" / "index.html").read_bytes()).hexdigest(),
-                hashlib.sha256((case_dir / "preview_on" / "index.html").read_bytes()).hexdigest(),
+                hashlib.sha256(
+                    (case_dir / "preview_off" / "viewer_bundle.js").read_bytes()
+                ).hexdigest(),
+                hashlib.sha256(
+                    (case_dir / "preview_on" / "viewer_bundle.js").read_bytes()
+                ).hexdigest(),
             )
             self.assertEqual(off["smoothing"]["preset"], "none")
             self.assertEqual(on["smoothing"]["preset"], "slicer_like")
@@ -185,6 +200,7 @@ class SurfacePreviewTests(unittest.TestCase):
 
             output_dir = case_dir / "surface_preview"
             self.assertTrue((output_dir / "index.html").exists())
+            self.assertTrue((output_dir / "viewer_bundle.js").exists())
             self.assertTrue((output_dir / "preview_summary.json").exists())
             for name in [
                 "all_nonzero_smooth.stl",
@@ -199,6 +215,10 @@ class SurfacePreviewTests(unittest.TestCase):
                 (output_dir / "preview_summary.json").read_text(encoding="utf-8")
             )
             self.assertEqual(saved_summary["html_viewer"], str((output_dir / "index.html").resolve()))
+            self.assertEqual(
+                saved_summary["viewer"]["script_bundle"],
+                str((output_dir / "viewer_bundle.js").resolve()),
+            )
             self.assertEqual(saved_summary["viewer"]["renderer"], "webgl")
             self.assertEqual(saved_summary["viewer"]["fallback_renderer"], "canvas2d")
             self.assertEqual(saved_summary["viewer"]["camera_mode_default"], "trackpad")
@@ -225,13 +245,57 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(preview_opacity["dental_hard_tissue"], 1.0)
             self.assertEqual(preview_opacity["pulp"], 1.0)
             self.assertEqual(preview_opacity["all_nonzero"], 1.0)
-            html = (output_dir / "index.html").read_text(encoding="utf-8")
+            index_html = (output_dir / "index.html").read_text(encoding="utf-8")
+            bundle_js = (output_dir / "viewer_bundle.js").read_text(encoding="utf-8")
+            html = index_html + "\n" + bundle_js
             self.assertNotIn("http://", html)
             self.assertNotIn("https://", html)
             self.assertNotIn("cdn", html.lower())
             self.assertNotIn("<script src=", html.lower())
+            self.assertIn("viewer_bundle.js", index_html)
+            self.assertNotIn("const DATA = ", index_html)
+            self.assertIn("const DATA = ", bundle_js)
+            self.assertLess(len(index_html), len(bundle_js))
             self.assertIn("getContext('webgl'", html)
             self.assertIn("TotalSegmentator 3Dビューアー", html)
+            self.assertIn(
+                'id="loadingOverlay" role="status" aria-live="polite" aria-busy="true"',
+                html,
+            )
+            self.assertIn("3Dデータを読み込んでいます", html)
+            self.assertIn("3D表示を準備しています", html)
+            self.assertIn("3D表示を準備できませんでした", html)
+            self.assertIn("必要な表示データを読み込めませんでした。", index_html)
+            self.assertIn("window.addEventListener('error'", index_html)
+            self.assertIn("window.addEventListener('unhandledrejection'", index_html)
+            self.assertIn("3D表示の準備中にエラーが発生しました。", index_html)
+            self.assertIn("document.createElement('script')", index_html)
+            self.assertIn("scheduleViewerInitialization", html)
+            self.assertIn("setTimeout(initializeViewer, 0)", html)
+            self.assertIn("requestAnimationFrame(finishViewerLoading)", html)
+            self.assertIn("let preparedMeshes = [];", html)
+            self.assertNotIn(
+                "const preparedMeshes = DATA.meshes.map(prepareMesh);",
+                html,
+            )
+            self.assertLess(
+                index_html.index('id="loadingOverlay"'),
+                index_html.index("document.createElement('script')"),
+            )
+            initialize_start = html.index("function initializeViewer()")
+            initialize_end = html.index(
+                "\nfunction setLoadingPhase",
+                initialize_start,
+            )
+            initialize_body = html[initialize_start:initialize_end]
+            self.assertLess(
+                initialize_body.index("preparedMeshes = DATA.meshes.map(prepareMesh);"),
+                initialize_body.index("const layers = document.getElementById('layers');"),
+            )
+            self.assertLess(
+                initialize_body.index("resize();"),
+                initialize_body.index("requestAnimationFrame(finishViewerLoading);"),
+            )
             self.assertIn("データ: <code id=\"dataName\"></code>", html)
             self.assertNotIn("inputName", html)
             self.assertIn("形状: <code id=\"geometryModeLabel\"></code>", html)
@@ -310,6 +374,51 @@ class SurfacePreviewTests(unittest.TestCase):
             referenced_static_ids = set(re.findall(r"getElementById\('([^']+)'\)", html))
             self.assertLessEqual(referenced_static_ids, defined_ids)
 
+    def test_comparison_payload_reader_supports_inline_and_external_viewers(self) -> None:
+        payload = {
+            "dataLabel": "test",
+            "labelCount": 1,
+            "smoothing": {"preset": "none"},
+            "meshes": [],
+        }
+        inline_document = _html_document(payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inline_path = root / "inline.html"
+            inline_path.write_text(inline_document, encoding="utf-8")
+            self.assertEqual(read_payload(inline_path), payload)
+
+            index_html, bundle_js = _externalize_viewer_script(
+                inline_document,
+                bundle_filename="viewer_bundle.js",
+            )
+            external_path = root / "index.html"
+            external_path.write_text(index_html, encoding="utf-8")
+            (root / "viewer_bundle.js").write_text(bundle_js, encoding="utf-8")
+            self.assertEqual(read_payload(external_path), payload)
+
+            comparison_path = root / "comparison.html"
+            build_comparison_viewer(
+                sources=[("test", "Test", external_path)],
+                output=comparison_path,
+            )
+            comparison_html = comparison_path.read_text(encoding="utf-8")
+            initialize_start = comparison_html.index("function initializeViewer()")
+            initialize_end = comparison_html.index(
+                "\nfunction setLoadingPhase",
+                initialize_start,
+            )
+            self.assertNotIn(
+                "function selectComparisonModel",
+                comparison_html[initialize_start:initialize_end],
+            )
+            self.assertLess(
+                comparison_html.index("function selectComparisonModel"),
+                comparison_html.index("function setInputMode"),
+            )
+            self.assertIn("window.showViewerLoadError", comparison_html)
+
     def test_surface_preview_records_custom_preview_step_size_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -384,7 +493,10 @@ class SurfacePreviewTests(unittest.TestCase):
             )
             self.assertFalse(viewer["xray"]["depth_write"])
 
-            html = (case_dir / "surface_preview" / "index.html").read_text(encoding="utf-8")
+            output_dir = case_dir / "surface_preview"
+            index_html = (output_dir / "index.html").read_text(encoding="utf-8")
+            bundle_js = (output_dir / "viewer_bundle.js").read_text(encoding="utf-8")
+            html = index_html + "\n" + bundle_js
             for element_id in ["displayNormal", "displayWireframe", "displayXray"]:
                 self.assertIn(f'id="{element_id}"', html)
             self.assertIn("const DISPLAY_MODE_ORDER = ['normal', 'wireframe', 'xray'];", html)
@@ -476,6 +588,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertTrue(derived.exists())
             self.assertTrue((derived.with_name(derived.name + ".labels.json")).exists())
             self.assertTrue((output_dir / "index.html").exists())
+            self.assertTrue((output_dir / "viewer_bundle.js").exists())
             self.assertTrue((output_dir / "combined" / "jaws_smooth.stl").exists())
             self.assertTrue((output_dir / "combined" / "dental_hard_tissue_smooth.stl").exists())
             self.assertEqual(summary["source"]["source"], "craniofacial_raw_totalseg")

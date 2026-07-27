@@ -55,6 +55,8 @@ struct RootView: View {
             InputAndCreationView()
         case .running:
             RunProgressView()
+        case .dicomRescue:
+            DicomRescueView()
         case .ctPreview:
             CTPreviewView()
         case .result:
@@ -181,6 +183,7 @@ struct HeaderView: View {
         case .start: return "最初はSampleで流れを確認"
         case .inputAndCreation: return "入力と作成内容"
         case .running: return "処理中"
+        case .dicomRescue: return "形状を確認"
         case .ctPreview: return "CT画像を確認"
         case .result: return "結果"
         }
@@ -192,6 +195,7 @@ struct HeaderView: View {
         case .start: return "入力から結果確認までを先に試せます。"
         case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
         case .running: return "現在の処理と経過時間を表示します。"
+        case .dicomRescue: return "三方向の断面を見ながら、形が自然に見えるよう調整します。"
         case .ctPreview: return "歯や顎が3枚とも見えていれば、このCTを使えます。"
         case .result: return "作成したファイルと次の操作を確認できます。"
         }
@@ -1010,6 +1014,530 @@ private struct WeightedRunProgressBar: View {
                 pulse = true
             }
         }
+    }
+}
+
+struct DicomRescueView: View {
+    @EnvironmentObject var state: AppState
+    @State private var showsEstimateDetails = false
+    @State private var showsOrientationControls = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            "三方向の形が自然に見えるよう、画像の端を動かしてください。",
+                            systemImage: "info.circle"
+                        )
+                        .font(.headline)
+                        Text("同じ色のハンドルは連動します。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("推定の確かさ：\(state.rescueConfidenceDisplayText)")
+                        .font(.callout.weight(.semibold))
+                    Button {
+                        showsEstimateDetails.toggle()
+                    } label: {
+                        Label("理由を見る", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .popover(isPresented: $showsEstimateDetails, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("推定について")
+                                .font(.headline)
+                            Text("推定の確かさ: \(state.rescueConfidenceDisplayText)")
+                                .font(.callout.weight(.semibold))
+                            ForEach(state.rescueEvidence, id: \.self) { reason in
+                                Label(reason, systemImage: "info.circle")
+                                    .font(.caption)
+                            }
+                            Text("候補値は正確な寸法が確認できたことを意味しません。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                        .frame(width: 360)
+                    }
+                    if state.isRunning {
+                        Button("画像更新を中止") {
+                            state.cancelSecondaryCaptureRescuePreparation()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(14)
+                .background(Color.secondary.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                if selectablePrimaryCandidates.count > 1 {
+                    Picker(
+                        "使用する系列",
+                        selection: Binding(
+                            get: { state.selectedDicomRescueCandidateID ?? "" },
+                            set: { id in
+                                if let candidate = selectablePrimaryCandidates.first(
+                                    where: { $0.id == id }
+                                ) {
+                                    state.selectSecondaryCaptureRescueCandidate(candidate)
+                                }
+                            }
+                        )
+                    ) {
+                        ForEach(selectablePrimaryCandidates) { candidate in
+                            Text(
+                                "\(candidate.displayPlane) · \(candidate.reconstructionGroup) · "
+                                    + "\(candidate.fileCount)枚"
+                            )
+                            .tag(candidate.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 420, alignment: .leading)
+                }
+
+                HStack(alignment: .top, spacing: 14) {
+                    rescuePlaneCard(
+                        label: "AXIAL",
+                        key: "axial",
+                        horizontalAxis: .x,
+                        verticalAxis: .y
+                    )
+                    rescuePlaneCard(
+                        label: "CORONAL",
+                        key: "coronal",
+                        horizontalAxis: .x,
+                        verticalAxis: .z
+                    )
+                    rescuePlaneCard(
+                        label: "SAGITTAL",
+                        key: "sagittal",
+                        horizontalAxis: .y,
+                        verticalAxis: .z
+                    )
+                }
+
+                if state.rescueMPRPreviewSlices.isEmpty || state.isRunning
+                    || state.rescueImageUpdateFailed {
+                    HStack(spacing: 8) {
+                        if state.isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(state.rescuePreviewStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if showsOrientationControls {
+                    GroupBox("画像の向き") {
+                        HStack {
+                            Picker("軸の対応", selection: $state.rescueAxisPermutation) {
+                                ForEach(RescueAxisPermutation.allCases) { permutation in
+                                    Text(permutation.displayName).tag(permutation)
+                                }
+                            }
+                            .frame(maxWidth: 260)
+                            .onChange(of: state.rescueAxisPermutation) { _ in
+                                state.rescueTransformDidChange()
+                            }
+                            Button {
+                                state.rescueRotationQuarterTurns =
+                                    (state.rescueRotationQuarterTurns + 1) % 4
+                                state.rescueTransformDidChange()
+                            } label: {
+                                Label("90°回転", systemImage: "rotate.right")
+                            }
+                            .buttonStyle(.bordered)
+                            Toggle(
+                                "スライス順を反転",
+                                isOn: $state.rescueSliceOrderReversed
+                            )
+                            .toggleStyle(.checkbox)
+                            .onChange(of: state.rescueSliceOrderReversed) { _ in
+                                state.rescueTransformDidChange()
+                            }
+                            Spacer()
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                if !state.rescueInlineWarning.isEmpty {
+                    Label(state.rescueInlineWarning, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+
+                HStack {
+                    HStack(spacing: 8) {
+                        Button {
+                            state.chooseAnotherCTFromRescue()
+                        } label: {
+                            Label("別のCTを選ぶ", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(state.isRunning)
+
+                        Button {
+                            state.resetRescueGeometryToEstimate()
+                        } label: {
+                            Label("推定形状に戻す", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showsOrientationControls.toggle()
+                        }
+                    } label: {
+                        Label("画像の向きを修正", systemImage: "rotate.3d")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    NextPhaseButton(
+                        title: "この形状で作成",
+                        systemImage: "checkmark.circle.fill",
+                        isEnabled: state.canConfirmSecondaryCaptureRescue
+                    ) {
+                        state.confirmSecondaryCaptureRescue()
+                    }
+                    .frame(width: 280)
+                }
+
+                if let reason = state.rescueConfirmationUnavailableReason {
+                    Label(reason, systemImage: state.isRunning ? "clock" : "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(state.rescueImageUpdateFailed ? .orange : .secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                Text("この操作まではAI推論を開始しません。生成結果は参考用です。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var selectablePrimaryCandidates: [SecondaryCaptureRescueCandidate] {
+        state.dicomRescueCandidates.filter { $0.role == "primary" }
+    }
+
+    private func rescuePlaneCard(
+        label: String,
+        key: String,
+        horizontalAxis: RescueCalibrationAxis,
+        verticalAxis: RescueCalibrationAxis
+    ) -> some View {
+        RescueStretchPlaneCard(
+            label: label,
+            horizontalAxis: horizontalAxis,
+            verticalAxis: verticalAxis,
+            horizontalSpacing: spacingBinding(horizontalAxis),
+            verticalSpacing: spacingBinding(verticalAxis),
+            horizontalEstimate: estimatedSpacing(horizontalAxis),
+            verticalEstimate: estimatedSpacing(verticalAxis),
+            imageURL: state.rescueMPRPreviewSlices.first(
+                where: { $0.plane.lowercased().contains(key) }
+            )?.url,
+            displayAspectRatio: rescueDisplayAspectRatio(key),
+            revision: state.rescuePreviewRevision,
+            isUpdating: state.isRunning,
+            beginAdjustment: state.beginRescueStretchAdjustment,
+            finishAdjustment: state.finishRescueStretchAdjustment
+        )
+    }
+
+    private func spacingBinding(_ axis: RescueCalibrationAxis) -> Binding<Double> {
+        Binding(
+            get: {
+                switch axis {
+                case .x: return state.rescueSpacingX
+                case .y: return state.rescueSpacingY
+                case .z: return state.rescueSpacingZ
+                }
+            },
+            set: { state.setRescueStretchSpacing(axis: axis, value: $0) }
+        )
+    }
+
+    private func estimatedSpacing(_ axis: RescueCalibrationAxis) -> Double {
+        switch axis {
+        case .x: return state.rescueEstimatedSpacing.x
+        case .y: return state.rescueEstimatedSpacing.y
+        case .z: return state.rescueEstimatedSpacing.z
+        }
+    }
+
+    private func rescueDisplayAspectRatio(_ plane: String) -> CGFloat {
+        guard state.rescuePreviewShapeXYZ.count == 3 else {
+            if let slice = state.rescueMPRPreviewSlices.first(
+                where: { $0.plane.lowercased().contains(plane) }
+            ) {
+                return CGFloat(max(slice.width, 1)) / CGFloat(max(slice.height, 1))
+            }
+            return 1
+        }
+        let shape = state.rescuePreviewShapeXYZ.map { Double(max($0, 1)) }
+        let width: Double
+        let height: Double
+        switch plane {
+        case "coronal":
+            width = shape[0] * state.rescueSpacingX
+            height = shape[2] * state.rescueSpacingZ
+        case "sagittal":
+            width = shape[1] * state.rescueSpacingY
+            height = shape[2] * state.rescueSpacingZ
+        default:
+            width = shape[0] * state.rescueSpacingX
+            height = shape[1] * state.rescueSpacingY
+        }
+        return CGFloat(min(max(width / max(height, 0.000_001), 0.1), 10))
+    }
+}
+
+private struct RescueStretchPlaneCard: View {
+    let label: String
+    let horizontalAxis: RescueCalibrationAxis
+    let verticalAxis: RescueCalibrationAxis
+    @Binding var horizontalSpacing: Double
+    @Binding var verticalSpacing: Double
+    let horizontalEstimate: Double
+    let verticalEstimate: Double
+    let imageURL: URL?
+    let displayAspectRatio: CGFloat
+    let revision: Int
+    let isUpdating: Bool
+    let beginAdjustment: () -> Void
+    let finishAdjustment: (RescueCalibrationAxis) -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(label)
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                RescueMPRCanvas(
+                    plane: label,
+                    imageURL: imageURL,
+                    displayAspectRatio: displayAspectRatio,
+                    revision: revision,
+                    isUpdating: isUpdating
+                )
+                RescueStretchSlider(
+                    axis: verticalAxis,
+                    orientation: .vertical,
+                    spacing: $verticalSpacing,
+                    estimatedSpacing: verticalEstimate,
+                    beginAdjustment: beginAdjustment,
+                    finishAdjustment: { finishAdjustment(verticalAxis) }
+                )
+            }
+            RescueStretchSlider(
+                axis: horizontalAxis,
+                orientation: .horizontal,
+                spacing: $horizontalSpacing,
+                estimatedSpacing: horizontalEstimate,
+                beginAdjustment: beginAdjustment,
+                finishAdjustment: { finishAdjustment(horizontalAxis) }
+            )
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private enum RescueStretchOrientation {
+    case horizontal
+    case vertical
+}
+
+private struct RescueStretchSlider: View {
+    let axis: RescueCalibrationAxis
+    let orientation: RescueStretchOrientation
+    @Binding var spacing: Double
+    let estimatedSpacing: Double
+    let beginAdjustment: () -> Void
+    let finishAdjustment: () -> Void
+
+    private var axisColor: Color {
+        switch axis {
+        case .x: return .blue
+        case .y: return .green
+        case .z: return .orange
+        }
+    }
+
+    private var logarithmicValue: Binding<Double> {
+        Binding(
+            get: {
+                log2(max(spacing, 0.01) / max(estimatedSpacing, 0.01))
+            },
+            set: { position in
+                spacing = min(max(estimatedSpacing * pow(2, position), 0.01), 20)
+            }
+        )
+    }
+
+    var body: some View {
+        Group {
+            if orientation == .horizontal {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left")
+                    slider
+                    Image(systemName: "arrow.right")
+                }
+                .frame(height: 28)
+            } else {
+                VStack(spacing: 5) {
+                    Image(systemName: "arrow.up")
+                    slider
+                        .frame(width: 170)
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 28, height: 170)
+                    Image(systemName: "arrow.down")
+                }
+                .frame(width: 34)
+            }
+        }
+        .foregroundStyle(axisColor)
+    }
+
+    private var slider: some View {
+        Slider(
+            value: logarithmicValue,
+            in: -2...2,
+            onEditingChanged: { editing in
+                if editing {
+                    beginAdjustment()
+                } else {
+                    finishAdjustment()
+                }
+            }
+        )
+        .tint(axisColor)
+        .accessibilityLabel(
+            "\(axis.rawValue.uppercased())方向を"
+                + (orientation == .horizontal ? "横に伸縮" : "縦に伸縮")
+        )
+        .accessibilityValue(
+            "\(Int((spacing / max(estimatedSpacing, 0.01) * 100).rounded()))パーセント"
+        )
+        .accessibilityHint("同じ色のハンドルと連動します")
+        .help("画像をこの方向へ伸縮します。同じ色のハンドルは連動します。")
+    }
+}
+
+private struct RescueMPRCanvas: View {
+    let plane: String
+    let imageURL: URL?
+    let displayAspectRatio: CGFloat
+    let revision: Int
+    let isUpdating: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.black.opacity(0.92))
+            if let imageURL, let image = loadPGMImage(imageURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(displayAspectRatio, contentMode: .fit)
+            } else {
+                VStack(spacing: 7) {
+                    Image(systemName: "viewfinder")
+                        .font(.largeTitle)
+                    Text("画像を準備中")
+                        .font(.caption)
+                }
+                .foregroundStyle(.white.opacity(0.62))
+            }
+            GeometryReader { proxy in
+                Path { path in
+                    path.move(to: CGPoint(x: proxy.size.width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: proxy.size.width / 2, y: proxy.size.height))
+                    path.move(to: CGPoint(x: 0, y: proxy.size.height / 2))
+                    path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height / 2))
+                }
+                .stroke(Color.white.opacity(0.45), lineWidth: 0.8)
+            }
+            if isUpdating, imageURL != nil {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("画像を更新中")
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityLabel("\(plane) 三方向画像")
+    }
+}
+
+private struct RescueArtifactImage: View {
+    let title: String
+    let url: URL
+
+    var body: some View {
+        VStack(spacing: 5) {
+            if let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .background(Color.black)
+            } else {
+                Rectangle()
+                    .fill(Color.black.opacity(0.85))
+                    .overlay(Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange))
+            }
+            Text(title)
+                .font(.caption.weight(.semibold))
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct RescueMPRPlaceholder: View {
+    let plane: String
+    let revision: Int
+
+    var body: some View {
+        VStack(spacing: 5) {
+            ZStack {
+                Rectangle()
+                    .fill(Color.black.opacity(0.85))
+                Image(systemName: "viewfinder")
+                    .font(.largeTitle)
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+            .aspectRatio(1, contentMode: .fit)
+            Text("\(plane) · preview \(revision)")
+                .font(.caption.weight(.semibold))
+        }
+        .accessibilityLabel("\(plane) MPR preview")
     }
 }
 

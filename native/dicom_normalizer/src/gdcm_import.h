@@ -21,6 +21,8 @@ struct GdcmProbe {
     std::uint64_t decoded_fnv1a64 = 0;
     std::string error;
     std::string transfer_syntax_uid;
+    std::string study_instance_uid;
+    std::string frame_of_reference_uid;
     std::string series_instance_uid;
     std::string sop_instance_uid;
     std::optional<int> series_number;
@@ -43,11 +45,30 @@ struct GdcmProbe {
     std::array<double, 2> pixel_spacing{0.0, 0.0};
     std::array<double, 3> image_position_patient{0.0, 0.0, 0.0};
     std::array<double, 6> image_orientation_patient{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    std::string slice_thickness;
+    bool has_slice_thickness = false;
+    bool has_spacing_between_slices = false;
+    std::optional<double> slice_thickness;
+    std::optional<double> spacing_between_slices;
     std::string burned_in_annotation;
 };
 
+struct GdcmDecodedImage {
+    bool ok = false;
+    std::string error;
+    int rows = 0;
+    int columns = 0;
+    int number_of_frames = 0;
+    int samples_per_pixel = 0;
+    int bits_allocated = 0;
+    int bits_stored = 0;
+    int high_bit = 0;
+    int pixel_representation = 0;
+    std::string photometric_interpretation;
+    std::vector<std::uint8_t> pixels;
+};
+
 GdcmProbe probe_dicom_file(const std::filesystem::path& path);
+GdcmDecodedImage decode_dicom_image(const std::filesystem::path& path);
 
 bool transcode_to_explicit_little_endian(
     const std::filesystem::path& input,

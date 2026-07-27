@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import ast
 import os
 import shutil
 import stat
@@ -56,6 +58,8 @@ def write_dicom(
     sop_instance_uid: str | None = None,
     series_number: int | None = 1,
     instance_number: int | None = None,
+    study_uid: str | None = None,
+    frame_of_reference_uid: str | None = None,
     series_uid: str = "1.2.826.0.1.3680043.10.543.1",
     description: str = "AXIAL CT",
     modality: str = "CT",
@@ -63,9 +67,19 @@ def write_dicom(
     rows: int = 32,
     columns: int = 32,
     geometry: bool = True,
+    include_pixel_spacing: bool | None = None,
+    include_image_position: bool | None = None,
+    include_image_orientation: bool | None = None,
     number_of_frames: int | None = None,
     secondary_capture: bool = False,
+    samples_per_pixel: int = 1,
+    photometric_interpretation: str = "MONOCHROME2",
+    bits_allocated: int = 16,
+    pixel_representation: int = 1,
+    pixel_bytes: bytes | None = None,
     pixel_spacing: str = "0.5\\0.5",
+    slice_thickness: str | None = None,
+    spacing_between_slices: str | None = None,
     image_position: str | None = None,
     image_orientation: str | None = None,
     malformed_encapsulated_pixel_data: bool = False,
@@ -81,6 +95,10 @@ def write_dicom(
     data += elem_explicit(0x0008, 0x0008, "CS", image_type)
     data += elem_explicit(0x0008, 0x0060, "CS", modality)
     data += elem_explicit(0x0008, 0x103E, "LO", description)
+    if study_uid is not None:
+        data += elem_explicit(0x0020, 0x000D, "UI", study_uid)
+    if frame_of_reference_uid is not None:
+        data += elem_explicit(0x0020, 0x0052, "UI", frame_of_reference_uid)
     data += elem_explicit(0x0020, 0x000E, "UI", series_uid)
     if series_number is not None:
         data += elem_explicit(0x0020, 0x0011, "IS", str(series_number))
@@ -88,18 +106,26 @@ def write_dicom(
         data += elem_explicit(0x0020, 0x0013, "IS", str(instance_number))
     data += elem_explicit(0x0028, 0x0010, "US", rows)
     data += elem_explicit(0x0028, 0x0011, "US", columns)
-    data += elem_explicit(0x0028, 0x0002, "US", 1)
-    data += elem_explicit(0x0028, 0x0004, "CS", "MONOCHROME2")
-    data += elem_explicit(0x0028, 0x0100, "US", 16)
-    data += elem_explicit(0x0028, 0x0101, "US", 16)
-    data += elem_explicit(0x0028, 0x0102, "US", 15)
-    data += elem_explicit(0x0028, 0x0103, "US", 1)
+    data += elem_explicit(0x0028, 0x0002, "US", samples_per_pixel)
+    data += elem_explicit(0x0028, 0x0004, "CS", photometric_interpretation)
+    if samples_per_pixel > 1:
+        data += elem_explicit(0x0028, 0x0006, "US", 0)
+    data += elem_explicit(0x0028, 0x0100, "US", bits_allocated)
+    data += elem_explicit(0x0028, 0x0101, "US", bits_allocated)
+    data += elem_explicit(0x0028, 0x0102, "US", bits_allocated - 1)
+    data += elem_explicit(0x0028, 0x0103, "US", pixel_representation)
     if number_of_frames is not None:
         data += elem_explicit(0x0028, 0x0008, "IS", str(number_of_frames))
-    if geometry:
+    if include_pixel_spacing if include_pixel_spacing is not None else geometry:
         data += elem_explicit(0x0028, 0x0030, "DS", pixel_spacing)
+    if include_image_position if include_image_position is not None else geometry:
         data += elem_explicit(0x0020, 0x0032, "DS", image_position or f"0\\0\\{instance_number or series_number or 0}")
+    if include_image_orientation if include_image_orientation is not None else geometry:
         data += elem_explicit(0x0020, 0x0037, "DS", image_orientation or "1\\0\\0\\0\\1\\0")
+    if slice_thickness is not None:
+        data += elem_explicit(0x0018, 0x0050, "DS", slice_thickness)
+    if spacing_between_slices is not None:
+        data += elem_explicit(0x0018, 0x0088, "DS", spacing_between_slices)
     if secondary_capture:
         data += elem_explicit(0x0028, 0x0301, "CS", "YES")
     if malformed_encapsulated_pixel_data:
@@ -109,7 +135,19 @@ def write_dicom(
         data += struct.pack("<HHI", 0xFFFE, 0xE0DD, 0)
     else:
         frame_count = number_of_frames or 1
-        data += elem_explicit(0x7FE0, 0x0010, "OW", b"\0\0" * rows * columns * frame_count)
+        bytes_per_sample = bits_allocated // 8
+        pixels = pixel_bytes
+        if pixels is None:
+            pixels = (
+                b"\0"
+                * rows
+                * columns
+                * frame_count
+                * samples_per_pixel
+                * bytes_per_sample
+            )
+        pixel_vr = "OB" if bits_allocated == 8 else "OW"
+        data += elem_explicit(0x7FE0, 0x0010, pixel_vr, pixels)
     path.write_bytes(data)
 
 
@@ -245,6 +283,7 @@ def test_doctor(binary: Path) -> None:
     assert payload["capabilities"]["audit"] is True
     assert payload["capabilities"]["convert_clean"] is True
     assert payload["capabilities"]["prepare_rescue"] is True
+    assert payload["capabilities"]["export_rescue_stack"] is True
     assert payload["capabilities"]["native_compressed_pixel_decode"] is True
     assert payload["capabilities"]["native_lossless_transcode"] is True
     assert payload["capabilities"]["enhanced_ct_per_frame_geometry_validation"] is False
@@ -422,6 +461,459 @@ def test_secondary_capture_variants(binary: Path) -> None:
         assert payload["classification_counts"]["secondary_capture_rescue_candidate"] == 2
 
 
+def test_geometry_evidence_and_secondary_capture_references(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for index in range(32):
+            write_dicom(
+                root / "clean" / f"ct_{index:04d}.dcm",
+                series_number=190,
+                study_uid="1.2.3.study.geometry",
+                frame_of_reference_uid="1.2.3.frame.geometry",
+                series_uid="1.2.3.geometry.evidence",
+                instance_number=index + 1,
+                slice_thickness="0.9375",
+                spacing_between_slices="1.25",
+            )
+        for series_number, plane in ((191, "CORONAL"), (192, "SAGITTAL")):
+            for index in range(32):
+                write_dicom(
+                    root / plane.lower() / f"sc_{index:04d}.dcm",
+                    sop=SC_SOP,
+                    series_number=series_number,
+                    series_uid=f"1.2.3.sc.reference.{series_number}",
+                    instance_number=index + 1,
+                    description=f"{plane} BO",
+                    modality="OT",
+                    image_type=f"DERIVED\\SECONDARY\\SCREEN SAVE\\{plane}",
+                    geometry=False,
+                    secondary_capture=True,
+                    slice_thickness="0.9375",
+                )
+
+        payload = load_audit(binary, root)
+        clean = series_by_uid(payload, "1.2.3.geometry.evidence")
+        assert clean["classification"]["status"] == "original_ct_geometry_ok"
+        assert clean["classification"]["next_action"] == "convert_clean"
+        assert clean["study_key_sha256"] == hashlib.sha256(
+            b"1.2.3.study.geometry"
+        ).hexdigest()
+        assert clean["frame_of_reference_key_sha256"] == hashlib.sha256(
+            b"1.2.3.frame.geometry"
+        ).hexdigest()
+        assert "1.2.3.study.geometry" not in json.dumps(clean)
+        assert clean["slice_thickness"]["present_count"] == 32
+        assert clean["slice_thickness"]["valid_numeric_count"] == 32
+        assert clean["slice_thickness"]["consistent"] is True
+        assert clean["slice_thickness"]["values_mm"] == [0.9375]
+        assert clean["spacing_between_slices"]["present_count"] == 32
+        assert clean["spacing_between_slices"]["valid_numeric_count"] == 32
+        assert clean["spacing_between_slices"]["consistent"] is True
+        assert clean["spacing_between_slices"]["values_mm"] == [1.25]
+
+        references = [
+            item
+            for item in payload["series"]
+            if item["classification"]["status"] == "secondary_capture_reference_candidate"
+        ]
+        assert len(references) == 2
+        assert {
+            item["classification"]["next_action"]
+            for item in references
+        } == {"use_as_rescue_reference_series"}
+        assert all(
+            "reference_only" in item["classification"]["reasons"]
+            for item in references
+        )
+        assert payload["classification_counts"].get(
+            "secondary_capture_rescue_candidate", 0
+        ) == 0
+
+
+def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for index in range(32):
+            write_dicom(
+                root / "missing_xy" / f"ct_{index:04d}.dcm",
+                series_number=194,
+                series_uid="1.2.3.partial.missing.xy",
+                instance_number=index + 1,
+                include_pixel_spacing=False,
+                slice_thickness="1.2",
+                image_position=f"0\\0\\{index * 0.8}",
+            )
+            write_dicom(
+                root / "missing_z" / f"ct_{index:04d}.dcm",
+                series_number=195,
+                series_uid="1.2.3.partial.missing.z",
+                instance_number=index + 1,
+                include_image_position=False,
+                spacing_between_slices="1.5",
+                slice_thickness="2.0",
+                pixel_spacing="0.4\\0.6",
+            )
+            irregular_position = index * 0.8 if index < 16 else 12.0 + (index - 15) * 1.4
+            write_dicom(
+                root / "irregular_z" / f"ct_{index:04d}.dcm",
+                series_number=196,
+                series_uid="1.2.3.partial.irregular.z",
+                instance_number=index + 1,
+                include_pixel_spacing=False,
+                slice_thickness="1.1",
+                image_position=f"0\\0\\{irregular_position}",
+            )
+
+        payload = load_audit(binary, root)
+        missing_xy = series_by_uid(payload, "1.2.3.partial.missing.xy")
+        assert missing_xy["classification"]["status"] == "geometry_rescue_candidate"
+        assert missing_xy["pixel_spacing_mm"] is None
+        assert missing_xy["projected_slice_spacing_mm"] == 0.8
+        assert "missing_pixel_spacing" in missing_xy["classification"]["reasons"]
+
+        missing_z = series_by_uid(payload, "1.2.3.partial.missing.z")
+        assert missing_z["classification"]["status"] == "geometry_rescue_candidate"
+        assert missing_z["pixel_spacing_mm"] == {"row": 0.4, "column": 0.6}
+        assert missing_z["projected_slice_spacing_mm"] is None
+        assert missing_z["spacing_between_slices"]["values_mm"] == [1.5]
+        assert missing_z["slice_thickness"]["values_mm"] == [2]
+
+        irregular_z = series_by_uid(payload, "1.2.3.partial.irregular.z")
+        assert irregular_z["classification"]["status"] == "geometry_rescue_candidate"
+        assert irregular_z["projected_slice_spacing_mm"] is None
+        assert irregular_z["slice_thickness"]["values_mm"] == [1.1]
+
+        output = root / "exported_partial"
+        proc = run(
+            binary,
+            "export-rescue-stack",
+            "--dicom-dir",
+            str(root),
+            "--series-key",
+            "1.2.3.partial.missing.z",
+            "--output",
+            str(output),
+        )
+        assert proc.returncode == 0, proc.stderr
+        manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["classification"] == "geometry_rescue_candidate"
+        assert stat.S_IMODE(output.stat().st_mode) == 0o700
+        assert stat.S_IMODE((output / "preview_stack.npy").stat().st_mode) == 0o600
+        assert stat.S_IMODE((output / "source_manifest.json").stat().st_mode) == 0o600
+
+
+def test_ordered_content_sha256_manifest_is_path_independent(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        instances = (3, 1, 2)
+        source_files: list[Path] = []
+        for instance in instances:
+            path = source / f"patient-name-{instance}.dcm"
+            write_dicom(
+                path,
+                sop=SC_SOP,
+                series_number=193,
+                series_uid="1.2.3.sha.manifest",
+                instance_number=instance,
+                description="AXIAL BO",
+                modality="OT",
+                image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                geometry=False,
+                secondary_capture=True,
+            )
+            source_files.append(path)
+
+        renamed = root / "renamed"
+        renamed.mkdir()
+        for index, path in enumerate(reversed(source_files)):
+            shutil.copyfile(path, renamed / f"unrelated-{index}.bin")
+
+        source_payload = load_audit(binary, source)
+        renamed_payload = load_audit(binary, renamed)
+        source_manifest = series_by_uid(
+            source_payload, "1.2.3.sha.manifest"
+        )["ordered_content_manifest"]
+        renamed_manifest = series_by_uid(
+            renamed_payload, "1.2.3.sha.manifest"
+        )["ordered_content_manifest"]
+
+        assert source_manifest == renamed_manifest
+        assert source_manifest["algorithm"] == "sha256"
+        assert source_manifest["ordering"] == "instance_number_then_content_sha256"
+        assert source_manifest["entry_count"] == 3
+        assert [entry["instance_number"] for entry in source_manifest["entries"]] == [1, 2, 3]
+        assert all("path" not in entry for entry in source_manifest["entries"])
+        manifest_text = json.dumps(source_manifest)
+        assert "patient-name" not in manifest_text
+        assert str(source) not in manifest_text
+
+        expected_hashes = {
+            instance: hashlib.sha256(path.read_bytes()).hexdigest()
+            for instance, path in zip(instances, source_files, strict=True)
+        }
+        assert {
+            entry["instance_number"]: entry["content_sha256"]
+            for entry in source_manifest["entries"]
+        } == expected_hashes
+        canonical = "".join(
+            f"I:{instance}\tH:{expected_hashes[instance]}\n"
+            for instance in sorted(expected_hashes)
+        ).encode("ascii")
+        assert source_manifest["manifest_sha256"] == hashlib.sha256(canonical).hexdigest()
+
+
+def read_npy(path: Path) -> tuple[dict, bytes]:
+    data = path.read_bytes()
+    assert data[:6] == b"\x93NUMPY"
+    assert data[6:8] == b"\x01\x00"
+    header_length = struct.unpack_from("<H", data, 8)[0]
+    header = ast.literal_eval(data[10 : 10 + header_length].decode("ascii").strip())
+    return header, data[10 + header_length :]
+
+
+def test_export_rescue_stack_patterned_voxel_order(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dicom = root / "dicom"
+        for instance in range(32, 0, -1):
+            values = [instance * 100 + offset for offset in range(6)]
+            write_dicom(
+                dicom / f"filesystem-order-{33 - instance:03d}.dcm",
+                sop=SC_SOP,
+                series_number=194,
+                series_uid="1.2.3.stack.pattern",
+                instance_number=instance,
+                description="AXIAL BO",
+                modality="OT",
+                image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                rows=2,
+                columns=3,
+                geometry=False,
+                secondary_capture=True,
+                pixel_bytes=struct.pack("<6h", *values),
+            )
+
+        output = root / "output"
+        proc = run(
+            binary,
+            "export-rescue-stack",
+            "--dicom-dir",
+            str(dicom),
+            "--series-number",
+            "194",
+            "--output",
+            str(output),
+        )
+        assert proc.returncode == 0, proc.stderr
+        metadata = json.loads(
+            (output / "source_manifest.json").read_text(encoding="utf-8")
+        )
+        assert metadata["status"] == "success"
+        assert metadata["classification"] == "secondary_capture_rescue_candidate"
+        assert metadata["array"]["shape_xyz"] == [3, 2, 32]
+        assert metadata["array"]["size_x"] == 3
+        assert metadata["array"]["size_y"] == 2
+        assert metadata["array"]["size_z"] == 32
+        assert metadata["array"]["axis_order"] == ["x", "y", "z"]
+        assert metadata["array"]["storage_order"] == "x_fastest"
+        assert metadata["array"]["fortran_order"] is True
+        assert metadata["array"]["dtype"] == "<i2"
+        assert metadata["ordering"]["source"] == "instance_number"
+        assert metadata["ordering"]["ambiguous"] is False
+        assert all("path" not in entry for entry in metadata["source"]["entries"])
+
+        header, payload = read_npy(output / "preview_stack.npy")
+        assert header == {
+            "descr": "<i2",
+            "fortran_order": True,
+            "shape": (3, 2, 32),
+        }
+        assert len(payload) == 32 * 2 * 3 * 2
+        actual = struct.unpack("<192h", payload)
+        expected = tuple(
+            instance * 100 + offset
+            for instance in range(1, 33)
+            for offset in range(6)
+        )
+        assert actual == expected
+        size_x, size_y, size_z = header["shape"]
+        for z in range(size_z):
+            for y in range(size_y):
+                for x in range(size_x):
+                    fortran_index = x + size_x * (y + size_y * z)
+                    assert actual[fortran_index] == (z + 1) * 100 + y * size_x + x
+
+
+def test_export_rescue_stack_uint8_monochrome1(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dicom = root / "dicom"
+        for instance in range(1, 33):
+            write_dicom(
+                dicom / f"{instance:04d}.dcm",
+                sop=SC_SOP,
+                series_number=2001,
+                series_uid="1.2.3.stack.uint8",
+                instance_number=instance,
+                description="AXIAL BO",
+                modality="OT",
+                image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                rows=2,
+                columns=4,
+                geometry=False,
+                secondary_capture=True,
+                photometric_interpretation="MONOCHROME1",
+                bits_allocated=8,
+                pixel_representation=0,
+                pixel_bytes=bytes([instance, 1, 2, 3, 4, 5, 6, 7]),
+            )
+        output = root / "output"
+        proc = run(
+            binary,
+            "export-rescue-stack",
+            "--dicom-dir",
+            str(dicom),
+            "--series-number",
+            "2001",
+            "--output",
+            str(output),
+        )
+        assert proc.returncode == 0, proc.stderr
+        header, payload = read_npy(output / "preview_stack.npy")
+        assert header["descr"] == "|u1"
+        assert header["fortran_order"] is True
+        assert header["shape"] == (4, 2, 32)
+        assert payload[:8] == bytes([1, 1, 2, 3, 4, 5, 6, 7])
+        metadata = json.loads(
+            (output / "source_manifest.json").read_text(encoding="utf-8")
+        )
+        assert metadata["array"]["photometric_interpretation"] == "MONOCHROME1"
+
+
+def test_export_rescue_stack_rejects_unsupported_inputs(binary: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+
+        def write_stack(
+            name: str,
+            series_number: int,
+            **kwargs: object,
+        ) -> Path:
+            dicom = root / name
+            for instance in range(1, 33):
+                write_dicom(
+                    dicom / f"{instance:04d}.dcm",
+                    sop=SC_SOP,
+                    series_number=series_number,
+                    series_uid=f"1.2.3.unsupported.{series_number}",
+                    instance_number=instance,
+                    description="AXIAL BO",
+                    modality="OT",
+                    image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                    rows=2,
+                    columns=4,
+                    geometry=False,
+                    secondary_capture=True,
+                    **kwargs,
+                )
+            return dicom
+
+        rgb = write_stack(
+            "rgb",
+            195,
+            samples_per_pixel=3,
+            photometric_interpretation="RGB",
+            bits_allocated=8,
+            pixel_representation=0,
+        )
+        ybr = write_stack(
+            "ybr",
+            196,
+            samples_per_pixel=3,
+            photometric_interpretation="YBR_FULL",
+            bits_allocated=8,
+            pixel_representation=0,
+        )
+        mixed = root / "mixed"
+        for instance in range(1, 33):
+            bits = 8 if instance == 32 else 16
+            write_dicom(
+                mixed / f"{instance:04d}.dcm",
+                sop=SC_SOP,
+                series_number=197,
+                series_uid="1.2.3.unsupported.mixed",
+                instance_number=instance,
+                description="AXIAL BO",
+                modality="OT",
+                image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                rows=2,
+                columns=4,
+                geometry=False,
+                secondary_capture=True,
+                bits_allocated=bits,
+                pixel_representation=0,
+            )
+        multiframe = root / "multiframe"
+        write_dicom(
+            multiframe / "multiframe.dcm",
+            sop=SC_SOP,
+            series_number=198,
+            series_uid="1.2.3.unsupported.multiframe",
+            instance_number=1,
+            description="AXIAL BO",
+            modality="OT",
+            image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+            rows=2,
+            columns=4,
+            geometry=False,
+            secondary_capture=True,
+            number_of_frames=40,
+        )
+        ambiguous = root / "ambiguous"
+        for ordinal in range(1, 33):
+            instance = 31 if ordinal == 32 else ordinal
+            write_dicom(
+                ambiguous / f"{ordinal:04d}.dcm",
+                sop=SC_SOP,
+                series_number=199,
+                series_uid="1.2.3.unsupported.ambiguous",
+                sop_instance_uid=f"1.2.3.unsupported.ambiguous.{ordinal}",
+                instance_number=instance,
+                description="AXIAL BO",
+                modality="OT",
+                image_type="DERIVED\\SECONDARY\\SCREEN SAVE\\AXIAL",
+                rows=2,
+                columns=4,
+                geometry=False,
+                secondary_capture=True,
+            )
+
+        for name, series_number, dicom, expected_error in (
+            ("rgb", 195, rgb, "unsupported_samples_per_pixel"),
+            ("ybr", 196, ybr, "unsupported_samples_per_pixel"),
+            ("mixed", 197, mixed, "mixed_pixel_format"),
+            ("multiframe", 198, multiframe, "unsupported_multiframe"),
+            ("ambiguous", 199, ambiguous, "ambiguous_instance_order"),
+        ):
+            output = root / f"{name}_output"
+            proc = run(
+                binary,
+                "export-rescue-stack",
+                "--dicom-dir",
+                str(dicom),
+                "--series-number",
+                str(series_number),
+                "--output",
+                str(output),
+            )
+            assert proc.returncode != 0
+            assert expected_error in proc.stderr
+            assert not (output / "preview_stack.npy").exists()
+            assert not (output / "preview_stack.npy.partial").exists()
+            assert not (output / "source_manifest.json").exists()
+
+
 def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -536,7 +1028,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(fake),
         )
         assert bad_rescue.returncode != 0
-        assert "prepare-rescue requires secondary_capture_rescue_candidate" in bad_rescue.stderr
+        assert "prepare-rescue requires a geometry rescue candidate" in bad_rescue.stderr
 
         missing_spacing = run(
             binary,
@@ -669,6 +1161,12 @@ def main() -> int:
         test_enhanced_ct_decodes_but_stays_geometry_blocked,
         test_dicomdir_and_implicit,
         test_secondary_capture_variants,
+        test_geometry_evidence_and_secondary_capture_references,
+        test_partial_geometry_ct_is_rescue_candidate,
+        test_ordered_content_sha256_manifest_is_path_independent,
+        test_export_rescue_stack_patterned_voxel_order,
+        test_export_rescue_stack_uint8_monochrome1,
+        test_export_rescue_stack_rejects_unsupported_inputs,
         test_convert_clean_and_prepare_rescue,
         test_viewer_export_mpr_mixed_candidate_and_prepare,
         test_viewer_export_without_axial_group_is_not_ai_rescue_candidate,
