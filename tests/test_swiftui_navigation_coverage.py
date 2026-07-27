@@ -80,13 +80,15 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
 
         rescue_view = body(VIEWS, "struct DicomRescueView")
         for text in (
-            "寸法情報を画像から推定しています。生成結果は参考用です。",
-            "X/Yを同じ値に固定",
-            "自動推定値へ戻す",
+            "三方向の形が自然に見えるよう、画像の端を動かしてください。",
+            "同じ色のハンドルは連動します。",
+            "推定の確かさ",
+            "理由を見る",
+            "推定形状に戻す",
             "スライス順を反転",
-            "三方向プレビューを更新（AI推論なし）",
-            "この寸法を確定して3Dプレビュー作成へ",
-            "既知の長さ",
+            "画像の向きを修正",
+            "この形状で作成",
+            "別のCTを選ぶ",
             "AXIAL",
             "CORONAL",
             "SAGITTAL",
@@ -95,21 +97,67 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
                 self.assertIn(text, rescue_view)
         self.assertIn("rescueRotationQuarterTurns", rescue_view)
         self.assertIn("rescueAxisPermutation", rescue_view)
-        self.assertIn("RescueMPRPlaceholder", rescue_view)
-        self.assertIn("rescueCropMinX", rescue_view)
-        self.assertIn("rescueCropMaxZ", rescue_view)
         self.assertIn("rescueMPRPreviewSlices", rescue_view)
-        self.assertIn("rescuePseudo3DPreviewURL", rescue_view)
-        self.assertIn("RescueMeasurementImage", rescue_view)
-        self.assertIn("画像上で始点から終点までドラッグ", rescue_view)
-        measurement = body(VIEWS, "private struct RescueMeasurementImage")
-        self.assertIn("DragGesture(minimumDistance: 0)", measurement)
-        self.assertIn("onMeasurement(", measurement)
-        update_measurement = body(STATE, "func updateRescueMeasurement")
-        self.assertIn("rowSpacingMM", update_measurement)
-        self.assertIn("columnSpacingMM", update_measurement)
-        calibration = body(STATE, "func applyRescueKnownLengthCalibration")
-        self.assertIn('"voxel_points_xyz"', calibration)
+        self.assertIn("rescueConfirmationUnavailableReason", rescue_view)
+        self.assertIn("rescueImageUpdateFailed", rescue_view)
+        self.assertIn("chooseAnotherCTFromRescue", rescue_view)
+        self.assertIn("RescueStretchPlaneCard", rescue_view)
+        self.assertIn("horizontalAxis: .x", rescue_view)
+        self.assertIn("verticalAxis: .y", rescue_view)
+        self.assertIn("verticalAxis: .z", rescue_view)
+        for removed_control in (
+            "RescueSpacingEditor",
+            "RescueMeasurementImage",
+            "既知の長さ",
+            "rescuePseudo3DPreviewURL",
+            "rescueCropMinX",
+            "TextField(",
+            "Stepper(",
+        ):
+            with self.subTest(removed_control=removed_control):
+                self.assertNotIn(removed_control, rescue_view)
+
+        stretch_slider = body(VIEWS, "private struct RescueStretchSlider")
+        self.assertIn("Slider(", stretch_slider)
+        self.assertIn("log2(", stretch_slider)
+        self.assertIn("pow(2, position)", stretch_slider)
+        self.assertIn("case .x: return .blue", stretch_slider)
+        self.assertIn("case .y: return .green", stretch_slider)
+        self.assertIn("case .z: return .orange", stretch_slider)
+
+        mpr_canvas = body(VIEWS, "private struct RescueMPRCanvas")
+        self.assertIn("if isUpdating, imageURL != nil", mpr_canvas)
+        self.assertIn("画像を更新中", mpr_canvas)
+        self.assertNotIn('Text("preview', mpr_canvas)
+
+        begin_stretch = body(STATE, "func beginRescueStretchAdjustment")
+        self.assertIn('rescueConfirmationToken = ""', begin_stretch)
+        set_stretch = body(STATE, "func setRescueStretchSpacing")
+        self.assertIn("rescueXYLocked = false", set_stretch)
+        self.assertIn("rescueSpacingX = clamped", set_stretch)
+        self.assertIn("rescueSpacingY = clamped", set_stretch)
+        self.assertIn("rescueSpacingZ = clamped", set_stretch)
+        finish_stretch = body(STATE, "func finishRescueStretchAdjustment")
+        self.assertIn("rescueSpacingDidChange(axis: axis)", finish_stretch)
+
+        transform_change = body(STATE, "func rescueTransformDidChange")
+        self.assertNotIn("rescueMPRPreviewSlices = []", transform_change)
+        self.assertNotIn("rescuePreviewShapeXYZ = []", transform_change)
+        self.assertIn("scheduleRescuePreviewUpdate()", transform_change)
+
+        choose_another = body(STATE, "func chooseAnotherCTFromRescue")
+        self.assertIn("guard !isRunning", choose_another)
+        self.assertIn("resetSecondaryCaptureRescue()", choose_another)
+        self.assertIn("runDicomAudit(dicomDir: url)", choose_another)
+        self.assertIn("prepareNiftiInput(url)", choose_another)
+
+        unavailable_reason = body(STATE, "var rescueConfirmationUnavailableReason")
+        for text in (
+            "画像を更新しています",
+            "三方向の画像を確認すると作成できます",
+            "画像の更新に失敗しました",
+        ):
+            self.assertIn(text, unavailable_reason)
 
         confirm = body(STATE, "func confirmSecondaryCaptureRescue")
         self.assertIn("canFinalizeRescueTransform", confirm)
@@ -119,6 +167,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         prepared = body(STATE, "private func acceptPreparedRescueNifti")
         self.assertIn("guard rescueConfirmationWasExplicit", prepared)
         self.assertIn("startRun()", prepared)
+        self.assertNotIn("寸法を確認してください", STATE)
 
     def test_rescue_command_uses_existing_prepare_rescue_cli_contract(self):
         command = body(COMMANDS, "static func dicomPrepareRescueCommand")
@@ -144,7 +193,8 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("source_manifest.json", export)
         self.assertIn("startSecondaryCaptureSpacingEstimation", export)
         self.assertIn(".sourceStackUnavailable", export)
-        self.assertIn("NIfTI作成へ進めません", export)
+        self.assertIn("三方向の画像を安全に準備できませんでした", export)
+        self.assertNotIn("NIfTI作成へ進めません", export)
         private_directory = body(STATE, "private func makeRescueDirectoryPrivate")
         self.assertIn(".posixPermissions: 0o700", private_directory)
         self.assertIn("permissions.intValue & 0o777 == 0o700", private_directory)
@@ -171,6 +221,33 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn('"SpacingBetweenSlices"', estimate)
         self.assertIn('"IPPProjectedSliceSpacing"', estimate)
         self.assertIn("selectedCandidate?.preferredSliceStep", estimate)
+
+    def test_rescue_estimate_metadata_is_localized_before_display(self):
+        display = body(STATE, "func rescueEvidenceDisplayText")
+        for token in (
+            "x_spacing_uses_fallback",
+            "y_spacing_uses_fallback",
+            "z_spacing_uses_fallback",
+            "series_count_crop_and_zoom_unknown",
+            "screen_capture_crop_offset_and_zoom_may_be_non_unique",
+            "registration_not_validated_on_target_real_data",
+            "registration_evidence_unavailable",
+            "large_border_or_burned_in_overlay_candidate",
+            "fallback_initial_candidate",
+            "tri_planar_registration",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, display)
+        self.assertIn("画像だけでは推定の確かさを十分に判断できません", display)
+
+        confidence = body(STATE, "var rescueConfidenceDisplayText")
+        self.assertIn('case "unknown"', confidence)
+        self.assertIn('return "未推定"', confidence)
+        self.assertNotIn("default: return rescueConfidence", confidence)
+
+        apply_metadata = body(STATE, "func applyRescueEstimateMetadata")
+        self.assertIn(".map(rescueEvidenceDisplayText)", apply_metadata)
+        self.assertIn("seenEvidence", apply_metadata)
 
     def test_creation_choices_offer_equal_default_and_other_routes_without_toothseg(self):
         creation = body(STATE, "enum CreationChoice")
@@ -244,9 +321,11 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         shared_input = body(VIEWS, "struct InputAndCreationView")
         self.assertIn("#if DEBUG", APP_ENTRY)
         self.assertIn("appState.applyUIPreview()", app)
+        self.assertIn(".defaultSize(width: 1280, height: 800)", app)
         self.assertIn('arguments.firstIndex(of: "--ui-preview")', preview)
         self.assertIn('"input-advanced"', preview)
         self.assertIn('"input-comparison"', preview)
+        self.assertIn('"dicom-rescue"', preview)
         self.assertIn('scenario == "input-advanced"', preview)
         self.assertIn("creationChoice = .individualTeethBeta", preview)
         self.assertIn('guard !isUIPreviewMode else { return }', body(STATE, "private func saveUserSettings"))

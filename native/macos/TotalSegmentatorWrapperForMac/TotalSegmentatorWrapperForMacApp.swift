@@ -24,6 +24,7 @@ struct TotalSegmentatorWrapperForMacApp: App {
             RootView()
                 .environmentObject(state)
         }
+        .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(replacing: .help) {
                 Button("TotalSegmentator Wrapper for Macについて") {

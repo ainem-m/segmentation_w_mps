@@ -183,7 +183,7 @@ struct HeaderView: View {
         case .start: return "最初はSampleで流れを確認"
         case .inputAndCreation: return "入力と作成内容"
         case .running: return "処理中"
-        case .dicomRescue: return "寸法を確認・調整"
+        case .dicomRescue: return "形状を確認"
         case .ctPreview: return "CT画像を確認"
         case .result: return "結果"
         }
@@ -195,7 +195,7 @@ struct HeaderView: View {
         case .start: return "入力から結果確認までを先に試せます。"
         case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
         case .running: return "現在の処理と経過時間を表示します。"
-        case .dicomRescue: return "三方向の断面を見ながら、参考用3Dプレビューの寸法を調整します。"
+        case .dicomRescue: return "三方向の断面を見ながら、形が自然に見えるよう調整します。"
         case .ctPreview: return "歯や顎が3枚とも見えていれば、このCTを使えます。"
         case .result: return "作成したファイルと次の操作を確認できます。"
         }
@@ -1019,249 +1019,152 @@ private struct WeightedRunProgressBar: View {
 
 struct DicomRescueView: View {
     @EnvironmentObject var state: AppState
+    @State private var showsEstimateDetails = false
+    @State private var showsOrientationControls = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Label(
-                    "寸法情報を画像から推定しています。生成結果は参考用です。",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.headline)
-                .foregroundStyle(.orange)
-
-                HStack {
-                    Text(state.rescueWorkflowState.label)
-                        .font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            "三方向の形が自然に見えるよう、画像の端を動かしてください。",
+                            systemImage: "info.circle"
+                        )
+                        .font(.headline)
+                        Text("同じ色のハンドルは連動します。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
+                    Text("推定の確かさ：\(state.rescueConfidenceDisplayText)")
+                        .font(.callout.weight(.semibold))
+                    Button {
+                        showsEstimateDetails.toggle()
+                    } label: {
+                        Label("理由を見る", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .popover(isPresented: $showsEstimateDetails, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("推定について")
+                                .font(.headline)
+                            Text("推定の確かさ: \(state.rescueConfidenceDisplayText)")
+                                .font(.callout.weight(.semibold))
+                            ForEach(state.rescueEvidence, id: \.self) { reason in
+                                Label(reason, systemImage: "info.circle")
+                                    .font(.caption)
+                            }
+                            Text("候補値は正確な寸法が確認できたことを意味しません。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                        .frame(width: 360)
+                    }
                     if state.isRunning {
-                        Button("自動処理をキャンセル") {
+                        Button("画像更新を中止") {
                             state.cancelSecondaryCaptureRescuePreparation()
                         }
                         .buttonStyle(.bordered)
                     }
-                    Text("信頼度: \(state.rescueConfidence)")
-                        .font(.callout.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(Capsule())
                 }
+                .padding(14)
+                .background(Color.secondary.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                GroupBox("利用可能な系列") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(state.dicomRescueCandidates) { candidate in
-                            Button {
-                                state.selectSecondaryCaptureRescueCandidate(candidate)
-                            } label: {
-                                HStack {
-                                    Image(systemName: state.selectedDicomRescueCandidateID == candidate.id
-                                        ? "checkmark.circle.fill" : "circle")
-                                    Text(candidate.displayPlane)
-                                        .font(.headline)
-                                        .frame(width: 92, alignment: .leading)
-                                    Text(candidate.reconstructionGroup)
-                                        .frame(width: 64, alignment: .leading)
-                                    Text(candidate.displayRole)
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text("\(candidate.fileCount)枚 / \(candidate.rows)×\(candidate.columns)")
-                                        .foregroundStyle(.secondary)
-                                    Text(candidate.sliceThickness.map { String(format: "厚さ %.4g mm", $0) } ?? "厚さ不明")
-                                        .foregroundStyle(.secondary)
+                if selectablePrimaryCandidates.count > 1 {
+                    Picker(
+                        "使用する系列",
+                        selection: Binding(
+                            get: { state.selectedDicomRescueCandidateID ?? "" },
+                            set: { id in
+                                if let candidate = selectablePrimaryCandidates.first(
+                                    where: { $0.id == id }
+                                ) {
+                                    state.selectSecondaryCaptureRescueCandidate(candidate)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .buttonStyle(.borderless)
-                            .disabled(candidate.role != "primary")
+                        )
+                    ) {
+                        ForEach(selectablePrimaryCandidates) { candidate in
+                            Text(
+                                "\(candidate.displayPlane) · \(candidate.reconstructionGroup) · "
+                                    + "\(candidate.fileCount)枚"
+                            )
+                            .tag(candidate.id)
                         }
                     }
-                }
-
-                GroupBox("推定根拠") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(state.rescueEvidence, id: \.self) { reason in
-                            Label(reason, systemImage: "info.circle")
-                        }
-                        Text("候補値が生成されても、正確な寸法が確認できたことを意味しません。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 420, alignment: .leading)
                 }
 
                 HStack(alignment: .top, spacing: 14) {
-                    GroupBox("X / Y / Z spacing（mm）") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            RescueSpacingEditor(
-                                axis: "X",
-                                value: $state.rescueSpacingX,
-                                changed: { state.rescueSpacingDidChange(axis: .x) }
-                            )
-                            RescueSpacingEditor(
-                                axis: "Y",
-                                value: $state.rescueSpacingY,
-                                changed: { state.rescueSpacingDidChange(axis: .y) }
-                            )
-                            RescueSpacingEditor(
-                                axis: "Z",
-                                value: $state.rescueSpacingZ,
-                                changed: { state.rescueSpacingDidChange(axis: .z) }
-                            )
-                            Toggle("X/Yを同じ値に固定", isOn: $state.rescueXYLocked)
-                                .onChange(of: state.rescueXYLocked) { locked in
-                                    if locked {
-                                        state.rescueSpacingY = state.rescueSpacingX
-                                        state.rescueSpacingDidChange(axis: .x)
-                                    }
-                                }
-                            Button("自動推定値へ戻す") {
-                                state.resetRescueGeometryToEstimate()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
+                    rescuePlaneCard(
+                        label: "AXIAL",
+                        key: "axial",
+                        horizontalAxis: .x,
+                        verticalAxis: .y
+                    )
+                    rescuePlaneCard(
+                        label: "CORONAL",
+                        key: "coronal",
+                        horizontalAxis: .x,
+                        verticalAxis: .z
+                    )
+                    rescuePlaneCard(
+                        label: "SAGITTAL",
+                        key: "sagittal",
+                        horizontalAxis: .y,
+                        verticalAxis: .z
+                    )
+                }
 
-                    GroupBox("向き") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Picker("軸入れ替え", selection: $state.rescueAxisPermutation) {
+                if state.rescueMPRPreviewSlices.isEmpty || state.isRunning
+                    || state.rescueImageUpdateFailed {
+                    HStack(spacing: 8) {
+                        if state.isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(state.rescuePreviewStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if showsOrientationControls {
+                    GroupBox("画像の向き") {
+                        HStack {
+                            Picker("軸の対応", selection: $state.rescueAxisPermutation) {
                                 ForEach(RescueAxisPermutation.allCases) { permutation in
                                     Text(permutation.displayName).tag(permutation)
                                 }
                             }
+                            .frame(maxWidth: 260)
                             .onChange(of: state.rescueAxisPermutation) { _ in
                                 state.rescueTransformDidChange()
                             }
-                            Stepper(
-                                "90度回転: \(state.rescueRotationQuarterTurns * 90)°",
-                                value: $state.rescueRotationQuarterTurns,
-                                in: 0...3
-                            )
-                            .onChange(of: state.rescueRotationQuarterTurns) { _ in
+                            Button {
+                                state.rescueRotationQuarterTurns =
+                                    (state.rescueRotationQuarterTurns + 1) % 4
                                 state.rescueTransformDidChange()
-                            }
-                            Toggle("スライス順を反転", isOn: $state.rescueSliceOrderReversed)
-                                .onChange(of: state.rescueSliceOrderReversed) { _ in
-                                    state.rescueTransformDidChange()
-                                }
-                            Divider()
-                            Text("crop範囲（min / max exclusive）")
-                                .font(.caption.weight(.semibold))
-                            RescueCropEditor(
-                                axis: "X",
-                                minValue: $state.rescueCropMinX,
-                                maxValue: $state.rescueCropMaxX,
-                                changed: state.rescueTransformDidChange
-                            )
-                            RescueCropEditor(
-                                axis: "Y",
-                                minValue: $state.rescueCropMinY,
-                                maxValue: $state.rescueCropMaxY,
-                                changed: state.rescueTransformDidChange
-                            )
-                            RescueCropEditor(
-                                axis: "Z",
-                                minValue: $state.rescueCropMinZ,
-                                maxValue: $state.rescueCropMaxZ,
-                                changed: state.rescueTransformDidChange
-                            )
-                        }
-                    }
-                }
-
-                GroupBox("三方向MPR・疑似3Dプレビュー") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 10) {
-                            rescueMPRPanel("AXIAL", key: "axial")
-                            rescueMPRPanel("CORONAL", key: "coronal")
-                            rescueMPRPanel("SAGITTAL", key: "sagittal")
-                        }
-                        HStack(alignment: .top, spacing: 10) {
-                            if let url = state.rescuePseudo3DPreviewURL,
-                               !state.rescuePreviewMetadataInferenceStarted {
-                                RescueArtifactImage(title: "疑似3D（AI推論なし）", url: url)
-                                    .frame(maxWidth: 260)
-                            } else {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Label("疑似3D preview待機中", systemImage: "cube.transparent")
-                                    Text(state.rescuePreviewStatus)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        Button {
-                            state.requestRescuePreviewUpdate()
-                        } label: {
-                            Label("三方向プレビューを更新（AI推論なし）", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!state.canRequestRescuePreview)
-                        Text("crosshair・zoom・pan・距離計測はpreview volume rendererへ接続するhookです。renderer未接続時はtransform変更を画像へ適用したとは表示せず、確定操作も無効になります。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                GroupBox("既知の長さでキャリブレーション") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Picker("計測する断面", selection: $state.rescueMeasurementPlane) {
-                            Text("AXIAL").tag("axial")
-                            Text("CORONAL").tag("coronal")
-                            Text("SAGITTAL").tag("sagittal")
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: state.rescueMeasurementPlane) { _ in
-                            state.clearRescueMeasurement()
-                        }
-                        if let slice = state.rescueMPRPreviewSlices.first(
-                            where: { $0.plane == state.rescueMeasurementPlane }
-                        ) {
-                            RescueMeasurementImage(
-                                slice: slice,
-                                startNormalized: state.rescueMeasurementStartNormalized,
-                                endNormalized: state.rescueMeasurementEndNormalized
-                            ) { start, end in
-                                state.updateRescueMeasurement(
-                                    plane: slice.plane,
-                                    startNormalized: start,
-                                    endNormalized: end
-                                )
-                            }
-                            .frame(maxWidth: 460)
-                            Text("画像上で始点から終点までドラッグしてください。現在のspacingで距離を計算します。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("三方向プレビューを更新すると、画像上で距離を計測できます。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack {
-                            Picker("更新軸", selection: $state.rescueCalibrationAxis) {
-                                ForEach(RescueCalibrationAxis.allCases) { axis in
-                                    Text(axis.displayName).tag(axis)
-                                }
-                            }
-                            .frame(width: 140)
-                            TextField(
-                                "計測した長さ",
-                                value: $state.rescueMeasuredLengthMM,
-                                format: .number.precision(.fractionLength(0...4))
-                            )
-                            Text("mm")
-                            TextField(
-                                "既知の長さ",
-                                value: $state.rescueKnownLengthMM,
-                                format: .number.precision(.fractionLength(0...4))
-                            )
-                            Text("mm")
-                            Button("反映") {
-                                state.applyRescueKnownLengthCalibration()
+                            } label: {
+                                Label("90°回転", systemImage: "rotate.right")
                             }
                             .buttonStyle(.bordered)
+                            Toggle(
+                                "スライス順を反転",
+                                isOn: $state.rescueSliceOrderReversed
+                            )
+                            .toggleStyle(.checkbox)
+                            .onChange(of: state.rescueSliceOrderReversed) { _ in
+                                state.rescueTransformDidChange()
+                            }
+                            Spacer()
                         }
                     }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 if !state.rescueInlineWarning.isEmpty {
@@ -1269,163 +1172,327 @@ struct DicomRescueView: View {
                         .foregroundStyle(.orange)
                 }
 
-                NextPhaseButton(
-                    title: "この寸法を確定して3Dプレビュー作成へ",
-                    systemImage: "checkmark.circle.fill",
-                    isEnabled: state.canConfirmSecondaryCaptureRescue
-                ) {
-                    state.confirmSecondaryCaptureRescue()
+                HStack {
+                    HStack(spacing: 8) {
+                        Button {
+                            state.chooseAnotherCTFromRescue()
+                        } label: {
+                            Label("別のCTを選ぶ", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(state.isRunning)
+
+                        Button {
+                            state.resetRescueGeometryToEstimate()
+                        } label: {
+                            Label("推定形状に戻す", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showsOrientationControls.toggle()
+                        }
+                    } label: {
+                        Label("画像の向きを修正", systemImage: "rotate.3d")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    NextPhaseButton(
+                        title: "この形状で作成",
+                        systemImage: "checkmark.circle.fill",
+                        isEnabled: state.canConfirmSecondaryCaptureRescue
+                    ) {
+                        state.confirmSecondaryCaptureRescue()
+                    }
+                    .frame(width: 280)
                 }
-                Text("この確定操作まではAI推論を開始しません。疑似NIfTIのshape・spacing readbackが一致した場合だけTotalSegmentatorへ進みます。")
+
+                if let reason = state.rescueConfirmationUnavailableReason {
+                    Label(reason, systemImage: state.isRunning ? "clock" : "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(state.rescueImageUpdateFailed ? .orange : .secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                Text("この操作まではAI推論を開始しません。生成結果は参考用です。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .padding(.vertical, 4)
         }
     }
 
-    @ViewBuilder
-    private func rescueMPRPanel(_ label: String, key: String) -> some View {
-        if let slice = state.rescueMPRPreviewSlices.first(where: { $0.plane.lowercased().contains(key) }),
-           !state.rescuePreviewMetadataInferenceStarted {
-            RescueArtifactImage(title: label, url: slice.url)
-        } else {
-            RescueMPRPlaceholder(plane: label, revision: state.rescuePreviewRevision)
+    private var selectablePrimaryCandidates: [SecondaryCaptureRescueCandidate] {
+        state.dicomRescueCandidates.filter { $0.role == "primary" }
+    }
+
+    private func rescuePlaneCard(
+        label: String,
+        key: String,
+        horizontalAxis: RescueCalibrationAxis,
+        verticalAxis: RescueCalibrationAxis
+    ) -> some View {
+        RescueStretchPlaneCard(
+            label: label,
+            horizontalAxis: horizontalAxis,
+            verticalAxis: verticalAxis,
+            horizontalSpacing: spacingBinding(horizontalAxis),
+            verticalSpacing: spacingBinding(verticalAxis),
+            horizontalEstimate: estimatedSpacing(horizontalAxis),
+            verticalEstimate: estimatedSpacing(verticalAxis),
+            imageURL: state.rescueMPRPreviewSlices.first(
+                where: { $0.plane.lowercased().contains(key) }
+            )?.url,
+            displayAspectRatio: rescueDisplayAspectRatio(key),
+            revision: state.rescuePreviewRevision,
+            isUpdating: state.isRunning,
+            beginAdjustment: state.beginRescueStretchAdjustment,
+            finishAdjustment: state.finishRescueStretchAdjustment
+        )
+    }
+
+    private func spacingBinding(_ axis: RescueCalibrationAxis) -> Binding<Double> {
+        Binding(
+            get: {
+                switch axis {
+                case .x: return state.rescueSpacingX
+                case .y: return state.rescueSpacingY
+                case .z: return state.rescueSpacingZ
+                }
+            },
+            set: { state.setRescueStretchSpacing(axis: axis, value: $0) }
+        )
+    }
+
+    private func estimatedSpacing(_ axis: RescueCalibrationAxis) -> Double {
+        switch axis {
+        case .x: return state.rescueEstimatedSpacing.x
+        case .y: return state.rescueEstimatedSpacing.y
+        case .z: return state.rescueEstimatedSpacing.z
         }
+    }
+
+    private func rescueDisplayAspectRatio(_ plane: String) -> CGFloat {
+        guard state.rescuePreviewShapeXYZ.count == 3 else {
+            if let slice = state.rescueMPRPreviewSlices.first(
+                where: { $0.plane.lowercased().contains(plane) }
+            ) {
+                return CGFloat(max(slice.width, 1)) / CGFloat(max(slice.height, 1))
+            }
+            return 1
+        }
+        let shape = state.rescuePreviewShapeXYZ.map { Double(max($0, 1)) }
+        let width: Double
+        let height: Double
+        switch plane {
+        case "coronal":
+            width = shape[0] * state.rescueSpacingX
+            height = shape[2] * state.rescueSpacingZ
+        case "sagittal":
+            width = shape[1] * state.rescueSpacingY
+            height = shape[2] * state.rescueSpacingZ
+        default:
+            width = shape[0] * state.rescueSpacingX
+            height = shape[1] * state.rescueSpacingY
+        }
+        return CGFloat(min(max(width / max(height, 0.000_001), 0.1), 10))
     }
 }
 
-private struct RescueMeasurementImage: View {
-    let slice: CTPreviewSlice
-    let startNormalized: CGPoint?
-    let endNormalized: CGPoint?
-    let onMeasurement: (CGPoint, CGPoint) -> Void
-    @State private var dragStart: CGPoint?
-    @State private var dragEnd: CGPoint?
+private struct RescueStretchPlaneCard: View {
+    let label: String
+    let horizontalAxis: RescueCalibrationAxis
+    let verticalAxis: RescueCalibrationAxis
+    @Binding var horizontalSpacing: Double
+    @Binding var verticalSpacing: Double
+    let horizontalEstimate: Double
+    let verticalEstimate: Double
+    let imageURL: URL?
+    let displayAspectRatio: CGFloat
+    let revision: Int
+    let isUpdating: Bool
+    let beginAdjustment: () -> Void
+    let finishAdjustment: (RescueCalibrationAxis) -> Void
 
     var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            ZStack {
-                Rectangle()
-                    .fill(Color.black.opacity(0.9))
-                if let image = loadPGMImage(slice.url) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                }
-                if let endpoints = displayedEndpoints(size: size) {
-                    Path { path in
-                        path.move(to: endpoints.0)
-                        path.addLine(to: endpoints.1)
-                    }
-                    .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    Circle()
-                        .fill(Color.yellow)
-                        .frame(width: 8, height: 8)
-                        .position(endpoints.0)
-                    Circle()
-                        .fill(Color.yellow)
-                        .frame(width: 8, height: 8)
-                        .position(endpoints.1)
-                }
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if dragStart == nil {
-                            dragStart = clamped(value.startLocation, to: size)
-                        }
-                        dragEnd = clamped(value.location, to: size)
-                    }
-                    .onEnded { value in
-                        let start = dragStart ?? clamped(value.startLocation, to: size)
-                        let end = clamped(value.location, to: size)
-                        dragStart = nil
-                        dragEnd = nil
-                        guard size.width > 0, size.height > 0 else { return }
-                        onMeasurement(
-                            CGPoint(x: start.x / size.width, y: start.y / size.height),
-                            CGPoint(x: end.x / size.width, y: end.y / size.height)
-                        )
-                    }
-            )
-        }
-        .aspectRatio(
-            CGFloat(max(slice.width, 1)) / CGFloat(max(slice.height, 1)),
-            contentMode: .fit
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
-        }
-        .accessibilityLabel("\(slice.label) 距離計測")
-        .accessibilityHint("画像上をドラッグして2点間の距離を計測します")
-    }
-
-    private func displayedEndpoints(size: CGSize) -> (CGPoint, CGPoint)? {
-        if let dragStart, let dragEnd {
-            return (dragStart, dragEnd)
-        }
-        guard let startNormalized, let endNormalized else {
-            return nil
-        }
-        return (
-            CGPoint(x: startNormalized.x * size.width, y: startNormalized.y * size.height),
-            CGPoint(x: endNormalized.x * size.width, y: endNormalized.y * size.height)
-        )
-    }
-
-    private func clamped(_ point: CGPoint, to size: CGSize) -> CGPoint {
-        CGPoint(
-            x: min(max(point.x, 0), size.width),
-            y: min(max(point.y, 0), size.height)
-        )
-    }
-}
-
-private struct RescueSpacingEditor: View {
-    let axis: String
-    @Binding var value: Double
-    let changed: () -> Void
-
-    var body: some View {
-        HStack {
-            Text(axis)
+        VStack(spacing: 10) {
+            Text(label)
                 .font(.headline)
-                .frame(width: 18)
-            TextField(
-                "\(axis) spacing",
-                value: $value,
-                format: .number.precision(.fractionLength(0...6))
+
+            HStack(spacing: 8) {
+                RescueMPRCanvas(
+                    plane: label,
+                    imageURL: imageURL,
+                    displayAspectRatio: displayAspectRatio,
+                    revision: revision,
+                    isUpdating: isUpdating
+                )
+                RescueStretchSlider(
+                    axis: verticalAxis,
+                    orientation: .vertical,
+                    spacing: $verticalSpacing,
+                    estimatedSpacing: verticalEstimate,
+                    beginAdjustment: beginAdjustment,
+                    finishAdjustment: { finishAdjustment(verticalAxis) }
+                )
+            }
+            RescueStretchSlider(
+                axis: horizontalAxis,
+                orientation: .horizontal,
+                spacing: $horizontalSpacing,
+                estimatedSpacing: horizontalEstimate,
+                beginAdjustment: beginAdjustment,
+                finishAdjustment: { finishAdjustment(horizontalAxis) }
             )
-            .frame(width: 110)
-            .onChange(of: value) { _ in changed() }
-            Stepper("", value: $value, in: 0.01...20, step: 0.01)
-                .labelsHidden()
         }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
-private struct RescueCropEditor: View {
-    let axis: String
-    @Binding var minValue: Int
-    @Binding var maxValue: Int
-    let changed: () -> Void
+private enum RescueStretchOrientation {
+    case horizontal
+    case vertical
+}
+
+private struct RescueStretchSlider: View {
+    let axis: RescueCalibrationAxis
+    let orientation: RescueStretchOrientation
+    @Binding var spacing: Double
+    let estimatedSpacing: Double
+    let beginAdjustment: () -> Void
+    let finishAdjustment: () -> Void
+
+    private var axisColor: Color {
+        switch axis {
+        case .x: return .blue
+        case .y: return .green
+        case .z: return .orange
+        }
+    }
+
+    private var logarithmicValue: Binding<Double> {
+        Binding(
+            get: {
+                log2(max(spacing, 0.01) / max(estimatedSpacing, 0.01))
+            },
+            set: { position in
+                spacing = min(max(estimatedSpacing * pow(2, position), 0.01), 20)
+            }
+        )
+    }
 
     var body: some View {
-        HStack {
-            Text(axis)
-                .frame(width: 18)
-            TextField("min", value: $minValue, format: .number)
-                .frame(width: 64)
-            Text("〜")
-            TextField("max", value: $maxValue, format: .number)
-                .frame(width: 64)
+        Group {
+            if orientation == .horizontal {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left")
+                    slider
+                    Image(systemName: "arrow.right")
+                }
+                .frame(height: 28)
+            } else {
+                VStack(spacing: 5) {
+                    Image(systemName: "arrow.up")
+                    slider
+                        .frame(width: 170)
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 28, height: 170)
+                    Image(systemName: "arrow.down")
+                }
+                .frame(width: 34)
+            }
         }
-        .onChange(of: minValue) { _ in changed() }
-        .onChange(of: maxValue) { _ in changed() }
+        .foregroundStyle(axisColor)
+    }
+
+    private var slider: some View {
+        Slider(
+            value: logarithmicValue,
+            in: -2...2,
+            onEditingChanged: { editing in
+                if editing {
+                    beginAdjustment()
+                } else {
+                    finishAdjustment()
+                }
+            }
+        )
+        .tint(axisColor)
+        .accessibilityLabel(
+            "\(axis.rawValue.uppercased())方向を"
+                + (orientation == .horizontal ? "横に伸縮" : "縦に伸縮")
+        )
+        .accessibilityValue(
+            "\(Int((spacing / max(estimatedSpacing, 0.01) * 100).rounded()))パーセント"
+        )
+        .accessibilityHint("同じ色のハンドルと連動します")
+        .help("画像をこの方向へ伸縮します。同じ色のハンドルは連動します。")
+    }
+}
+
+private struct RescueMPRCanvas: View {
+    let plane: String
+    let imageURL: URL?
+    let displayAspectRatio: CGFloat
+    let revision: Int
+    let isUpdating: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.black.opacity(0.92))
+            if let imageURL, let image = loadPGMImage(imageURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(displayAspectRatio, contentMode: .fit)
+            } else {
+                VStack(spacing: 7) {
+                    Image(systemName: "viewfinder")
+                        .font(.largeTitle)
+                    Text("画像を準備中")
+                        .font(.caption)
+                }
+                .foregroundStyle(.white.opacity(0.62))
+            }
+            GeometryReader { proxy in
+                Path { path in
+                    path.move(to: CGPoint(x: proxy.size.width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: proxy.size.width / 2, y: proxy.size.height))
+                    path.move(to: CGPoint(x: 0, y: proxy.size.height / 2))
+                    path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height / 2))
+                }
+                .stroke(Color.white.opacity(0.45), lineWidth: 0.8)
+            }
+            if isUpdating, imageURL != nil {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("画像を更新中")
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityLabel("\(plane) 三方向画像")
     }
 }
 

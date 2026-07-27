@@ -177,13 +177,13 @@ enum DicomRescueWorkflowState: String, CaseIterable {
     var label: String {
         switch self {
         case .rescueAvailable: return "救済候補があります"
-        case .estimating: return "寸法候補を作成中"
+        case .estimating: return "形状候補を作成中"
         case .editableReady: return "候補作成済み"
         case .userModified: return "手動調整中"
         case .manualOnly: return "手動調整が必要"
-        case .sourceStackUnavailable: return "画像stackを準備できません"
-        case .preparingNifti: return "確定した寸法を適用中"
-        case .validatingNifti: return "shape・spacingを確認中"
+        case .sourceStackUnavailable: return "画像を準備できません"
+        case .preparingNifti: return "確定した形状を適用中"
+        case .validatingNifti: return "作成した画像を確認中"
         case .prepareFailed: return "救済データを作成できませんでした"
         case .readbackMismatch: return "確定値と出力が一致しません"
         }
@@ -209,6 +209,60 @@ enum RescueCalibrationAxis: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var displayName: String { rawValue.uppercased() }
+}
+
+func rescueEvidenceDisplayText(_ rawValue: String) -> String {
+    let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty else {
+        return "この情報だけでは推定の確かさを判断できません"
+    }
+    if value.unicodeScalars.contains(where: { $0.value > 0x7f }) {
+        return value
+    }
+    switch value.lowercased() {
+    case "pixel_spacing":
+        return "DICOMに残っている画素間隔を使用しました"
+    case "ipp_iop_projected_spacing":
+        return "撮影位置と向きから断面間隔を計算しました"
+    case "spacing_between_slices":
+        return "DICOMに残っている断面間隔を使用しました"
+    case "slice_thickness", "axial_slice_step":
+        return "DICOMに残っているスライス厚をZ方向の候補に使用しました"
+    case "fallback_initial_candidate":
+        return "情報が不足している方向には編集用の仮初期値を使用しました"
+    case "sagittal_series_count_fov_seed":
+        return "SAGITTAL系列の枚数と範囲をX方向の候補に使用しました"
+    case "coronal_series_count_fov_seed":
+        return "CORONAL系列の枚数と範囲をY方向の候補に使用しました"
+    case "tri_planar_registration":
+        return "三方向画像の位置関係を候補作成に使用しました"
+    case "x_standard_or_vendor_tag_hint":
+        return "DICOM内の利用可能な情報をX方向の候補に使用しました"
+    case "y_standard_or_vendor_tag_hint":
+        return "DICOM内の利用可能な情報をY方向の候補に使用しました"
+    case "z_standard_or_vendor_tag_hint":
+        return "DICOM内の利用可能な情報をZ方向の候補に使用しました"
+    case "x_spacing_uses_fallback":
+        return "X方向は情報不足のため仮初期値です"
+    case "y_spacing_uses_fallback":
+        return "Y方向は情報不足のため仮初期値です"
+    case "z_spacing_uses_fallback":
+        return "Z方向は情報不足のため仮初期値です"
+    case "series_count_crop_and_zoom_unknown":
+        return "余白・切り抜き・保存時の拡大率は特定できません"
+    case "screen_capture_crop_offset_and_zoom_may_be_non_unique":
+        return "余白や位置ずれを含むため、同程度に見える候補が複数あります"
+    case "registration_not_validated_on_target_real_data":
+        return "このデータで推定精度を保証できるものではありません"
+    case "registration_evidence_unavailable", "reference_planes_unavailable":
+        return "三方向画像による十分な照合結果を得られませんでした"
+    case "foreground_not_detected":
+        return "画像内の対象範囲を自動判定できませんでした"
+    case "large_border_or_burned_in_overlay_candidate":
+        return "大きな余白・枠・文字が推定に影響している可能性があります"
+    default:
+        return "画像だけでは推定の確かさを十分に判断できません"
+    }
 }
 
 struct RescueSpacing: Equatable {
@@ -472,7 +526,7 @@ final class AppState: ObservableObject {
     @Published var rescueEstimatedSpacing = RescueSpacing(x: 1.0, y: 1.0, z: 1.0)
     @Published var rescueConfidence = "低"
     @Published var rescueEvidence: [String] = []
-    @Published var rescueXYLocked = true
+    @Published var rescueXYLocked = false
     @Published var rescueAxisPermutation: RescueAxisPermutation = .xyz
     @Published var rescueRotationQuarterTurns = 0
     @Published var rescueSliceOrderReversed = false
@@ -495,7 +549,8 @@ final class AppState: ObservableObject {
     @Published var rescueMPRPreviewSlices: [CTPreviewSlice] = []
     @Published var rescuePseudo3DPreviewURL: URL?
     @Published var rescuePreviewMetadataInferenceStarted = false
-    @Published var rescuePreviewStatus = "preview renderer未接続"
+    @Published var rescuePreviewStatus = "三方向の画像を準備しています"
+    @Published var rescueImageUpdateFailed = false
     @Published var rescueConfirmationToken = ""
     @Published var rescueDecodedVolumeURL: URL?
     @Published var rescueGeometryJSONURL: URL?
@@ -1061,7 +1116,8 @@ final class AppState: ObservableObject {
         let supported = [
             "setup", "start", "input", "input-advanced", "input-comparison", "running",
             "running-known", "running-unknown", "running-download", "running-stopped",
-            "ct-preview", "result", "result-toothseg", "result-toothseg-failure", "result-failure",
+            "ct-preview", "dicom-rescue", "dicom-rescue-updating", "result", "result-toothseg",
+            "result-toothseg-failure", "result-failure",
         ]
         guard supported.contains(scenario) else {
             return
@@ -1139,6 +1195,69 @@ final class AppState: ObservableObject {
             screen = .ctPreview
             selectedStep = 1
             statusText = "CT画像を確認"
+        case "dicom-rescue", "dicom-rescue-updating":
+            screen = .dicomRescue
+            selectedStep = 1
+            statusText = "形状を確認"
+            rescueWorkflowState = .editableReady
+            rescueEstimatedSpacing = RescueSpacing(x: 0.72, y: 0.72, z: 0.9375)
+            rescueSpacingX = rescueEstimatedSpacing.x
+            rescueSpacingY = rescueEstimatedSpacing.y
+            rescueSpacingZ = rescueEstimatedSpacing.z
+            rescueConfidence = "低"
+            rescueEvidence = [
+                "Slice Thicknessを低信頼のZ候補に使用",
+                "三方向系列の範囲を比較してX/Y候補を作成",
+            ]
+            rescuePreviewShapeXYZ = [230, 220, 160]
+            rescuePreviewStatus = "preview更新済み（AI推論は開始していません）"
+            let sourceRepositoryRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            let fixtureRoots = [
+                ProcessInfo.processInfo.environment["TOTALSEGMENTATOR_WRAPPER_MAC_UI_PREVIEW_FIXTURE_DIR"]
+                    .map { URL(fileURLWithPath: $0, isDirectory: true) },
+                URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                    .appendingPathComponent("artifacts/ui-transition-map/fixtures", isDirectory: true),
+                sourceRepositoryRoot
+                    .appendingPathComponent("artifacts/ui-transition-map/fixtures", isDirectory: true),
+            ].compactMap { $0 }
+            let fixtureRoot = fixtureRoots.first {
+                FileManager.default.fileExists(
+                    atPath: $0.appendingPathComponent("axial.pgm").path
+                )
+            } ?? fixtureRoots[0]
+            rescueMPRPreviewSlices = [
+                CTPreviewSlice(
+                    plane: "axial", label: "AXIAL",
+                    url: fixtureRoot.appendingPathComponent("axial.pgm"),
+                    width: 230, height: 220,
+                    rowSpacingMM: nil, columnSpacingMM: nil,
+                    minValue: 0, maxValue: 255, uniformOrEmpty: false
+                ),
+                CTPreviewSlice(
+                    plane: "coronal", label: "CORONAL",
+                    url: fixtureRoot.appendingPathComponent("coronal.pgm"),
+                    width: 230, height: 160,
+                    rowSpacingMM: nil, columnSpacingMM: nil,
+                    minValue: 0, maxValue: 255, uniformOrEmpty: false
+                ),
+                CTPreviewSlice(
+                    plane: "sagittal", label: "SAGITTAL",
+                    url: fixtureRoot.appendingPathComponent("sagittal.pgm"),
+                    width: 220, height: 160,
+                    rowSpacingMM: nil, columnSpacingMM: nil,
+                    minValue: 0, maxValue: 255, uniformOrEmpty: false
+                ),
+            ]
+            rescueInlineWarning = ""
+            rescuePreviewRevision = 0
+            if scenario == "dicom-rescue-updating" {
+                isRunning = true
+                rescuePreviewStatus = "画像の向きを更新しています（AI推論なし）"
+            }
         case "result", "result-toothseg", "result-toothseg-failure":
             screen = .result
             selectedStep = 3
@@ -1329,6 +1448,27 @@ final class AppState: ObservableObject {
             } else {
                 prepareNiftiInput(url)
             }
+        }
+    }
+
+    func chooseAnotherCTFromRescue() {
+        guard !isRunning else { return }
+        let panel = NSOpenPanel()
+        panel.title = "別のCTを選択"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        resetSecondaryCaptureRescue()
+        clearPendingCTPreview()
+        if isDirectory(url) {
+            inputURL = url
+            inputSource = .dicomFolder
+            runDicomAudit(dicomDir: url)
+        } else {
+            prepareNiftiInput(url)
         }
     }
 
@@ -1736,6 +1876,33 @@ final class AppState: ObservableObject {
             && rescueConfirmationToken.allSatisfy { $0.isHexDigit }
     }
 
+    var rescueConfirmationUnavailableReason: String? {
+        guard !canConfirmSecondaryCaptureRescue else { return nil }
+        if isRunning {
+            return "画像を更新しています。完了すると作成できます。"
+        }
+        if rescueImageUpdateFailed {
+            return "画像の更新に失敗しました。もう一度調整するか、別のCTを選んでください。"
+        }
+        if !rescueMPRPreviewSlices.isEmpty {
+            return "三方向の画像を確認すると作成できます。"
+        }
+        if selectedDicomRescueCandidate == nil {
+            return "使用する画像を選ぶと作成できます。"
+        }
+        return "三方向の画像を確認すると作成できます。"
+    }
+
+    var rescueConfidenceDisplayText: String {
+        switch rescueConfidence.lowercased() {
+        case "high", "高": return "高"
+        case "medium", "moderate", "中": return "中"
+        case "low", "低": return "低"
+        case "unknown", "unavailable", "未推定（仮の初期値を含む）": return "未推定"
+        default: return "未推定"
+        }
+    }
+
     func beginSecondaryCaptureRescue(candidates: [SecondaryCaptureRescueCandidate]) {
         dicomRescueCandidates = candidates
         let primary = candidates.first(where: { $0.role == "primary" }) ?? candidates.first
@@ -1745,9 +1912,7 @@ final class AppState: ObservableObject {
         rescueSpacingX = rescueEstimatedSpacing.x
         rescueSpacingY = rescueEstimatedSpacing.y
         rescueSpacingZ = rescueEstimatedSpacing.z
-        rescueXYLocked = primary?.pixelSpacingRow == nil
-            || primary?.pixelSpacingColumn == nil
-            || primary?.pixelSpacingRow == primary?.pixelSpacingColumn
+        rescueXYLocked = false
         rescueConfidence = primary?.hasFallbackSpacingAxis == false
             ? "低"
             : "未推定（仮の初期値を含む）"
@@ -1765,13 +1930,14 @@ final class AppState: ObservableObject {
         rescuePreviewShapeXYZ = []
         clearRescueMeasurement()
         rescuePreviewMetadataInferenceStarted = false
-        rescuePreviewStatus = "preview renderer未接続（AI推論は開始していません）"
+        rescuePreviewStatus = "三方向の画像を準備しています（AI推論は開始していません）"
+        rescueImageUpdateFailed = false
         rescueCalibrationRecords = []
         rescueInlineWarning = ""
         rescueConfirmationWasExplicit = false
         screen = .dicomRescue
         selectedStep = 1
-        statusText = "寸法を確認してください"
+        statusText = "形状を確認してください"
         progressText = "推定候補を確認し、必要なら手動で調整してください。AI推論はまだ開始していません。"
         resultKind = .dicomAudit
         resultOutcome = .none
@@ -1791,7 +1957,8 @@ final class AppState: ObservableObject {
               let dicomDir = lastDicomDirURL,
               FileManager.default.isExecutableFile(atPath: paths.normalizer.path) else {
             rescueWorkflowState = .sourceStackUnavailable
-            rescuePreviewStatus = "安全に並べた画像stackを作れないため、NIfTI作成へ進めません"
+            rescuePreviewStatus = "三方向の画像を安全に準備できませんでした"
+            rescueImageUpdateFailed = true
             return
         }
         let sessionDir = paths.runs.appendingPathComponent(
@@ -1805,10 +1972,12 @@ final class AppState: ObservableObject {
               makeRescueDirectoryPrivate(logURL.deletingLastPathComponent()) else {
             rescueWorkflowState = .sourceStackUnavailable
             rescuePreviewStatus = "救済データの専用保存領域を安全に作成できません"
+            rescueImageUpdateFailed = true
             return
         }
         rescueWorkflowState = .estimating
         rescuePreviewStatus = "画像準備中（AI推論は開始していません）"
+        rescueImageUpdateFailed = false
         rescuePreparationCancellationRequested = false
         isRunning = true
         runner.resetTerminationRequest()
@@ -1865,13 +2034,15 @@ final class AppState: ObservableObject {
                 guard self?.rescuePreparationCancellationRequested != true else {
                     self?.rescueWorkflowState = .manualOnly
                     self?.rescuePreviewStatus = "自動処理をキャンセルしました。手動調整を続けられます"
+                    self?.rescueImageUpdateFailed = false
                     return
                 }
                 guard rc == 0,
                       FileManager.default.fileExists(atPath: volumeURL.path),
                       let manifestHash else {
                     self?.rescueWorkflowState = .sourceStackUnavailable
-                    self?.rescuePreviewStatus = "画像の形式または並び順を安全に確定できないため、NIfTI作成へ進めません"
+                    self?.rescuePreviewStatus = "画像の形式または並び順を安全に確認できませんでした"
+                    self?.rescueImageUpdateFailed = true
                     return
                 }
                 let estimateJSON = sessionDir.appendingPathComponent("estimate/rescue_geometry.v2.json")
@@ -1897,14 +2068,16 @@ final class AppState: ObservableObject {
             && sourceManifestSHA256.allSatisfy { $0.isHexDigit }
         guard FileManager.default.fileExists(atPath: decodedVolume.path), isSHA256 else {
             rescueWorkflowState = .manualOnly
-            rescuePreviewStatus = "推定用volumeまたは安全な入力hashがないため手動調整を使用します"
+            rescuePreviewStatus = "画像を安全に確認できないため、手動調整を使用します"
+            rescueImageUpdateFailed = true
             return
         }
         rescueDecodedVolumeURL = decodedVolume
         rescueGeometryJSONURL = outputJSON
         rescueSourceManifestSHA256 = sourceManifestSHA256.lowercased()
         rescueWorkflowState = .estimating
-        rescuePreviewStatus = "metadata確認中"
+        rescuePreviewStatus = "画像の情報を確認中"
+        rescueImageUpdateFailed = false
         rescuePreparationCancellationRequested = false
         isRunning = true
         runner.resetTerminationRequest()
@@ -2022,6 +2195,7 @@ final class AppState: ObservableObject {
             isRunning = false
             rescueWorkflowState = .manualOnly
             rescuePreviewStatus = "推定用の専用保存領域を安全に作成できません"
+            rescueImageUpdateFailed = true
             return
         }
         let runner = self.runner
@@ -2032,14 +2206,17 @@ final class AppState: ObservableObject {
                 guard self?.rescuePreparationCancellationRequested != true else {
                     self?.rescueWorkflowState = .manualOnly
                     self?.rescuePreviewStatus = "自動推定をキャンセルしました。手動調整を続けられます"
+                    self?.rescueImageUpdateFailed = false
                     return
                 }
                 if rc == 0, self?.applyRescueEstimateMetadata(outputJSON) == true {
                     self?.rescueWorkflowState = .editableReady
                     self?.rescuePreviewStatus = "候補作成済み（AI推論は開始していません）"
+                    self?.rescueImageUpdateFailed = false
                 } else {
                     self?.rescueWorkflowState = .manualOnly
                     self?.rescuePreviewStatus = "自動推定に失敗したため手動調整を使用します"
+                    self?.rescueImageUpdateFailed = false
                 }
             }
         }
@@ -2059,28 +2236,36 @@ final class AppState: ObservableObject {
         let candidate = RescueSpacing(x: spacing[0], y: spacing[1], z: spacing[2])
         guard candidate.isValid else { return false }
         rescueEstimatedSpacing = candidate
-        rescueXYLocked = abs(candidate.x - candidate.y) <= 0.0001
+        rescueXYLocked = false
         rescueSpacingX = candidate.x
         rescueSpacingY = candidate.y
         rescueSpacingZ = candidate.z
         let confidence = estimate["confidence"] as? [String: Any]
         rescueConfidence = (confidence?["overall"] as? String) ?? "低"
-        rescueEvidence = ((confidence?["reasons"] as? [String]) ?? [])
+        let rawEvidence = ((confidence?["reasons"] as? [String]) ?? [])
             + ((confidence?["limitations"] as? [String]) ?? [])
+        var seenEvidence = Set<String>()
+        rescueEvidence = rawEvidence
+            .map(rescueEvidenceDisplayText)
+            .filter { seenEvidence.insert($0).inserted }
+        if rescueEvidence.isEmpty {
+            rescueEvidence = ["画像だけでは推定の確かさを十分に判断できません"]
+        }
         rescueConfirmationWasExplicit = false
         rescueConfirmationToken = ""
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
         rescuePreviewShapeXYZ = []
         clearRescueMeasurement()
-        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewStatus = "三方向の画像を更新します"
+        rescueImageUpdateFailed = false
         rescuePreviewRevision &+= 1
         return true
     }
 
     func selectSecondaryCaptureRescueCandidate(_ candidate: SecondaryCaptureRescueCandidate) {
         guard candidate.role == "primary" else {
-            rescueInlineWarning = "CORONAL/SAGITTAL系列は推定根拠として表示します。primary volumeにはAXIAL候補を選んでください。"
+            rescueInlineWarning = "CORONAL/SAGITTAL系列は推定の参考です。作成元にはAXIAL系列を選んでください。"
             return
         }
         selectedDicomRescueCandidateID = candidate.id
@@ -2088,9 +2273,7 @@ final class AppState: ObservableObject {
         rescueSpacingX = rescueEstimatedSpacing.x
         rescueSpacingY = rescueEstimatedSpacing.y
         rescueSpacingZ = rescueEstimatedSpacing.z
-        rescueXYLocked = candidate.pixelSpacingRow == nil
-            || candidate.pixelSpacingColumn == nil
-            || candidate.pixelSpacingRow == candidate.pixelSpacingColumn
+        rescueXYLocked = false
         rescueConfidence = candidate.hasFallbackSpacingAxis
             ? "未推定（仮の初期値を含む）"
             : "低"
@@ -2107,6 +2290,39 @@ final class AppState: ObservableObject {
         )
     }
 
+    func beginRescueStretchAdjustment() {
+        rescuePreviewWorkItem?.cancel()
+        rescuePreviewWorkItem = nil
+        rescueWorkflowState = .userModified
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        rescuePreviewStatus = "形状を調整中（AI推論は開始していません）"
+        rescueImageUpdateFailed = false
+        rescuePreviewRevision &+= 1
+    }
+
+    func setRescueStretchSpacing(axis: RescueCalibrationAxis, value: Double) {
+        guard value.isFinite else { return }
+        let clamped = min(max(value, 0.01), 20)
+        rescueXYLocked = false
+        switch axis {
+        case .x:
+            rescueSpacingX = clamped
+        case .y:
+            rescueSpacingY = clamped
+        case .z:
+            rescueSpacingZ = clamped
+        }
+        rescueWorkflowState = .userModified
+        rescueConfirmationWasExplicit = false
+        rescueConfirmationToken = ""
+        updateRescueInlineWarning()
+    }
+
+    func finishRescueStretchAdjustment(axis: RescueCalibrationAxis) {
+        rescueSpacingDidChange(axis: axis)
+    }
+
     func rescueSpacingDidChange(axis: RescueCalibrationAxis) {
         if rescueXYLocked {
             if axis == .x {
@@ -2118,11 +2334,9 @@ final class AppState: ObservableObject {
         rescueWorkflowState = .userModified
         rescueConfirmationWasExplicit = false
         rescueConfirmationToken = ""
-        rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
-        rescuePreviewShapeXYZ = []
         clearRescueMeasurement()
-        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewStatus = "調整した形状を確認中（AI推論なし）"
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
         scheduleRescuePreviewUpdate()
@@ -2132,11 +2346,10 @@ final class AppState: ObservableObject {
         rescueWorkflowState = .userModified
         rescueConfirmationWasExplicit = false
         rescueConfirmationToken = ""
-        rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
-        rescuePreviewShapeXYZ = []
         clearRescueMeasurement()
-        rescuePreviewStatus = "変更はまだpreviewへ反映されていません"
+        rescuePreviewStatus = "画像の向きを更新しています（AI推論なし）"
+        rescueImageUpdateFailed = false
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
         scheduleRescuePreviewUpdate()
@@ -2161,11 +2374,10 @@ final class AppState: ObservableObject {
         rescueWorkflowState = .editableReady
         rescueConfirmationWasExplicit = false
         rescueConfirmationToken = ""
-        rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
-        rescuePreviewShapeXYZ = []
         clearRescueMeasurement()
-        rescuePreviewStatus = "自動推定値へ戻しました。previewを更新してください"
+        rescuePreviewStatus = "推定形状を確認中（AI推論なし）"
+        rescueImageUpdateFailed = false
         rescuePreviewRevision &+= 1
         updateRescueInlineWarning()
         scheduleRescuePreviewUpdate()
@@ -2323,7 +2535,8 @@ final class AppState: ObservableObject {
 
     func applyRescuePreviewMetadata(_ metadataJSON: URL) {
         guard let payload = readJSON(metadataJSON) else {
-            rescuePreviewStatus = "preview metadataを読めませんでした"
+            rescuePreviewStatus = "画像の更新結果を読み取れませんでした"
+            rescueImageUpdateFailed = true
             return
         }
         let inferenceStarted = (payload["inference_started"] as? Bool) ?? false
@@ -2332,7 +2545,8 @@ final class AppState: ObservableObject {
             rescueMPRPreviewSlices = []
             rescuePseudo3DPreviewURL = nil
             rescueConfirmationToken = ""
-            rescuePreviewStatus = "preview段階で推論開始が報告されたため表示を拒否しました"
+            rescuePreviewStatus = "確認前の処理開始が検出されたため、画像を表示しません"
+            rescueImageUpdateFailed = true
             return
         }
         rescueMPRPreviewSlices = rescuePreviewSlices(payload: payload)
@@ -2342,14 +2556,16 @@ final class AppState: ObservableObject {
         )?.compactMap(jsonInt) ?? []
         rescueConfirmationToken = (payload["confirmation_token"] as? String) ?? ""
         rescuePreviewStatus = rescueMPRPreviewSlices.isEmpty
-            ? "preview artifact待機中（AI推論は開始していません）"
-            : "preview更新済み（AI推論は開始していません）"
+            ? "三方向の画像を待っています（AI推論は開始していません）"
+            : "三方向の画像を更新しました（AI推論は開始していません）"
+        rescueImageUpdateFailed = rescueMPRPreviewSlices.isEmpty
     }
 
     func requestRescuePreviewUpdate() {
         guard canRequestRescuePreview,
               let decodedVolume = rescueDecodedVolumeURL else {
-            rescuePreviewStatus = "decoded preview volumeがないため、画像previewはまだ更新できません"
+            rescuePreviewStatus = "元画像を準備できていないため、三方向の画像を更新できません"
+            rescueImageUpdateFailed = true
             return
         }
         let previewDir = (rescueGeometryJSONURL?.deletingLastPathComponent() ?? paths.runs)
@@ -2359,7 +2575,8 @@ final class AppState: ObservableObject {
         let outputJSON = previewDir.appendingPathComponent("preview.json")
         try? FileManager.default.createDirectory(at: previewDir, withIntermediateDirectories: true)
         guard makeRescueDirectoryPrivate(previewDir) else {
-            rescuePreviewStatus = "previewの専用保存領域を安全に作成できません"
+            rescuePreviewStatus = "画像更新用の保存領域を安全に作成できません"
+            rescueImageUpdateFailed = true
             return
         }
         guard var request = rescueGeometryJSONURL.flatMap(readJSON),
@@ -2368,7 +2585,8 @@ final class AppState: ObservableObject {
               (source["content_manifest_sha256"] as? String) == rescueSourceManifestSHA256,
               (request["inference_started"] as? Bool) != true else {
             isRunning = false
-            rescuePreviewStatus = "推定metadataが入力volumeと一致しないためpreviewを更新できません"
+            rescuePreviewStatus = "画像情報が元データと一致しないため更新できません"
+            rescueImageUpdateFailed = true
             return
         }
         request["workflow_status"] = "preview_requested"
@@ -2388,7 +2606,8 @@ final class AppState: ObservableObject {
         request["calibrations"] = rescueCalibrationRecords
         request["inference_started"] = false
         writeJSON(request, to: requestJSON)
-        rescuePreviewStatus = "preview画像を準備中（AI推論なし）"
+        rescuePreviewStatus = "三方向の画像を更新中（AI推論なし）"
+        rescueImageUpdateFailed = false
         rescuePreparationCancellationRequested = false
         isRunning = true
         runner.resetTerminationRequest()
@@ -2408,12 +2627,14 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async {
                 self?.isRunning = false
                 guard self?.rescuePreparationCancellationRequested != true else {
-                    self?.rescuePreviewStatus = "preview更新をキャンセルしました（AI推論は開始していません）"
+                    self?.rescuePreviewStatus = "画像の更新を中止しました（AI推論は開始していません）"
+                    self?.rescueImageUpdateFailed = false
                     return
                 }
                 guard self?.rescuePreviewRevision == requestRevision else {
                     self?.rescueConfirmationToken = ""
-                    self?.rescuePreviewStatus = "変更後の三方向previewを再計算しています"
+                    self?.rescuePreviewStatus = "変更後の三方向画像を再計算しています"
+                    self?.rescueImageUpdateFailed = false
                     self?.scheduleRescuePreviewUpdate()
                     return
                 }
@@ -2422,7 +2643,8 @@ final class AppState: ObservableObject {
                     self?.applyRescuePreviewMetadata(outputJSON)
                 } else {
                     self?.rescueConfirmationToken = ""
-                    self?.rescuePreviewStatus = "preview更新に失敗しました（AI推論は開始していません）"
+                    self?.rescuePreviewStatus = "画像の更新に失敗しました（AI推論は開始していません）"
+                    self?.rescueImageUpdateFailed = true
                 }
             }
         }
@@ -2447,6 +2669,7 @@ final class AppState: ObservableObject {
         isRunning = false
         rescueWorkflowState = .manualOnly
         rescuePreviewStatus = "自動処理をキャンセルしました。手動調整を続けられます"
+        rescueImageUpdateFailed = false
         rescueConfirmationToken = ""
         rescuePreviewWorkItem?.cancel()
         rescuePreviewWorkItem = nil
@@ -2458,15 +2681,15 @@ final class AppState: ObservableObject {
             return
         }
         guard currentRescueSpacing.isValid else {
-            rescueInlineWarning = "X/Y/Z spacingは0より大きい有限値（20 mm以下）で入力してください。"
+            rescueInlineWarning = "形状の伸縮量が範囲外です。推定形状へ戻して調整し直してください。"
             return
         }
         guard rescueCropIsValid else {
-            rescueInlineWarning = "cropの最小値は最大値より小さくしてください。"
+            rescueInlineWarning = "画像の表示範囲を確認できません。別のCTを選んでください。"
             return
         }
         guard canFinalizeRescueTransform else {
-            rescueInlineWarning = "三方向プレビューを更新してから寸法を確定してください。AI推論はまだ開始していません。"
+            rescueInlineWarning = "三方向の画像を更新してから形状を確定してください。AI推論はまだ開始していません。"
             return
         }
         finalizeSecondaryCaptureRescue()
@@ -2476,7 +2699,7 @@ final class AppState: ObservableObject {
         guard let decodedVolume = rescueDecodedVolumeURL,
               let geometryJSON = rescueGeometryJSONURL,
               canFinalizeRescueTransform else {
-            rescueInlineWarning = "現在のtransformに対応するpreviewとconfirmation tokenを作成してください。"
+            rescueInlineWarning = "現在の形状に対応する三方向の画像を更新してください。"
             return
         }
         rescueConfirmationWasExplicit = true
@@ -2502,8 +2725,8 @@ final class AppState: ObservableObject {
         resultLogURL = nil
         runner.resetTerminationRequest()
         startRunTimer()
-        statusText = "確定したtransformを適用中"
-        progressText = "confirmation tokenを検証し、疑似NIfTIを作成しています。AI推論はまだ開始していません。"
+        statusText = "確定した形状を適用中"
+        progressText = "確認済みの形状から3D作成用データを準備しています。AI推論はまだ開始していません。"
         let command = CommandBuilder.dicomRescueFinalizeCommand(
             python: paths.venvPython,
             decodedVolume: decodedVolume,
@@ -2535,7 +2758,8 @@ final class AppState: ObservableObject {
                     self?.rescueConfirmationWasExplicit = false
                     self?.screen = .dicomRescue
                     self?.selectedStep = 1
-                    self?.rescueInlineWarning = "finalizeまたはNIfTI readbackに失敗しました。AI推論は開始していません。"
+                    self?.rescueInlineWarning = "確定した形状を安全に読み直せませんでした。AI推論は開始していません。"
+                    self?.rescueImageUpdateFailed = true
                 }
             }
         }
@@ -2553,18 +2777,18 @@ final class AppState: ObservableObject {
         creationChoice = .standardArchJaw
         resultKind = .none
         outputURL = nil
-        statusText = "寸法確認済み"
-        progressText = "確定したspacingのreadbackに成功しました。3Dプレビュー作成を開始します。"
+        statusText = "形状確認済み"
+        progressText = "確定した形状を確認できました。3Dプレビュー作成を開始します。"
         startRun()
     }
 
     private func updateRescueInlineWarning() {
         if !currentRescueSpacing.isValid {
-            rescueInlineWarning = "極端または無効なspacingです。各値は0より大きく20 mm以下にしてください。"
+            rescueInlineWarning = "形状の伸縮量が範囲外です。推定形状へ戻して調整し直してください。"
         } else if !rescueCropIsValid {
-            rescueInlineWarning = "cropの最小値は最大値より小さくしてください。"
+            rescueInlineWarning = "画像の表示範囲を確認できません。別のCTを選んでください。"
         } else if rescueUsesNonIdentityTransform {
-            rescueInlineWarning = "transform候補を変更しました。preview/finalize backend接続前は表示へ適用せず、確定もできません。"
+            rescueInlineWarning = "画像の向きを変更しました。更新が終わると形状を確定できます。"
         } else {
             rescueInlineWarning = ""
         }
@@ -2579,6 +2803,7 @@ final class AppState: ObservableObject {
         rescueMPRPreviewSlices = []
         rescuePseudo3DPreviewURL = nil
         rescuePreviewMetadataInferenceStarted = false
+        rescueImageUpdateFailed = false
         rescueDecodedVolumeURL = nil
         rescueGeometryJSONURL = nil
         rescueSourceManifestSHA256 = ""
