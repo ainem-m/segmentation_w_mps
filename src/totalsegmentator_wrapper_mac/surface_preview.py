@@ -1116,10 +1116,7 @@ code { color: #c9e2ff; }
   <button id="panelToggle" type="button" aria-controls="panel" aria-expanded="false" aria-label="表示設定を開く">設定</button>
   <div id="panelBackdrop" aria-hidden="true"></div>
   <aside id="panel" aria-label="表示設定">
-    <h1>TotalSegmentator 3Dビューアー</h1>
-    <p>データ: <code id="dataName"></code></p>
-    <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code></p>
-    <h2>表示</h2>
+    <h1>表示設定</h1>
     <div id="displayControls">
     <div id="displayModeControl" class="controlRow">
       <span class="controlLabel">表示モード</span>
@@ -1251,8 +1248,6 @@ function scheduleViewerInitialization() {
 function initializeViewer() {
   try {
     preparedMeshes = DATA.meshes.map(prepareMesh);
-    document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
-    document.getElementById('labelCount').textContent = DATA.labelCount;
     populateGeometryControl();
     populateSmoothingControl();
     populateDisplayModeControl();
@@ -1355,17 +1350,6 @@ function geometryPresetNames() {
   if (!names.length) names.push('base');
   return names;
 }
-function geometryPresetLabel(name) {
-  const preset = DATA.geometryPresets && DATA.geometryPresets[name];
-  if (typeof preset === 'string') return preset;
-  if (preset && typeof preset.label === 'string') return preset.label;
-  const labels = {
-    base: '標準',
-    original: '元の形状',
-    sdf: 'なめらか補完'
-  };
-  return labels[name] || name;
-}
 function normalizeGeometryPreset(name) {
   if (GEOMETRY_PRESET_ORDER.includes(name)) return name;
   if (GEOMETRY_PRESET_ORDER.includes('sdf')) return 'sdf';
@@ -1374,14 +1358,6 @@ function normalizeGeometryPreset(name) {
 }
 function hasGeometryVariants() {
   return GEOMETRY_PRESET_ORDER.length > 1;
-}
-function displayModeLabel(name) {
-  const labels = {
-    normal: '通常',
-    wireframe: 'ワイヤーフレーム',
-    xray: 'X-ray'
-  };
-  return labels[name] || name;
 }
 function smoothingPresetNames() {
   const known = SMOOTHING_PRESET_ORDER.filter(name => Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, name));
@@ -1406,7 +1382,6 @@ function normalizeDisplayMode(name) {
 function populateGeometryControl() {
   const hasVariants = hasGeometryVariants();
   geometryControl.hidden = !hasVariants;
-  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
   if (!hasVariants) return;
   geometryOriginalButton.onclick = () => setGeometryPreset('original');
   geometrySdfButton.onclick = () => setGeometryPreset('sdf');
@@ -1442,7 +1417,6 @@ function updateDisplayModeControl() {
   displayNormalButton.setAttribute('aria-pressed', String(currentDisplayMode === 'normal'));
   displayWireframeButton.setAttribute('aria-pressed', String(currentDisplayMode === 'wireframe'));
   displayXrayButton.setAttribute('aria-pressed', String(currentDisplayMode === 'xray'));
-  document.getElementById('displayModeLabel').textContent = displayModeLabel(currentDisplayMode);
 }
 function setSmoothingPreset(name) {
   const preset = normalizeSmoothingPreset(name);
@@ -1463,7 +1437,6 @@ function setGeometryPreset(name) {
     for (const mesh of preparedMeshes) rebuildMeshBuffers(mesh);
   }
   updateLayerStats();
-  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
   draw();
 }
 function updateGeometryButtons() {
@@ -1489,8 +1462,6 @@ function applySmoothingPreset(presetName, refreshGpu) {
     mesh.bounds = computeBounds(mesh.vertices);
     if (refreshGpu) refreshMeshBuffers(mesh);
   }
-  const smoothingModeLabel = document.getElementById('smoothingModeLabel');
-  if (smoothingModeLabel) smoothingModeLabel.textContent = smoothingLabel(presetName);
 }
 function geometryForPreset(raw, presetName) {
   const variants = raw.variants || {};
