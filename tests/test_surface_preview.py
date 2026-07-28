@@ -633,7 +633,7 @@ class SurfacePreviewTests(unittest.TestCase):
                 )
 
             viewer = summary["viewer"]
-            self.assertEqual(viewer["display_mode_default"], "normal")
+            self.assertEqual(viewer["display_mode_default"], "xray")
             self.assertEqual(viewer["display_modes"], ["normal", "wireframe", "xray"])
             self.assertEqual(viewer["xray"]["surface_color"], [1.0, 1.0, 1.0])
             self.assertEqual(viewer["xray"]["base_alpha"], 0.18)
@@ -653,7 +653,17 @@ class SurfacePreviewTests(unittest.TestCase):
             html = index_html + "\n" + bundle_js
             for element_id in ["displayNormal", "displayWireframe", "displayXray"]:
                 self.assertIn(f'id="{element_id}"', html)
+            self.assertIn('id="panelToggle"', html)
+            self.assertIn('id="panelBackdrop"', html)
+            self.assertIn("@media (max-width: 900px)", html)
+            self.assertIn("#app.panel-open #panel", html)
+            self.assertIn("function setPanelOpen(open)", html)
             self.assertIn("const DISPLAY_MODE_ORDER = ['normal', 'wireframe', 'xray'];", html)
+            self.assertIn("DATA.displayMode || 'xray'", html)
+            self.assertIn("const activePointers = new Map();", html)
+            self.assertIn("function applyTwoPointerGesture(previousPair, currentPair)", html)
+            self.assertIn("zoomByLogDelta(Math.log(currentDistance / previousDistance));", html)
+            self.assertIn("camera.pan[0] += currentCenter[0] - previousCenter[0];", html)
             self.assertIn("function setDisplayMode(name)", html)
             self.assertIn("function drawXrayShells(meshes)", html)
             self.assertIn("function selectXrayTargets(meshes)", html)
@@ -684,6 +694,18 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("gl.clearColor(0.1921569, 0.2039216, 0.1960784, 1.0)", html)
             self.assertIn("function drawDepthAwareGrid", html)
             self.assertIn("function drawSelectionAndGizmoOverlay", html)
+            self.assertIn("uniform float uBroadSpecular;", html)
+            self.assertIn("vec3 fillLight = normalize(vec3(-0.58, 0.14, 0.80));", html)
+            self.assertNotIn("vec3 backLight", html)
+            self.assertIn("float sharpSpec = pow(sharpSpecBase, uShininess) * uSpecular;", html)
+            self.assertIn(
+                "float broadSpec = pow(broadSpecBase, max(uShininess * 0.12, 2.0)) * uBroadSpecular;",
+                html,
+            )
+            self.assertIn("color = [0.965, 0.945, 0.88];", html)
+            self.assertIn("broadSpecular = 0.24;", html)
+            self.assertIn("subsurface = 0.052;", html)
+            self.assertIn("const porcelainRim =", html)
             draw_body = html[
                 html.index("function drawWebGl()") : html.index(
                     "function applySceneUniforms"

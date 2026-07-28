@@ -187,7 +187,7 @@ def run_surface_preview(
         "renderer": "webgl",
         "fallback_renderer": "canvas2d",
         "camera_mode_default": "trackpad",
-        "display_mode_default": "normal",
+        "display_mode_default": "xray",
         "display_modes": ["normal", "wireframe", "xray"],
         "transparent_rendering": "jaw_depth_prepass_front_shell",
         "runtime_smoothing": True,
@@ -1041,8 +1041,10 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
   #loadingOverlay { transition: none; }
   .loadingSpinner { animation: none; border-top-color: #46515d; }
 }
-#app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
-#panel { padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
+#app { position: relative; display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; }
+#panel { z-index: 4; padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
+#panelToggle { display: none; position: fixed; z-index: 6; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); min-width: 44px; min-height: 44px; padding: 0 13px; border: 1px solid #66717d; border-radius: 9px; background: rgba(32, 36, 42, 0.94); color: #fff; font: inherit; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); }
+#panelBackdrop { display: none; position: fixed; z-index: 3; inset: 0; background: rgba(5, 7, 10, 0.50); }
 #panel h1 { font-size: 18px; margin: 0 0 12px; }
 #panel h2 { font-size: 14px; margin: 16px 0 8px; color: #cfe4e2; }
 #panel p, #panel label { font-size: 13px; line-height: 1.45; }
@@ -1064,6 +1066,17 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
 #layers label { display: block; margin: 8px 0; }
 canvas { width: 100%; height: 100%; display: block; background: #111317; touch-action: none; }
 code { color: #c9e2ff; }
+@media (max-width: 900px) {
+  #app { grid-template-columns: minmax(0, 1fr); }
+  #panel { position: fixed; inset: 0 auto 0 0; width: min(320px, calc(100vw - 48px)); box-sizing: border-box; transform: translateX(-105%); transition: transform 180ms ease; box-shadow: 12px 0 30px rgba(0, 0, 0, 0.34); }
+  #app.panel-open #panel { transform: translateX(0); }
+  #panelToggle { display: block; }
+  #app.panel-open #panelToggle { left: min(272px, calc(100vw - 96px)); }
+  #app.panel-open #panelBackdrop { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #panel { transition: none; }
+}
 </style>
 </head>
 <body>
@@ -1097,7 +1110,9 @@ code { color: #c9e2ff; }
 })();
 </script>
 <div id="app">
-  <aside id="panel">
+  <button id="panelToggle" type="button" aria-controls="panel" aria-expanded="false" aria-label="表示設定を開く">設定</button>
+  <div id="panelBackdrop" aria-hidden="true"></div>
+  <aside id="panel" aria-label="表示設定">
     <h1>TotalSegmentator 3Dビューアー</h1>
     <p>データ: <code id="dataName"></code></p>
     <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
@@ -1175,6 +1190,7 @@ const GEOMETRY_PRESET_ORDER = geometryPresetNames();
 let inputMode = 'trackpad';
 let dragging = null;
 let lastPointer = null;
+const activePointers = new Map();
 let commandScrollFrame = 0;
 let pendingCommandScroll = [0, 0];
 let commandScrollSuppressZoom = false;
@@ -1191,7 +1207,7 @@ const camera = {
 const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));
 let currentGeometryPreset = normalizeGeometryPreset(DATA.geometryPreset || '');
 let currentMaterialMode = normalizeMaterialMode(DATA.materialPreset || 'rich');
-let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'normal');
+let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'xray');
 let preparedMeshes = [];
 let currentSmoothingPreset = normalizeSmoothingPreset((DATA.smoothing && DATA.smoothing.preset) || 'slicer_like');
 let program = null;
@@ -1214,7 +1230,25 @@ const materialPresetSelect = document.getElementById('materialPreset');
 const displayNormalButton = document.getElementById('displayNormal');
 const displayWireframeButton = document.getElementById('displayWireframe');
 const displayXrayButton = document.getElementById('displayXray');
+const app = document.getElementById('app');
+const panelToggle = document.getElementById('panelToggle');
+const panelBackdrop = document.getElementById('panelBackdrop');
+configureResponsivePanel();
 scheduleViewerInitialization();
+
+function configureResponsivePanel() {
+  panelToggle.onclick = () => setPanelOpen(!app.classList.contains('panel-open'));
+  panelBackdrop.onclick = () => setPanelOpen(false);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') setPanelOpen(false);
+  });
+}
+function setPanelOpen(open) {
+  app.classList.toggle('panel-open', open);
+  panelToggle.setAttribute('aria-expanded', String(open));
+  panelToggle.setAttribute('aria-label', open ? '表示設定を閉じる' : '表示設定を開く');
+  panelToggle.textContent = open ? '閉じる' : '設定';
+}
 
 function scheduleViewerInitialization() {
   requestAnimationFrame(() => {
@@ -1621,14 +1655,42 @@ function resize() {
 function onPointerDown(event) {
   const local = localPoint(event);
   lastPointer = local;
-  dragging = { button: event.button, lastLocal: local };
+  activePointers.set(event.pointerId, { local, button: event.button });
+  dragging = activePointers.size === 1
+    ? { pointerId: event.pointerId, button: event.button, lastLocal: local }
+    : null;
   canvas.setPointerCapture(event.pointerId);
   event.preventDefault();
 }
 function onPointerMove(event) {
   const local = localPoint(event);
   lastPointer = local;
-  if (!dragging) return;
+  if (!activePointers.has(event.pointerId)) return;
+  if (activePointers.size >= 2) {
+    const previousPair = Array.from(activePointers.values()).slice(0, 2);
+    activePointers.set(event.pointerId, {
+      local,
+      button: activePointers.get(event.pointerId).button
+    });
+    const currentPair = Array.from(activePointers.values()).slice(0, 2);
+    applyTwoPointerGesture(previousPair, currentPair);
+    dragging = null;
+    draw();
+    event.preventDefault();
+    return;
+  }
+  activePointers.set(event.pointerId, {
+    local,
+    button: activePointers.get(event.pointerId).button
+  });
+  if (!dragging || dragging.pointerId !== event.pointerId) {
+    dragging = {
+      pointerId: event.pointerId,
+      button: activePointers.get(event.pointerId).button,
+      lastLocal: local
+    };
+    return;
+  }
   const dx = local[0] - dragging.lastLocal[0];
   const dy = local[1] - dragging.lastLocal[1];
   if (inputMode === 'trackpad') {
@@ -1649,10 +1711,32 @@ function onPointerMove(event) {
   event.preventDefault();
 }
 function onPointerUp(event) {
-  if (dragging) {
-    try { canvas.releasePointerCapture(event.pointerId); } catch (_error) {}
+  try { canvas.releasePointerCapture(event.pointerId); } catch (_error) {}
+  activePointers.delete(event.pointerId);
+  const remaining = activePointers.entries().next();
+  if (!remaining.done) {
+    const [pointerId, pointer] = remaining.value;
+    dragging = { pointerId, button: pointer.button, lastLocal: pointer.local };
+  } else {
+    dragging = null;
   }
-  dragging = null;
+}
+function applyTwoPointerGesture(previousPair, currentPair) {
+  const previousCenter = midpoint2(previousPair[0].local, previousPair[1].local);
+  const currentCenter = midpoint2(currentPair[0].local, currentPair[1].local);
+  camera.pan[0] += currentCenter[0] - previousCenter[0];
+  camera.pan[1] += currentCenter[1] - previousCenter[1];
+  const previousDistance = distance2(previousPair[0].local, previousPair[1].local);
+  const currentDistance = distance2(currentPair[0].local, currentPair[1].local);
+  if (previousDistance > 1 && currentDistance > 1) {
+    zoomByLogDelta(Math.log(currentDistance / previousDistance));
+  }
+}
+function midpoint2(a, b) {
+  return [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+}
+function distance2(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 function onWheel(event) {
   event.preventDefault();
@@ -1854,6 +1938,7 @@ function initWebGl() {
     color: gl.getUniformLocation(program, 'uColor'),
     opacity: gl.getUniformLocation(program, 'uOpacity'),
     specular: gl.getUniformLocation(program, 'uSpecular'),
+    broadSpecular: gl.getUniformLocation(program, 'uBroadSpecular'),
     shininess: gl.getUniformLocation(program, 'uShininess'),
     ambient: gl.getUniformLocation(program, 'uAmbient'),
     diffuseBoost: gl.getUniformLocation(program, 'uDiffuseBoost'),
@@ -2182,6 +2267,7 @@ function drawMeshWebGl(mesh, renderMode, wireframe = false) {
   gl.uniform3fv(uniforms.color, new Float32Array(mesh.material.color));
   gl.uniform1f(uniforms.opacity, mesh.material.opacity);
   gl.uniform1f(uniforms.specular, mesh.material.specular);
+  gl.uniform1f(uniforms.broadSpecular, mesh.material.broadSpecular);
   gl.uniform1f(uniforms.shininess, mesh.material.shininess);
   gl.uniform1f(uniforms.ambient, mesh.material.ambient);
   gl.uniform1f(uniforms.diffuseBoost, mesh.material.diffuseBoost);
@@ -2365,17 +2451,44 @@ function drawFallback2d() {
         sub3(vertexAt(mesh.vertices, face[1]), vertexAt(mesh.vertices, face[0])),
         sub3(vertexAt(mesh.vertices, face[2]), vertexAt(mesh.vertices, face[0]))
       ));
-      const facing = Math.abs(mat3Vec(camera.orientation, worldNormal)[2]);
+      const viewNormal = normalize3(mat3Vec(camera.orientation, worldNormal));
+      const facing = Math.abs(viewNormal[2]);
       const renderMode = currentDisplayMode === 'wireframe'
         ? 'wireframe'
         : (fallbackXrayTargets.has(mesh) ? 'xray' : 'normal');
-      tris.push({ a, b, c, depth, material: mesh.material, facing, renderMode });
+      tris.push({ a, b, c, depth, material: mesh.material, facing, viewNormal, renderMode });
     }
   }
   tris.sort((p, q) => q.depth - p.depth);
   for (const t of tris) {
-    const materialLift = (t.material.emission || 0) * 1.2 + (t.material.rimStrength || 0) * 0.10;
-    const shade = Math.max(0.45, Math.min(1.18, 0.45 + (1.0 - t.depth) * 0.65 + materialLift));
+    const keyLight = normalize3([0.30, 0.68, 0.64]);
+    const fillLight = normalize3([-0.58, 0.14, 0.80]);
+    const viewNormal = t.viewNormal[2] < 0 ? scale3(t.viewNormal, -1) : t.viewNormal;
+    const keyDiffuse = Math.max(dot3(viewNormal, keyLight), 0);
+    const fillDiffuse = Math.max(dot3(viewNormal, fillLight), 0);
+    const sharpHighlight = Math.pow(
+      Math.max(dot3(viewNormal, normalize3([keyLight[0], keyLight[1], keyLight[2] + 1])), 0),
+      Math.max(t.material.shininess * 0.22, 8)
+    ) * t.material.specular;
+    const broadHighlight = Math.pow(
+      Math.max(dot3(viewNormal, normalize3([fillLight[0], fillLight[1], fillLight[2] + 1])), 0),
+      Math.max(t.material.shininess * 0.06, 2)
+    ) * (t.material.broadSpecular || 0);
+    const porcelainRim = Math.pow(clamp(1 - t.facing, 0, 1), 1.55)
+      * ((t.material.rimStrength || 0) + (t.material.subsurface || 0));
+    const materialLift = (t.material.emission || 0) * 1.2 + porcelainRim;
+    const shade = Math.max(
+      0.40,
+      Math.min(
+        1.22,
+        t.material.ambient
+          + keyDiffuse * 0.72 * t.material.diffuseBoost
+          + fillDiffuse * 0.24
+          + sharpHighlight
+          + broadHighlight
+          + materialLift
+      )
+    );
     const rgb = t.material.color.map(v => Math.round(v * 255 * shade));
     ctx2d.beginPath();
     ctx2d.moveTo(t.a[0], t.a[1]);
@@ -2489,6 +2602,7 @@ precision mediump float;
 uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uSpecular;
+uniform float uBroadSpecular;
 uniform float uShininess;
 uniform float uAmbient;
 uniform float uDiffuseBoost;
@@ -2521,27 +2635,26 @@ void main() {
   vec3 normal = normalize(vNormal);
   if (!gl_FrontFacing) normal = -normal;
   vec3 keyLight = normalize(vec3(0.30, 0.68, 0.64));
-  vec3 fillLight = normalize(vec3(-0.62, -0.22, 0.55));
-  vec3 backLight = normalize(vec3(-0.20, 0.36, -0.86));
+  vec3 fillLight = normalize(vec3(-0.58, 0.14, 0.80));
   vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
   float viewFacing = max(dot(normal, viewDir), 0.0);
   float keyDiffuse = max((dot(normal, keyLight) + uWrapDiffuse) / (1.0 + uWrapDiffuse), 0.0);
   float fillDiffuse = max(dot(normal, fillLight), 0.0);
-  float backDiffuse = max(dot(normal, backLight), 0.0);
   float diffuse = uAmbient
-    + keyDiffuse * 0.68 * uDiffuseBoost
-    + fillDiffuse * 0.18
-    + backDiffuse * 0.14;
-  vec3 halfDir = normalize(keyLight + viewDir);
-  float specBase = max(dot(normal, halfDir), 0.0);
-  float spec = pow(specBase, uShininess) * uSpecular;
-  float broadSpec = pow(specBase, max(uShininess * 0.20, 2.0)) * uSpecular * 0.10;
+    + keyDiffuse * 0.74 * uDiffuseBoost
+    + fillDiffuse * 0.26;
+  vec3 keyHalfDir = normalize(keyLight + viewDir);
+  vec3 fillHalfDir = normalize(fillLight + viewDir);
+  float sharpSpecBase = max(dot(normal, keyHalfDir), 0.0);
+  float broadSpecBase = max(dot(normal, fillHalfDir), 0.0);
+  float sharpSpec = pow(sharpSpecBase, uShininess) * uSpecular;
+  float broadSpec = pow(broadSpecBase, max(uShininess * 0.12, 2.0)) * uBroadSpecular;
   float rim = pow(1.0 - viewFacing, uRimPower) * uRimStrength;
   float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
   vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
   vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
-  vec3 highlight = vec3(spec) + warmColor * broadSpec;
-  vec3 glow = warmColor * rim + vec3(1.0, 0.64, 0.42) * subsurface + warmColor * uEmission;
+  vec3 highlight = vec3(sharpSpec) + vec3(1.0, 0.96, 0.88) * broadSpec;
+  vec3 glow = warmColor * rim + vec3(1.0, 0.91, 0.78) * subsurface + warmColor * uEmission;
   vec3 color = warmColor * diffuse + highlight + glow + coolFill;
   color = color / (color + vec3(0.48));
   color = min(color * 1.28, vec3(1.0));
@@ -2594,6 +2707,7 @@ function compileShader(type, source) {
 function materialFor(name, rgb, opacity, mode) {
   let color = rgb.map(v => v / 255);
   let specular = 0.22;
+  let broadSpecular = 0.035;
   let shininess = 32;
   let ambient = 0.24;
   let diffuseBoost = 1.0;
@@ -2616,17 +2730,18 @@ function materialFor(name, rgb, opacity, mode) {
     wrapDiffuse = 0.16;
     subsurface = 0.02;
     if (name === 'dental_hard_tissue') {
-      color = [0.93, 0.86, 0.66];
-      specular = 0.62;
-      shininess = 148;
-      ambient = 0.24;
-      diffuseBoost = 0.88;
-      rimStrength = 0.12;
-      rimPower = 1.90;
-      warmth = 0.38;
-      wrapDiffuse = 0.06;
+      color = [0.965, 0.945, 0.88];
+      specular = 0.78;
+      broadSpecular = 0.24;
+      shininess = 176;
+      ambient = 0.22;
+      diffuseBoost = 0.90;
+      rimStrength = 0.15;
+      rimPower = 1.72;
+      warmth = 0.18;
+      wrapDiffuse = 0.08;
       emission = 0.0;
-      subsurface = 0.018;
+      subsurface = 0.052;
     } else if (name === 'jaws') {
       color = [0.83, 0.68, 0.49];
       opacity = Math.max(opacity, 0.50);
@@ -2728,7 +2843,7 @@ function materialFor(name, rgb, opacity, mode) {
     if (name === 'pulp') { color = [1.00, 0.16, 0.22]; emission = 0.10; }
     if (name === 'all_nonzero') color = [0.46, 0.80, 1.00];
   }
-  return { color, opacity, specular, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
+  return { color, opacity, specular, broadSpecular, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
 }
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
