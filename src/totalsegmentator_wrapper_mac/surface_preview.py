@@ -2473,8 +2473,8 @@ function drawFallback2d() {
     const fillDiffuse = Math.max(dot3(viewNormal, fillLight), 0);
     const sharpHighlight = Math.pow(
       Math.max(dot3(viewNormal, normalize3([keyLight[0], keyLight[1], keyLight[2] + 1])), 0),
-      Math.max(t.material.shininess * 0.22, 8)
-    ) * t.material.specular;
+      Math.max(t.material.shininess * 0.30, 12)
+    ) * t.material.specular * 1.15;
     const broadHighlight = Math.pow(
       Math.max(dot3(viewNormal, normalize3([fillLight[0], fillLight[1], fillLight[2] + 1])), 0),
       Math.max(t.material.shininess * 0.06, 2)
@@ -2730,6 +2730,12 @@ void main() {
   color = min(color * 1.28, vec3(1.0));
   vec3 studioDisplay = min(studioSample * vec3(1.05, 1.03, 1.0), vec3(1.0));
   color = mix(color, studioDisplay, glazeMix);
+  float crispHighlight = clamp(
+    sharpSpec * 1.35 * step(0.001, uGlazeStrength),
+    0.0,
+    0.82
+  );
+  color = min(color + vec3(crispHighlight), vec3(1.0));
   gl_FragColor = vec4(color, uOpacity);
 }`;
 }
@@ -2804,10 +2810,10 @@ function materialFor(name, rgb, opacity, mode) {
     subsurface = 0.02;
     if (name === 'dental_hard_tissue') {
       color = [0.965, 0.945, 0.88];
-      specular = 0.78;
+      specular = 1.10;
       broadSpecular = 0.24;
       glazeStrength = 0.48;
-      shininess = 176;
+      shininess = 260;
       ambient = 0.22;
       diffuseBoost = 0.90;
       rimStrength = 0.15;

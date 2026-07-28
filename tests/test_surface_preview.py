@@ -713,6 +713,8 @@ class SurfacePreviewTests(unittest.TestCase):
                 html,
             )
             self.assertIn("color = [0.965, 0.945, 0.88];", html)
+            self.assertIn("specular = 1.10;", html)
+            self.assertIn("shininess = 260;", html)
             self.assertIn("broadSpecular = 0.24;", html)
             self.assertIn("glazeStrength = 0.48;", html)
             self.assertIn("subsurface = 0.052;", html)
@@ -733,6 +735,12 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("const leftStudioBand =", html)
             self.assertIn("vec3 studioDisplay =", html)
             self.assertIn("color = mix(color, studioDisplay, glazeMix);", html)
+            self.assertIn("float crispHighlight = clamp(", html)
+            self.assertIn(
+                "sharpSpec * 1.35 * step(0.001, uGlazeStrength)",
+                html,
+            )
+            self.assertIn("color = min(color + vec3(crispHighlight), vec3(1.0));", html)
             self.assertIn("const studioLevel =", html)
             self.assertIn("baseShade * (1 - glazeMix)", html)
             draw_body = html[
