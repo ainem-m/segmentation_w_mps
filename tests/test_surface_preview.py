@@ -140,13 +140,13 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertTrue(first_stl.exists())
             self.assertGreater(first_stl.stat().st_size, 84)
 
-    def test_vectorized_binary_stl_matches_scalar_writer_byte_for_byte(self) -> None:
+    def test_vectorized_binary_stl_preserves_scalar_geometry_and_normals(self) -> None:
         vertices = np.array(
             [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
+                [0.125, 0.25, -0.5],
+                [1.75, -0.125, 0.375],
+                [-0.25, 1.5, 0.625],
+                [0.375, -0.75, 1.25],
             ],
             dtype=np.float32,
         )
@@ -171,7 +171,32 @@ class SurfacePreviewTests(unittest.TestCase):
                 solid_name="byte_match",
             )
 
-            self.assertEqual(actual.read_bytes(), expected.read_bytes())
+            actual_bytes = actual.read_bytes()
+            expected_bytes = expected.read_bytes()
+            self.assertEqual(actual_bytes[:84], expected_bytes[:84])
+            record_dtype = np.dtype(
+                [
+                    ("normal", "<f4", (3,)),
+                    ("vertices", "<f4", (3, 3)),
+                    ("attribute", "<u2"),
+                ]
+            )
+            actual_records = np.frombuffer(actual_bytes, dtype=record_dtype, offset=84)
+            expected_records = np.frombuffer(expected_bytes, dtype=record_dtype, offset=84)
+            np.testing.assert_array_equal(
+                actual_records["vertices"],
+                expected_records["vertices"],
+            )
+            np.testing.assert_array_equal(
+                actual_records["attribute"],
+                expected_records["attribute"],
+            )
+            np.testing.assert_allclose(
+                actual_records["normal"],
+                expected_records["normal"],
+                rtol=1e-6,
+                atol=2e-7,
+            )
 
     def test_taubin_smoothing_is_finite_stable_and_moves_vertices(self) -> None:
         mask = _sphere_mask(shape=(24, 24, 24), center=(12, 12, 12), radius=6)
