@@ -54,6 +54,19 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("Third-party software", notice)
         self.assertIn("not relicensed", notice)
         self.assertNotIn("LicenseRef-Proprietary", pyproject + notice)
+        self.assertIn('"licenses/*.json"', pyproject)
+
+    def test_wheel_build_includes_model_notices_and_task_audit(self) -> None:
+        text = WHEEL_BUILD_SCRIPT.read_text(encoding="utf-8")
+        for required_name in (
+            "TotalSegmentator-Apache-2.0.txt",
+            "DentalSegmentator-NOTICE.txt",
+            "ToothSeg-NOTICE.txt",
+            "totalsegmentator_task_inventory.json",
+            "TotalSegmentator-task-inventory.json",
+        ):
+            with self.subTest(required_name=required_name):
+                self.assertIn(required_name, text)
 
     def test_totalsegmentator_public_task_inventory_matches_runtime_allowlists(self) -> None:
         from totalsegmentator_wrapper_mac.cli import TASKS

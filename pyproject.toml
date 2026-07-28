@@ -59,6 +59,7 @@ totalsegmentator_wrapper_mac = [
   "bin/totalsegmentator-wrapper-dicom-normalizer",
   "bin/lib/*.dylib",
   "licenses/*.txt",
+  "licenses/*.json",
 ]
 
 [tool.pytest.ini_options]

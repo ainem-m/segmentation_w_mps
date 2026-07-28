@@ -83,6 +83,46 @@ def verify_wheel(wheel: Path) -> None:
                 required_license in wheel_license_basenames,
                 f"{dylib} is missing required packaged license {required_license}",
             )
+        package_license_names = {
+            Path(name).name: name
+            for name in names
+            if "/totalsegmentator_wrapper_mac/licenses/" in f"/{name}"
+        }
+        for required_name in {
+            "TotalSegmentator-Apache-2.0.txt",
+            "DentalSegmentator-NOTICE.txt",
+            "ToothSeg-NOTICE.txt",
+            "TotalSegmentator-task-inventory.json",
+        }:
+            require(required_name in package_license_names, f"wheel model notice missing: {required_name}")
+        dental_text = archive.read(
+            package_license_names["DentalSegmentator-NOTICE.txt"]
+        ).decode("utf-8")
+        require("10.5281/zenodo.10829675" in dental_text, "wheel DentalSegmentator DOI missing")
+        require("Gauthier Dot" in dental_text, "wheel DentalSegmentator creator missing")
+        require(
+            "https://creativecommons.org/licenses/by/4.0/" in dental_text,
+            "wheel DentalSegmentator license URL missing",
+        )
+        toothseg_text = archive.read(package_license_names["ToothSeg-NOTICE.txt"]).decode("utf-8")
+        require("10.5281/zenodo.14893540" in toothseg_text, "wheel ToothSeg DOI missing")
+        require(
+            "https://creativecommons.org/licenses/by/4.0/" in toothseg_text,
+            "wheel ToothSeg license URL missing",
+        )
+        task_inventory = json.loads(
+            archive.read(package_license_names["TotalSegmentator-task-inventory.json"])
+        )
+        require(task_inventory.get("upstream_version") == "2.14.0", "wheel task audit version mismatch")
+        require(
+            [item.get("name") for item in task_inventory.get("user_selectable_tasks", [])]
+            == ["craniofacial_structures", "teeth"],
+            "wheel TotalSegmentator task allowlist mismatch",
+        )
+        require(
+            [item.get("task_id") for item in task_inventory.get("helper_weights", [])] == [297],
+            "wheel TotalSegmentator helper allowlist mismatch",
+        )
         combined = metadata_text + license_text + notice_text
         for marker in OLD_FIRST_PARTY_MARKERS:
             require(marker not in combined, f"old first-party marker {marker!r} remains in wheel")
