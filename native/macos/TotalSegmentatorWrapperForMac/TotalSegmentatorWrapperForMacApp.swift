@@ -36,7 +36,7 @@ struct TotalSegmentatorWrapperForMacApp: App {
                                 string: """
                                 無料のオープンソースソフトウェアです。アプリ本体はApache License 2.0で提供され、無保証です。
 
-                                TotalSegmentatorを利用した非公式wrapperで、研究・教育・検証用の非臨床プレビューです。診断や治療計画には使用できません。
+                                TotalSegmentatorを利用した非公式wrapperです。TotalSegmentator公式アプリではありません。研究・教育・検証用の非臨床プレビューで、診断や治療計画には使用できません。
 
                                 第三者コード、別途取得するモデル、Sample 1と派生画像には各別条件が適用されます。LICENSE、NOTICE、第三者表示はアプリ内のContents/Resourcesにあります。
 
