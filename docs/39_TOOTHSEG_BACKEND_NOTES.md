@@ -114,6 +114,60 @@ python -m totalsegmentator_wrapper_mac run \
   teeth can still cause merged, missing, or incorrectly numbered output.
 - This is a visualization/research preview and requires manual review.
 
+## 0.3.0 performance TODO
+
+The 0.3.0 optimization target is time spent outside MPS inference, especially
+semantic-probability export and ToothSeg self-correction. Preserve the published
+Dataset 121/Dataset 123 models, fold 5, disabled TTA, ROI policy, and FDI
+labeling behavior while working through the following items in order.
+
+1. Add phase-level timing and peak-memory evidence for:
+   - input and 0.2 mm instance resampling;
+   - semantic sliding-window inference;
+   - semantic probability conversion, resampling, and NPZ compression;
+   - instance sliding-window inference and segmentation export;
+   - probability loading and minimum-cost FDI assignment;
+   - full-space re-embedding and final NIfTI writing.
+2. Apply ToothSeg's upstream-recommended nnU-Net exporter changes:
+   - set semantic probabilities below `1e-6` to zero before compressed NPZ
+     serialization;
+   - release predicted logits immediately after probability conversion.
+   Record the exact bundled-runtime patch and verify it whenever the bundled
+   nnU-Net version changes.
+3. Remove avoidable full-volume allocations in local post-processing. In
+   particular, do not create another complete 33-class array merely to clamp
+   zero probabilities; limit instance processing to occupied bounds, replace
+   repeated full-volume `output.max()` scans with an explicit label counter,
+   and reduce boolean-indexing copies where practical.
+4. Delete the semantic probability NPZ after successful FDI labeling, final
+   labelmap validation, and result generation. Retain it on failure and provide
+   an explicit engineering/debug retention path. Cleanup reduces retained disk
+   usage but is not itself a runtime optimization.
+5. If export remains material after steps 1-4, benchmark overlapping semantic
+   probability serialization with the instance branch. Adopt this only if it
+   reduces wall-clock time without excessive unified-memory pressure, swapping,
+   or unstable MPS behavior.
+6. If the disk round trip remains the dominant non-inference cost, prototype a
+   ToothSeg-specific exporter/postprocessor that carries only the voxel-level
+   semantic information required for splitting merged instances and assigning
+   FDI labels. Do not replace the probability NPZ with per-instance averages
+   alone: the published self-correction also uses voxel-level probabilities.
+7. Benchmark secondary candidates only after the probability path is measured:
+   reuse unchanged resampling outputs, evaluate temporary uncompressed NIfTI
+   intermediates, and vectorize the transition-cost calculation. Keep these
+   changes only when their measured benefit exceeds their disk, memory, and
+   maintenance cost.
+
+For every accepted optimization, compare the same input before and after and
+record total wall time, each phase time, peak physical memory, swap behavior,
+temporary and retained disk size, and fallback state. The result must retain
+the same source-space shape and affine, the same non-empty FDI label set, and
+equivalent voxel output. Exact labelmap SHA-256 equality is preferred; any
+voxel difference requires an explicit explanation and review before release.
+Run at least the existing bundled sample regression and the full comparison CT
+used for the 0.2.1 timing work. A smaller NPZ alone is not sufficient evidence
+of a faster workflow.
+
 ## 2026-07-13 initial cropped MPS smoke
 
 The strict app-profile path was exercised with the published checkpoints on a
