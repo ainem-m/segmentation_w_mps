@@ -149,7 +149,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Cloudflare R2 release metadata.")
-    parser.add_argument("--version", default="0.2.0")
+    parser.add_argument("--version", default="0.2.1")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--minimum-supported-version", default=None)
     parser.add_argument("--dmg", type=Path, default=None)
@@ -289,6 +289,9 @@ def release_notes(version: str, *, notarized: bool) -> str:
 - High-resolution ToothSeg refinement can be explicitly prepared and run after a successful TotalSegmentator result with detected teeth.
 - The first ToothSeg preparation downloads approximately 920 MB; it never starts refinement automatically after the download.
 - Model-specific stages show measured progress when available and an honest indeterminate range otherwise.
+- Browser-ready 3D previews are produced before detailed STL export finishes.
+- Binary STL serialization is chunked and vectorized while preserving mesh geometry and float-precision normals.
+- Large browser mesh payloads are parsed as JSON to avoid Safari JavaScript parser stack overflow.
 - On the tested M1 Mac with 16 GB unified memory, the bundled 12 mm ROI sample took 34 minutes 27 seconds; other scans may take longer or exceed available memory.
 - Update checks run only after the user presses the update button.
 
