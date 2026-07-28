@@ -1053,17 +1053,17 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
 #panel p, #panel label { font-size: 13px; line-height: 1.45; }
 #panel button, #panel select { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
 #panel button.active { background: #496078; border-color: #71839a; }
-#mode, #views, .segmented { display: grid; gap: 6px; margin: 10px 0; }
+#mode, #viewActions, .segmented { display: grid; gap: 6px; margin: 10px 0; }
 #mode { grid-template-columns: 1fr 1fr; }
 #displayControls { display: grid; gap: 10px; margin: 10px 0 14px; }
-#views { grid-template-columns: 1fr 1fr; }
-#views button, .segmented button { width: 100%; }
+#viewActions { grid-template-columns: 1fr; }
+#viewActions button, .segmented button { width: 100%; }
 .segmented { grid-template-columns: 1fr 1fr; }
 #displayModeButtons { grid-template-columns: repeat(3, 1fr); }
 .controlRow { display: grid; gap: 6px; }
 .controlLabel { color: #cfe4e2; font-size: 13px; font-weight: 700; }
 #geometryControl[hidden] { display: none; }
-#smoothingControl, #materialControl { display: grid; gap: 6px; margin: 10px 0; }
+#smoothingControl { display: grid; gap: 6px; margin: 10px 0; }
 #advancedControls { border-top: 1px solid #343941; margin-top: 12px; padding-top: 10px; }
 #advancedControls summary { color: #cfe4e2; cursor: pointer; font-size: 14px; font-weight: 700; }
 #layers label { display: block; margin: 8px 0; }
@@ -1118,7 +1118,7 @@ code { color: #c9e2ff; }
   <aside id="panel" aria-label="表示設定">
     <h1>TotalSegmentator 3Dビューアー</h1>
     <p>データ: <code id="dataName"></code></p>
-    <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
+    <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code></p>
     <h2>表示</h2>
     <div id="displayControls">
     <div id="displayModeControl" class="controlRow">
@@ -1136,10 +1136,6 @@ code { color: #c9e2ff; }
         <button id="geometrySdf" type="button">なめらか補完</button>
       </div>
     </div>
-    <label id="materialControl" class="controlRow">
-      <span class="controlLabel">質感</span>
-      <select id="materialPreset" aria-label="質感"></select>
-    </label>
     </div>
     <details id="advancedControls">
       <summary>詳細設定</summary>
@@ -1152,16 +1148,8 @@ code { color: #c9e2ff; }
       <button id="modeTrackpad" class="active" type="button" aria-label="操作方法: トラックパッド">トラックパッド</button>
       <button id="modeMouse" type="button" aria-label="操作方法: マウス">マウス</button>
     </div>
-    <h2>表示方向</h2>
-    <div id="views">
-      <button id="viewFront" type="button" aria-label="標準方向で表示">標準方向</button>
-      <button id="viewBack" type="button" aria-label="標準方向の反対側から表示">反対方向</button>
-      <button id="viewLeft" type="button" aria-label="左回転方向で表示">左回転方向</button>
-      <button id="viewRight" type="button" aria-label="右回転方向で表示">右回転方向</button>
-      <button id="viewTop" type="button" aria-label="上方向から表示">上方向</button>
-      <button id="viewBottom" type="button" aria-label="下方向から表示">下方向</button>
+    <div id="viewActions">
       <button id="fitAll" type="button" aria-label="全体に合わせる">全体に合わせる</button>
-      <button id="reset" type="button" aria-label="初期表示に戻す">初期表示に戻す</button>
     </div>
     <h2>表示する構造</h2>
     <div id="layers"></div>
@@ -1198,8 +1186,6 @@ let commandScrollFrame = 0;
 let pendingCommandScroll = [0, 0];
 let commandScrollSuppressZoom = false;
 const camera = {
-  orbitYawDegrees: 0,
-  orbitPitchDegrees: 0,
   orientation: identity3(),
   pan: [0, 0],
   zoom: 0.05,
@@ -1229,7 +1215,6 @@ const geometryControl = document.getElementById('geometryControl');
 const geometryOriginalButton = document.getElementById('geometryOriginal');
 const geometrySdfButton = document.getElementById('geometrySdf');
 const smoothingPresetSelect = document.getElementById('smoothingPreset');
-const materialPresetSelect = document.getElementById('materialPreset');
 const displayNormalButton = document.getElementById('displayNormal');
 const displayWireframeButton = document.getElementById('displayWireframe');
 const displayXrayButton = document.getElementById('displayXray');
@@ -1270,7 +1255,6 @@ function initializeViewer() {
     document.getElementById('labelCount').textContent = DATA.labelCount;
     populateGeometryControl();
     populateSmoothingControl();
-    populateMaterialControl();
     populateDisplayModeControl();
     applyMaterialMode(currentMaterialMode, false);
     applySmoothingPreset(currentSmoothingPreset, false);
@@ -1291,14 +1275,7 @@ function initializeViewer() {
     updateLayerStats();
     document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
     document.getElementById('modeMouse').onclick = () => setInputMode('mouse');
-    document.getElementById('viewFront').onclick = () => applyAxisView(0, 0);
-    document.getElementById('viewBack').onclick = () => applyAxisView(180, 0);
-    document.getElementById('viewLeft').onclick = () => applyAxisView(270, 0);
-    document.getElementById('viewRight').onclick = () => applyAxisView(90, 0);
-    document.getElementById('viewTop').onclick = () => applyAxisView(0, 89);
-    document.getElementById('viewBottom').onclick = () => applyAxisView(0, 271);
     document.getElementById('fitAll').onclick = () => { fitAll(); draw(); };
-    document.getElementById('reset').onclick = () => { resetCamera(); draw(); };
     if (gl) initWebGl();
     resetCamera();
     fitAll();
@@ -1398,16 +1375,6 @@ function normalizeGeometryPreset(name) {
 function hasGeometryVariants() {
   return GEOMETRY_PRESET_ORDER.length > 1;
 }
-function materialModeLabel(name) {
-  const labels = {
-    standard: '標準',
-    rich: 'リッチ',
-    realistic: 'リアル',
-    neutral: 'ニュートラル',
-    high_contrast: '高コントラスト'
-  };
-  return labels[name] || name;
-}
 function displayModeLabel(name) {
   const labels = {
     normal: '通常',
@@ -1456,17 +1423,6 @@ function populateSmoothingControl() {
   smoothingPresetSelect.value = currentSmoothingPreset;
   smoothingPresetSelect.onchange = () => setSmoothingPreset(smoothingPresetSelect.value);
 }
-function populateMaterialControl() {
-  materialPresetSelect.innerHTML = '';
-  for (const name of MATERIAL_MODE_ORDER) {
-    const option = document.createElement('option');
-    option.value = name;
-    option.textContent = materialModeLabel(name);
-    materialPresetSelect.appendChild(option);
-  }
-  materialPresetSelect.value = currentMaterialMode;
-  materialPresetSelect.onchange = () => setMaterialMode(materialPresetSelect.value);
-}
 function populateDisplayModeControl() {
   displayNormalButton.onclick = () => setDisplayMode('normal');
   displayWireframeButton.onclick = () => setDisplayMode('wireframe');
@@ -1486,7 +1442,6 @@ function updateDisplayModeControl() {
   displayNormalButton.setAttribute('aria-pressed', String(currentDisplayMode === 'normal'));
   displayWireframeButton.setAttribute('aria-pressed', String(currentDisplayMode === 'wireframe'));
   displayXrayButton.setAttribute('aria-pressed', String(currentDisplayMode === 'xray'));
-  materialPresetSelect.disabled = currentDisplayMode !== 'normal';
   document.getElementById('displayModeLabel').textContent = displayModeLabel(currentDisplayMode);
 }
 function setSmoothingPreset(name) {
@@ -1518,16 +1473,11 @@ function updateGeometryButtons() {
   geometryOriginalButton.classList.toggle('active', currentGeometryPreset === 'original');
   geometrySdfButton.classList.toggle('active', currentGeometryPreset === 'sdf');
 }
-function setMaterialMode(name) {
-  applyMaterialMode(name, true);
-}
 function applyMaterialMode(name, redraw) {
   currentMaterialMode = normalizeMaterialMode(name);
-  materialPresetSelect.value = currentMaterialMode;
   for (const mesh of preparedMeshes) {
     mesh.material = materialFor(mesh.name, mesh.baseRgb, mesh.baseOpacity, currentMaterialMode);
   }
-  document.getElementById('materialModeLabel').textContent = materialModeLabel(currentMaterialMode);
   if (redraw) draw();
 }
 function applySmoothingPreset(presetName, refreshGpu) {
@@ -1814,8 +1764,6 @@ function zoomByLogDelta(delta) {
   camera.zoom = clamp(camera.zoom * Math.exp(clamped), MIN_ZOOM, MAX_ZOOM);
 }
 function resetCamera() {
-  camera.orbitYawDegrees = 0;
-  camera.orbitPitchDegrees = 0;
   camera.orientation = identity3();
   camera.pan = [0, 0];
   camera.zoom = 0.05;
@@ -1841,12 +1789,6 @@ function fitVisible(targetZoom) {
   camera.viewScale = extent > 0 ? 1.6 / extent : 1.0;
   camera.pan = [0, 0];
   camera.zoom = targetZoom;
-}
-function applyAxisView(yaw, pitch) {
-  camera.orbitYawDegrees = yaw;
-  camera.orbitPitchDegrees = pitch;
-  camera.orientation = orthonormalizeOrientation(orientationFromYawPitch(yaw, pitch));
-  draw();
 }
 function visibleBounds() {
   const active = preparedMeshes.filter(mesh => visible[mesh.name]);
@@ -2985,11 +2927,6 @@ function axisAngleMatrix(axis, angle) {
     t*x*y+s*z, t*y*y+c, t*y*z-s*x,
     t*x*z-s*y, t*y*z+s*x, t*z*z+c
   ];
-}
-function orientationFromYawPitch(yawDegrees, pitchDegrees) {
-  const yaw = yawDegrees * Math.PI / 180;
-  const pitch = pitchDegrees * Math.PI / 180;
-  return mat3Multiply(axisAngleMatrix([1, 0, 0], pitch), axisAngleMatrix([0, 1, 0], yaw));
 }
 function sub3(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
 function cross3(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
