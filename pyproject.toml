@@ -28,6 +28,12 @@ dependencies = [
   "scikit-image>=0.22",
 ]
 
+[project.urls]
+Homepage = "https://totalsegmentator.lacramy.com/"
+Documentation = "https://github.com/ainem-m/segmentation_w_mps/blob/master/docs/USER_MANUAL_JA.md"
+Repository = "https://github.com/ainem-m/segmentation_w_mps"
+Issues = "https://github.com/ainem-m/segmentation_w_mps/issues"
+
 [project.optional-dependencies]
 dicom = [
   "pydicom>=3,<4",

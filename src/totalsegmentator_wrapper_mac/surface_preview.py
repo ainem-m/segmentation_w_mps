@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -34,6 +35,10 @@ GROUP_COLORS = {
 PREVIEW_STEP_SIZE_WARNING_THRESHOLD = 4
 PREVIEW_STEP_SIZE_WARNING = "small structures may be under-sampled"
 VIEWER_BUNDLE_FILENAME = "viewer_bundle.js"
+GEOMETRY_FORMAT = "tswm-geometry-v1"
+GEOMETRY_MAGIC = b"TSWMGEO1"
+GEOMETRY_SCALE = 1000
+GEOMETRY_HEADER = struct.Struct("<8sIIII")
 PERFORMANCE_PROFILE_FILENAME = "performance_profile.json"
 STL_PERFORMANCE_PROFILE_FILENAME = "stl_performance_profile.json"
 STL_GENERATION_LOG_FILENAME = "stl_generation.log"
@@ -159,7 +164,7 @@ def run_surface_preview(
             data=data,
         )
     with profiler.measure("json_html_write", artifact="offline_viewer"):
-        viewer_bundle_path = _write_offline_viewer(
+        viewer_bundle_path, geometry_paths = _write_offline_viewer(
             html_path,
             summary=summary,
             preview_meshes=preview_meshes,
@@ -195,6 +200,9 @@ def run_surface_preview(
         "runtime_smoothing_presets": list(SMOOTH_PRESETS.keys()),
         "material_default": "rich",
         "material_presets": ["standard", "rich", "realistic", "neutral", "high_contrast"],
+        "geometry_format": GEOMETRY_FORMAT,
+        "geometry_encoding": "base64-fixed-point-int32-and-uint32",
+        "geometry_files": [str(item.resolve()) for item in geometry_paths],
         "xray": {
             "surface_color": [1.0, 1.0, 1.0],
             "base_alpha": 0.18,
@@ -923,10 +931,15 @@ def _build_preview_meshes(
     preview = []
     group_order = ["jaws", "dental_hard_tissue", "pulp", "all_nonzero"]
     groups = {group["name"]: group for group in summary["groups"]}
+    emitted_label_sets: set[tuple[int, ...]] = set()
     for name in group_order:
         group = groups.get(name)
         if not group:
             continue
+        label_set = tuple(sorted(int(label) for label in group["labels"]))
+        if label_set in emitted_label_sets:
+            continue
+        emitted_label_sets.add(label_set)
         with profiler.measure(
             "label_scan_and_mask",
             operation="browser_group_mask",
@@ -960,24 +973,153 @@ def _write_offline_viewer(
     *,
     summary: dict[str, Any],
     preview_meshes: list[dict[str, Any]],
-) -> Path:
+) -> tuple[Path, list[Path]]:
+    for stale_path in path.parent.glob("mesh-*.js"):
+        stale_path.unlink()
+    geometry_files: list[str] = []
+    metadata_meshes: list[dict[str, Any]] = []
+    for mesh in preview_meshes:
+        geometry_filename, geometry_metadata = _write_geometry_chunk(
+            path.parent,
+            mesh,
+        )
+        geometry_files.append(geometry_filename)
+        metadata_meshes.append(
+            {
+                key: value
+                for key, value in mesh.items()
+                if key not in {"vertices", "faces"}
+            }
+            | geometry_metadata
+        )
     payload = {
         "dataLabel": "選択したデータ",
         "labelCount": summary["label_count"],
         "smoothing": summary["smoothing"],
         "smoothingPresets": _viewer_smoothing_presets(),
         "materialPreset": "rich",
-        "meshes": preview_meshes,
+        "geometryFormat": GEOMETRY_FORMAT,
+        "geometryFiles": geometry_files,
+        "meshes": metadata_meshes,
     }
     document = _html_document(payload)
     index_html, bundle_js = _externalize_viewer_script(
         document,
         bundle_filename=VIEWER_BUNDLE_FILENAME,
+        geometry_filenames=geometry_files,
     )
     bundle_path = path.with_name(VIEWER_BUNDLE_FILENAME)
     path.write_text(index_html, encoding="utf-8")
     bundle_path.write_text(bundle_js, encoding="utf-8")
-    return bundle_path
+    return bundle_path, [path.parent / filename for filename in geometry_files]
+
+
+def _write_geometry_chunk(
+    output_dir: Path,
+    mesh: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    name = str(mesh["name"])
+    vertices = np.asarray(mesh["vertices"], dtype=np.float64)
+    faces = np.asarray(mesh["faces"], dtype=np.uint32)
+    if vertices.ndim != 2 or vertices.shape[1] != 3:
+        raise ValueError(f"Invalid preview vertices for {name}: {vertices.shape}")
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(f"Invalid preview faces for {name}: {faces.shape}")
+
+    scaled_vertices = np.rint(vertices * GEOMETRY_SCALE).astype("<i4")
+    restored_vertices = scaled_vertices.astype(np.float64) / GEOMETRY_SCALE
+    if not np.allclose(
+        restored_vertices,
+        vertices,
+        rtol=0.0,
+        atol=(0.5 / GEOMETRY_SCALE) + 1e-12,
+    ):
+        raise ValueError(
+            f"Preview vertices for {name} exceed {GEOMETRY_SCALE}x fixed-point precision"
+        )
+    little_endian_faces = faces.astype("<u4", copy=False)
+    payload = (
+        GEOMETRY_HEADER.pack(
+            GEOMETRY_MAGIC,
+            1,
+            GEOMETRY_SCALE,
+            int(vertices.shape[0]),
+            int(faces.shape[0]),
+        )
+        + scaled_vertices.tobytes(order="C")
+        + little_endian_faces.tobytes(order="C")
+    )
+    digest = hashlib.sha256(payload).hexdigest()
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-") or "mesh"
+    filename = f"mesh-{safe_name}.{digest[:16]}.js"
+    chunk = {
+        "format": GEOMETRY_FORMAT,
+        "sha256": digest,
+        "byteLength": len(payload),
+        "data": base64.b64encode(payload).decode("ascii"),
+    }
+    script = (
+        "window.__TSW_GEOMETRY_CHUNKS__ = "
+        "window.__TSW_GEOMETRY_CHUNKS__ || Object.create(null);\n"
+        f"window.__TSW_GEOMETRY_CHUNKS__[{json.dumps(name)}] = "
+        f"{json.dumps(chunk, separators=(',', ':'))};\n"
+    )
+    (output_dir / filename).write_text(script, encoding="utf-8")
+    return filename, {
+        "geometryKey": name,
+        "geometryFile": filename,
+        "geometrySha256": digest,
+        "geometryByteLength": len(payload),
+        "vertexCount": int(vertices.shape[0]),
+        "triangleCount": int(faces.shape[0]),
+    }
+
+
+def read_geometry_chunk(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    script = path.read_text(encoding="utf-8")
+    match = re.search(
+        r"window\.__TSW_GEOMETRY_CHUNKS__\[[^\]]+\] = (\{.*\});\s*$",
+        script,
+        re.DOTALL,
+    )
+    if match is None:
+        raise ValueError(f"Geometry chunk registration not found: {path}")
+    chunk = json.loads(match.group(1))
+    if chunk.get("format") != GEOMETRY_FORMAT:
+        raise ValueError(f"Unsupported geometry format: {chunk.get('format')!r}")
+    payload = base64.b64decode(chunk["data"], validate=True)
+    if len(payload) != int(chunk["byteLength"]):
+        raise ValueError(f"Geometry byte length mismatch: {path}")
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != chunk["sha256"]:
+        raise ValueError(f"Geometry checksum mismatch: {path}")
+    if len(payload) < GEOMETRY_HEADER.size:
+        raise ValueError(f"Geometry header is truncated: {path}")
+    magic, version, scale, vertex_count, face_count = GEOMETRY_HEADER.unpack_from(payload)
+    if magic != GEOMETRY_MAGIC or version != 1 or scale <= 0:
+        raise ValueError(f"Invalid geometry header: {path}")
+    vertex_value_count = int(vertex_count) * 3
+    face_value_count = int(face_count) * 3
+    expected_length = GEOMETRY_HEADER.size + (vertex_value_count + face_value_count) * 4
+    if len(payload) != expected_length:
+        raise ValueError(f"Geometry payload size mismatch: {path}")
+    vertices_end = GEOMETRY_HEADER.size + vertex_value_count * 4
+    scaled_vertices = np.frombuffer(
+        payload,
+        dtype="<i4",
+        count=vertex_value_count,
+        offset=GEOMETRY_HEADER.size,
+    ).reshape((-1, 3))
+    faces = np.frombuffer(
+        payload,
+        dtype="<u4",
+        count=face_value_count,
+        offset=vertices_end,
+    ).reshape((-1, 3))
+    if faces.size and int(faces.max()) >= int(vertex_count):
+        raise ValueError(f"Geometry face index out of range: {path}")
+    vertices = scaled_vertices.astype(np.float32) / float(scale)
+    return vertices, faces.copy()
 
 
 def _html_document(payload: dict[str, Any]) -> str:
@@ -989,6 +1131,7 @@ def _externalize_viewer_script(
     document: str,
     *,
     bundle_filename: str,
+    geometry_filenames: list[str] | None = None,
 ) -> tuple[str, str]:
     script_open = "<script>\n"
     script_close = "\n</script>"
@@ -1000,18 +1143,34 @@ def _externalize_viewer_script(
     bundle_js = document[body_start:script_end] + "\n"
     bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
     bundle_url = f"{bundle_filename}?sha256={bundle_digest}"
+    geometry_filenames_json = json.dumps(
+        geometry_filenames or [],
+        separators=(",", ":"),
+    )
     loader_script = """<script>
 (function () {
+  const geometryFiles = __GEOMETRY_FILENAMES__;
+  function loadScript(filename) {
+    return new Promise(function (resolve, reject) {
+      const script = document.createElement('script');
+      script.src = filename;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
   requestAnimationFrame(function () {
-    const bundle = document.createElement('script');
-    bundle.src = '__BUNDLE_FILENAME__';
-    bundle.onerror = function () {
+    Promise.all(geometryFiles.map(loadScript)).then(function () {
+      return loadScript('__BUNDLE_FILENAME__');
+    }).catch(function () {
       window.showViewerLoadError('必要な表示データを読み込めませんでした。結果フォルダ内のファイルを移動せず、ページを再読み込みしてください。');
-    };
-    document.head.appendChild(bundle);
+    });
   });
 })();
-</script>""".replace("__BUNDLE_FILENAME__", bundle_url)
+</script>""".replace(
+        "__GEOMETRY_FILENAMES__",
+        geometry_filenames_json,
+    ).replace("__BUNDLE_FILENAME__", bundle_url)
     index_html = (
         document[:script_start]
         + loader_script
@@ -1468,25 +1627,154 @@ function geometryForPreset(raw, presetName) {
   const preset = normalizeGeometryPreset(presetName);
   if (variants[preset]) return variants[preset];
   if (variants.base) return variants.base;
+  if (raw.geometryKey) return decodeGeometryChunk(raw);
   return { vertices: raw.vertices, faces: raw.faces };
 }
 function applyRawGeometry(mesh, geometry) {
   mesh.baseVertices = flattenVertices(geometry.vertices);
-  mesh.faces = geometry.faces;
+  mesh.faces = flattenFaces(geometry.faces);
   mesh.vertices = new Float32Array(mesh.baseVertices);
   mesh.normals = computeVertexNormals(mesh.vertices, mesh.faces);
   mesh.bounds = computeBounds(mesh.vertices);
   mesh.adjacency = null;
 }
 function flattenVertices(vertices) {
+  if (vertices instanceof Float32Array) return new Float32Array(vertices);
   const out = new Float32Array(vertices.length * 3);
   for (let i = 0; i < vertices.length; i++) out.set(vertices[i], i * 3);
   return out;
 }
+function flattenFaces(faces) {
+  if (faces instanceof Uint32Array) return new Uint32Array(faces);
+  const out = new Uint32Array(faces.length * 3);
+  for (let i = 0; i < faces.length; i++) out.set(faces[i], i * 3);
+  return out;
+}
+function triangleCount(faces) {
+  return Math.floor(faces.length / 3);
+}
+function decodeGeometryChunk(raw) {
+  const registry = window.__TSW_GEOMETRY_CHUNKS__ || {};
+  const chunk = registry[raw.geometryKey];
+  if (!chunk) throw new Error('Missing geometry chunk: ' + raw.geometryKey);
+  if (chunk.format !== 'tswm-geometry-v1') {
+    throw new Error('Unsupported geometry format: ' + String(chunk.format));
+  }
+  const binary = atob(chunk.data);
+  if (binary.length !== Number(chunk.byteLength)) {
+    throw new Error('Geometry byte length mismatch: ' + raw.geometryKey);
+  }
+  const bytes = new Uint8Array(binary.length);
+  const copyChunkSize = 1024 * 1024;
+  for (let start = 0; start < binary.length; start += copyChunkSize) {
+    const end = Math.min(binary.length, start + copyChunkSize);
+    for (let i = start; i < end; i++) bytes[i] = binary.charCodeAt(i);
+  }
+  const expectedDigest = String(raw.geometrySha256 || '');
+  if (!expectedDigest || chunk.sha256 !== expectedDigest || sha256Hex(bytes) !== expectedDigest) {
+    throw new Error('Geometry checksum mismatch: ' + raw.geometryKey);
+  }
+  const view = new DataView(bytes.buffer);
+  const magic = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+  const version = view.getUint32(8, true);
+  const scale = view.getUint32(12, true);
+  const vertexCount = view.getUint32(16, true);
+  const faceCount = view.getUint32(20, true);
+  if (magic !== 'TSWMGEO1' || version !== 1 || !scale) {
+    throw new Error('Invalid geometry header: ' + raw.geometryKey);
+  }
+  if (vertexCount !== Number(raw.vertexCount) || faceCount !== Number(raw.triangleCount)) {
+    throw new Error('Geometry count mismatch: ' + raw.geometryKey);
+  }
+  const vertexValueCount = vertexCount * 3;
+  const faceValueCount = faceCount * 3;
+  const expectedLength = 24 + (vertexValueCount + faceValueCount) * 4;
+  if (bytes.length !== expectedLength) {
+    throw new Error('Geometry payload size mismatch: ' + raw.geometryKey);
+  }
+  const vertices = new Float32Array(vertexValueCount);
+  let offset = 24;
+  for (let i = 0; i < vertexValueCount; i++, offset += 4) {
+    vertices[i] = view.getInt32(offset, true) / scale;
+  }
+  const faces = new Uint32Array(faceValueCount);
+  for (let i = 0; i < faceValueCount; i++, offset += 4) {
+    const index = view.getUint32(offset, true);
+    if (index >= vertexCount) throw new Error('Geometry face index out of range: ' + raw.geometryKey);
+    faces[i] = index;
+  }
+  delete registry[raw.geometryKey];
+  return { vertices, faces };
+}
+function sha256Hex(bytes) {
+  const constants = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ]);
+  const state = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ]);
+  const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLength);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const paddedView = new DataView(padded.buffer);
+  const bitLengthHigh = Math.floor(bytes.length / 0x20000000);
+  const bitLengthLow = (bytes.length << 3) >>> 0;
+  paddedView.setUint32(paddedLength - 8, bitLengthHigh, false);
+  paddedView.setUint32(paddedLength - 4, bitLengthLow, false);
+  const words = new Uint32Array(64);
+  const rotateRight = (value, count) => (value >>> count) | (value << (32 - count));
+
+  for (let block = 0; block < paddedLength; block += 64) {
+    for (let i = 0; i < 16; i++) words[i] = paddedView.getUint32(block + i * 4, false);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotateRight(words[i - 15], 7) ^ rotateRight(words[i - 15], 18) ^ (words[i - 15] >>> 3);
+      const s1 = rotateRight(words[i - 2], 17) ^ rotateRight(words[i - 2], 19) ^ (words[i - 2] >>> 10);
+      words[i] = (words[i - 16] + s0 + words[i - 7] + s1) >>> 0;
+    }
+    let a = state[0], b = state[1], c = state[2], d = state[3];
+    let e = state[4], f = state[5], g = state[6], h = state[7];
+    for (let i = 0; i < 64; i++) {
+      const sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+      const choice = (e & f) ^ (~e & g);
+      const temp1 = (h + sum1 + choice + constants[i] + words[i]) >>> 0;
+      const sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+      const majority = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (sum0 + majority) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0;
+      d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    state[0] = (state[0] + a) >>> 0;
+    state[1] = (state[1] + b) >>> 0;
+    state[2] = (state[2] + c) >>> 0;
+    state[3] = (state[3] + d) >>> 0;
+    state[4] = (state[4] + e) >>> 0;
+    state[5] = (state[5] + f) >>> 0;
+    state[6] = (state[6] + g) >>> 0;
+    state[7] = (state[7] + h) >>> 0;
+  }
+  return Array.from(state, value => value.toString(16).padStart(8, '0')).join('');
+}
 function updateLayerStats() {
   for (const mesh of preparedMeshes) {
     if (mesh.layerCountNode) {
-      mesh.layerCountNode.textContent = '（ポリゴン数: ' + mesh.faces.length + '）';
+      mesh.layerCountNode.textContent = '（ポリゴン数: ' + triangleCount(mesh.faces) + '）';
     }
   }
 }
@@ -1522,10 +1810,10 @@ function meshAdjacency(mesh) {
   if (mesh.adjacency) return mesh.adjacency;
   const vertexCount = mesh.baseVertices.length / 3;
   const sets = Array.from({ length: vertexCount }, () => new Set());
-  for (const face of mesh.faces) {
-    addMeshEdge(sets, face[0], face[1]);
-    addMeshEdge(sets, face[1], face[2]);
-    addMeshEdge(sets, face[2], face[0]);
+  for (let i = 0; i < mesh.faces.length; i += 3) {
+    addMeshEdge(sets, mesh.faces[i], mesh.faces[i + 1]);
+    addMeshEdge(sets, mesh.faces[i + 1], mesh.faces[i + 2]);
+    addMeshEdge(sets, mesh.faces[i + 2], mesh.faces[i]);
   }
   mesh.adjacency = sets.map(set => Array.from(set));
   return mesh.adjacency;
@@ -1891,13 +2179,16 @@ function prepareMesh(raw) {
 }
 function computeVertexNormals(vertices, faces) {
   const normals = new Float32Array(vertices.length);
-  for (const face of faces) {
-    const ia = face[0] * 3;
-    const ib = face[1] * 3;
-    const ic = face[2] * 3;
+  for (let faceOffset = 0; faceOffset < faces.length; faceOffset += 3) {
+    const faceA = faces[faceOffset];
+    const faceB = faces[faceOffset + 1];
+    const faceC = faces[faceOffset + 2];
+    const ia = faceA * 3;
+    const ib = faceB * 3;
+    const ic = faceC * 3;
     const normal = normalize3(cross3(
-      sub3(vertexAt(vertices, face[1]), vertexAt(vertices, face[0])),
-      sub3(vertexAt(vertices, face[2]), vertexAt(vertices, face[0]))
+      sub3(vertexAt(vertices, faceB), vertexAt(vertices, faceA)),
+      sub3(vertexAt(vertices, faceC), vertexAt(vertices, faceA))
     ));
     for (const idx of [ia, ib, ic]) {
       normals[idx] += normal[0];
@@ -1932,9 +2223,8 @@ function uploadMesh(mesh) {
   gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.DYNAMIC_DRAW);
   if (mesh.vertices.length / 3 <= 65535 || uintIndexExtension) {
     const indexArray = mesh.vertices.length / 3 > 65535
-      ? new Uint32Array(mesh.faces.length * 3)
-      : new Uint16Array(mesh.faces.length * 3);
-    for (let i = 0; i < mesh.faces.length; i++) indexArray.set(mesh.faces[i], i * 3);
+      ? new Uint32Array(mesh.faces)
+      : new Uint16Array(mesh.faces);
     const indexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexArray, gl.STATIC_DRAW);
@@ -1998,11 +2288,12 @@ function rebuildMeshBuffers(mesh) {
   uploadMesh(mesh);
 }
 function expandFaces(vertices, normals, faces) {
-  const outVertices = new Float32Array(faces.length * 9);
-  const outNormals = new Float32Array(faces.length * 9);
-  for (let i = 0; i < faces.length; i++) {
+  const faceCount = triangleCount(faces);
+  const outVertices = new Float32Array(faceCount * 9);
+  const outNormals = new Float32Array(faceCount * 9);
+  for (let i = 0; i < faceCount; i++) {
     for (let j = 0; j < 3; j++) {
-      const source = faces[i][j] * 3;
+      const source = faces[i * 3 + j] * 3;
       const target = i * 9 + j * 3;
       outVertices.set(vertices.subarray(source, source + 3), target);
       outNormals.set(normals.subarray(source, source + 3), target);
@@ -2011,12 +2302,13 @@ function expandFaces(vertices, normals, faces) {
   return { vertices: outVertices, normals: outNormals };
 }
 function expandWireframe(vertices, normals, faces) {
-  const outVertices = new Float32Array(faces.length * 18);
-  const outNormals = new Float32Array(faces.length * 18);
+  const faceCount = triangleCount(faces);
+  const outVertices = new Float32Array(faceCount * 18);
+  const outNormals = new Float32Array(faceCount * 18);
   const edgeOrder = [0, 1, 1, 2, 2, 0];
-  for (let i = 0; i < faces.length; i++) {
+  for (let i = 0; i < faceCount; i++) {
     for (let j = 0; j < edgeOrder.length; j++) {
-      const source = faces[i][edgeOrder[j]] * 3;
+      const source = faces[i * 3 + edgeOrder[j]] * 3;
       const target = i * 18 + j * 3;
       outVertices.set(vertices.subarray(source, source + 3), target);
       outNormals.set(normals.subarray(source, source + 3), target);
@@ -2360,14 +2652,17 @@ function drawFallback2d() {
     : new Set();
   const depthRange = viewDepthRange(visibleMeshes);
   for (const mesh of visibleMeshes) {
-    for (const face of mesh.faces) {
-      const a = worldToScreen(vertexAt(mesh.vertices, face[0]), depthRange);
-      const b = worldToScreen(vertexAt(mesh.vertices, face[1]), depthRange);
-      const c = worldToScreen(vertexAt(mesh.vertices, face[2]), depthRange);
+    for (let faceOffset = 0; faceOffset < mesh.faces.length; faceOffset += 3) {
+      const faceA = mesh.faces[faceOffset];
+      const faceB = mesh.faces[faceOffset + 1];
+      const faceC = mesh.faces[faceOffset + 2];
+      const a = worldToScreen(vertexAt(mesh.vertices, faceA), depthRange);
+      const b = worldToScreen(vertexAt(mesh.vertices, faceB), depthRange);
+      const c = worldToScreen(vertexAt(mesh.vertices, faceC), depthRange);
       const depth = (a[2] + b[2] + c[2]) / 3;
       const worldNormal = normalize3(cross3(
-        sub3(vertexAt(mesh.vertices, face[1]), vertexAt(mesh.vertices, face[0])),
-        sub3(vertexAt(mesh.vertices, face[2]), vertexAt(mesh.vertices, face[0]))
+        sub3(vertexAt(mesh.vertices, faceB), vertexAt(mesh.vertices, faceA)),
+        sub3(vertexAt(mesh.vertices, faceC), vertexAt(mesh.vertices, faceA))
       ));
       const viewNormal = normalize3(mat3Vec(camera.orientation, worldNormal));
       const facing = Math.abs(viewNormal[2]);

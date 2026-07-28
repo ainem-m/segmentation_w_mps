@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TotalSegmentator Wrapper for Mac 3Dビューアー</title>
+<style>
+body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#loadingOverlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: #111317; opacity: 1; visibility: visible; transition: opacity 160ms ease, visibility 160ms ease; }
+#loadingOverlay.is-complete { opacity: 0; visibility: hidden; pointer-events: none; }
+#loadingOverlay.is-error .loadingSpinner { display: none; }
+#loadingOverlay.is-error .loadingCard { border-color: #a96e68; }
+.loadingCard { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; width: min(420px, 100%); padding: 18px 20px; border: 1px solid #46515d; border-radius: 12px; background: #20242a; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
+.loadingSpinner { width: 28px; height: 28px; border: 3px solid #46515d; border-top-color: #9bc9d0; border-radius: 50%; animation: loadingSpin 0.9s linear infinite; }
+#loadingTitle { margin: 0 0 5px; font-size: 16px; font-weight: 700; }
+#loadingDetail { margin: 0; color: #c8d0d8; font-size: 13px; line-height: 1.5; }
+@keyframes loadingSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #loadingOverlay { transition: none; }
+  .loadingSpinner { animation: none; border-top-color: #46515d; }
+}
+#app { position: relative; display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; }
+#panel { z-index: 4; padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
+#panelToggle { display: none; position: fixed; z-index: 6; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); min-width: 44px; min-height: 44px; padding: 0 13px; border: 1px solid #66717d; border-radius: 9px; background: rgba(32, 36, 42, 0.94); color: #fff; font: inherit; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); }
+#panelBackdrop { display: none; position: fixed; z-index: 3; inset: 0; background: rgba(5, 7, 10, 0.50); }
+#panel h1 { font-size: 18px; margin: 0 0 12px; }
+#panel h2 { font-size: 14px; margin: 16px 0 8px; color: #cfe4e2; }
+#panel p, #panel label { font-size: 13px; line-height: 1.45; }
+#panel button, #panel select { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
+#panel button.active { background: #496078; border-color: #71839a; }
+#mode, #viewActions, .segmented { display: grid; gap: 6px; margin: 10px 0; }
+#mode { grid-template-columns: 1fr 1fr; }
+#displayControls { display: grid; gap: 10px; margin: 10px 0 14px; }
+#viewActions { grid-template-columns: 1fr; }
+#viewActions button, .segmented button { width: 100%; }
+.segmented { grid-template-columns: 1fr 1fr; }
+#displayModeButtons { grid-template-columns: repeat(3, 1fr); }
+.controlRow { display: grid; gap: 6px; }
+.controlLabel { color: #cfe4e2; font-size: 13px; font-weight: 700; }
+#geometryControl[hidden] { display: none; }
+#smoothingControl { display: grid; gap: 6px; margin: 10px 0; }
+#advancedControls { border-top: 1px solid #343941; margin-top: 12px; padding-top: 10px; }
+#advancedControls summary { color: #cfe4e2; cursor: pointer; font-size: 14px; font-weight: 700; }
+#layers label { display: block; margin: 8px 0; }
+canvas { width: 100%; height: 100%; display: block; background: #111317; touch-action: none; }
+code { color: #c9e2ff; }
+@media (max-width: 900px) {
+  #app { grid-template-columns: minmax(0, 1fr); }
+  #panel { position: fixed; inset: 0 auto 0 0; width: min(320px, calc(100vw - 48px)); box-sizing: border-box; transform: translateX(-105%); transition: transform 180ms ease; box-shadow: 12px 0 30px rgba(0, 0, 0, 0.34); }
+  #app.panel-open #panel { transform: translateX(0); }
+  #panelToggle { display: block; }
+  #app.panel-open #panelToggle { left: min(272px, calc(100vw - 96px)); }
+  #app.panel-open #panelBackdrop { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #panel { transition: none; }
+}
+</style>
+</head>
+<body>
+<div id="loadingOverlay" role="status" aria-live="polite" aria-busy="true">
+  <div class="loadingCard">
+    <div class="loadingSpinner" aria-hidden="true"></div>
+    <div>
+      <p id="loadingTitle">3Dデータを読み込んでいます</p>
+      <p id="loadingDetail">データ量によって、表示までしばらくかかることがあります。</p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const overlay = document.getElementById('loadingOverlay');
+  const title = document.getElementById('loadingTitle');
+  const detail = document.getElementById('loadingDetail');
+  window.showViewerLoadError = function (message) {
+    if (overlay.getAttribute('aria-busy') !== 'true') return;
+    overlay.setAttribute('aria-busy', 'false');
+    overlay.classList.add('is-error');
+    title.textContent = '3D表示を準備できませんでした';
+    detail.textContent = message;
+  };
+  window.addEventListener('error', function () {
+    window.showViewerLoadError('3D表示の準備中にエラーが発生しました。ページを再読み込みしてください。繰り返す場合は、結果フォルダのログを確認してください。');
+  });
+  window.addEventListener('unhandledrejection', function () {
+    window.showViewerLoadError('3D表示の準備中にエラーが発生しました。ページを再読み込みしてください。繰り返す場合は、結果フォルダのログを確認してください。');
+  });
+})();
+</script>
+<div id="app">
+  <button id="panelToggle" type="button" aria-controls="panel" aria-expanded="false" aria-label="表示設定を開く">設定</button>
+  <div id="panelBackdrop" aria-hidden="true"></div>
+  <aside id="panel" aria-label="表示設定">
+    <h1>表示設定</h1>
+    <div id="displayControls">
+    <div id="displayModeControl" class="controlRow">
+      <span class="controlLabel">表示モード</span>
+      <div class="segmented" id="displayModeButtons">
+        <button id="displayNormal" type="button">通常</button>
+        <button id="displayWireframe" type="button">ワイヤー</button>
+        <button id="displayXray" type="button">X-ray</button>
+      </div>
+    </div>
+    <div id="geometryControl" class="controlRow" hidden>
+      <span class="controlLabel">形状</span>
+      <div class="segmented" id="geometryButtons">
+        <button id="geometryOriginal" type="button">元の形状</button>
+        <button id="geometrySdf" type="button">なめらか補完</button>
+      </div>
+    </div>
+    </div>
+    <details id="advancedControls">
+      <summary>詳細設定</summary>
+      <h2>表面平滑化</h2>
+      <div id="smoothingControl">
+        <select id="smoothingPreset" aria-label="表面平滑化"></select>
+      </div>
+    <h2>操作方法</h2>
+    <div id="mode">
+      <button id="modeTrackpad" class="active" type="button" aria-label="操作方法: トラックパッド">トラックパッド</button>
+      <button id="modeMouse" type="button" aria-label="操作方法: マウス">マウス</button>
+    </div>
+    <div id="viewActions">
+      <button id="fitAll" type="button" aria-label="全体に合わせる">全体に合わせる</button>
+    </div>
+    <h2>表示する構造</h2>
+    <div id="layers"></div>
+    </details>
+  </aside>
+  <canvas id="view" aria-label="3Dデータ表示領域"></canvas>
+</div>
+<script id="viewerData" type="application/json">{"dataLabel":"選択したデータ","labelCount":5,"smoothing":{"preset":"none","iterations":0,"lambda":0.0,"mu":0.0},"smoothingPresets":{"none":{"iterations":0,"lambda":0.0,"mu":0.0},"slicer_like":{"iterations":10,"lambda":0.5,"mu":-0.53},"medium":{"iterations":20,"lambda":0.5,"mu":-0.53},"strong":{"iterations":30,"lambda":0.5,"mu":-0.53}},"materialPreset":"rich","geometryFormat":"tswm-geometry-v1","geometryFiles":["mesh-jaws.36b72316c14f8875.js","mesh-dental_hard_tissue.ea31e70ab9e898de.js"],"meshes":[{"name":"jaws","labels":[1,2],"defaultVisible":true,"opacity":0.35,"color":"#d6a455","geometryKey":"jaws","geometryFile":"mesh-jaws.36b72316c14f8875.js","geometrySha256":"36b72316c14f8875dd26c7817ca98dbf0bf0ab241d7b1531c9d37f4e5e90259a","geometryByteLength":13451508,"vertexCount":372679,"triangleCount":748278},{"name":"dental_hard_tissue","labels":[3,4],"defaultVisible":true,"opacity":1.0,"color":"#f5f1dc","geometryKey":"dental_hard_tissue","geometryFile":"mesh-dental_hard_tissue.ea31e70ab9e898de.js","geometrySha256":"ea31e70ab9e898de1d0b031b6bffca7a31f56e84c678d283a9ce304e43826cb9","geometryByteLength":4755984,"vertexCount":132138,"triangleCount":264192}]}</script>
+<script>
+(function () {
+  const geometryFiles = ["mesh-jaws.36b72316c14f8875.js","mesh-dental_hard_tissue.ea31e70ab9e898de.js"];
+  function loadScript(filename) {
+    return new Promise(function (resolve, reject) {
+      const script = document.createElement('script');
+      script.src = filename;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+  requestAnimationFrame(function () {
+    Promise.all(geometryFiles.map(loadScript)).then(function () {
+      return loadScript('viewer_bundle.js?sha256=c5113506ba027e9f');
+    }).catch(function () {
+      window.showViewerLoadError('必要な表示データを読み込めませんでした。結果フォルダ内のファイルを移動せず、ページを再読み込みしてください。');
+    });
+  });
+})();
+</script>
+</body>
+</html>

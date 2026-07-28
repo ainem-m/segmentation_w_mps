@@ -7,44 +7,44 @@ It records project-owner decisions and does not provide legal advice.
 
 ## First-party licensing authority
 
-Chino Keisuke confirmed that the Git and project identities `ainem-m`,
-`ainem`, `lacramy`, and `chino keisuke` refer to the same first-party rights
-holder. The rights holder authorized publication of the first-party wrapper
-under the Apache License 2.0.
+The project maintainer confirmed that they hold the rights to the first-party
+wrapper code, documentation, and original application resources, and
+authorized their publication under the Apache License 2.0. The detailed
+identity and authorization evidence is retained outside the Git repository.
 
 Decision status: confirmed for publication.
 
 ## Sample 1 source and publication surface
 
-Chino Keisuke provided a CT of themself and explicitly authorized creation of
-a public copy. The original DICOM was not modified. A non-destructive working
-copy was produced with the following verified properties:
+The source-data rights holder explicitly authorized public distribution of the
+derived jaw-region NIfTI, model outputs, and preview artifacts used by Sample
+1. Identity-bearing source evidence and the raw DICOM are retained outside the
+Git repository. They must not be committed, bundled in the app or DMG,
+uploaded to R2 or GitHub Releases, or deployed on the public pages.
 
-- 394 DICOM instances;
-- patient name normalized to `chinokeisuke`;
-- birth date and sex intentionally retained in the evidence copy;
-- patient ID, institution, staff, device, acquisition date, and acquisition
-  time metadata removed;
-- linkage UIDs regenerated consistently;
-- private-tag, forbidden-metadata, original-institution, old-UID,
-  pixel-mismatch, and manifest-hash mismatch counts all zero;
-- all slices visually reviewed with no burned-in text observed;
-- `BurnedInAnnotation=NO`; and
-- `PatientIdentityRemoved=NO`, because the evidence copy intentionally retains
-  identity.
+The previous 3D Slicer SampleData-derived Sample 1 was removed. The replacement
+bundle is recorded in `resources/sample1/sample_manifest.json` and contains:
 
-Evidence archive SHA256:
-`bef04de1ab2f19a5e970b3591244b9de5139686f8690876a7e58fe473b7e6769`.
+- `input/owner_cbct_jawcrop_0p5mm.nii.gz`
+  (`69fc10771a9677a3b5f1f597a5f938d8b889633044cd8da7e6221fd123607824`);
+- `teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz`
+  (`57fa3cc887990b347cd13dc9a6ec1a43c88d89214eed1cd9ce553efda7465996`);
+- its FDI label sidecar; and
+- offline binary-geometry preview artifacts whose individual hashes are
+  recorded in the manifest.
 
-The raw public DICOM copy is source evidence only. It must not be committed,
-bundled in the app or DMG, uploaded to R2 or GitHub Releases, or deployed on
-the public pages. The project publication surface will contain only a derived
-jaw-crop NIfTI and previews generated from that source. The derived artifacts
-must receive their own provenance record and hash verification before
-publication.
+Decision status: redistribution authorized; derived artifacts verified; raw
+DICOM excluded from project distribution.
 
-Decision status: redistribution authorized; raw DICOM excluded from project
-distribution.
+## Historical Sample 1
+
+The previous Sample 1 was derived from the 3D Slicer SampleData
+`CBCT-MR Head` dataset. The upstream SampleData source states that this dataset
+was donated to the 3D Slicer project for unrestricted use. That notice was
+recorded with the historical bundle. The historical files remain reachable in
+Git history under that stated permission, but they are removed from the 0.3.0
+source tree, app, website, DMG, and release artifacts. They must not be restored
+as the current bundled or web sample.
 
 ## Third-party audit confirmation
 

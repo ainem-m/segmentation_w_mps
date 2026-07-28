@@ -1,14 +1,37 @@
 {
   "schema": "totalsegmentator_wrapper_mac.asset_provenance.v1",
   "apache_2_0_relicensed": false,
-  "source_sample_notice": "../../../resources/sample1/THIRD_PARTY_NOTICES.txt",
-  "description": "Web preview images derived from bundled Sample 1; the Sample 1 notice remains applicable.",
+  "description": "Public launch-page images. Some are app UI captures, some are model-output renders derived from data whose owner authorized public derivative publication, and some contain third-party UI or marks for nominative comparison. Raw DICOM is excluded. These images are not relicensed under the wrapper's Apache-2.0 license.",
+  "authorization_record": "../../../docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md",
+  "bundled_sample_notice": "../../../resources/sample1/THIRD_PARTY_NOTICES.txt",
   "files": {
-    "sample1-preview.png": {
-      "sha256": "8ce9865a8db2010c3db08ddee6d3b5ac162d7117baefb2b98d01de61e1286efa"
+    "feature-setup.png": {
+      "sha256": "9df2188097e4453353e1524fe263d911bfb7dfd90a44f01d396a96212f90f438",
+      "scope": "First-party application UI capture with no patient data."
     },
-    "sample1-web-preview.jpg": {
-      "sha256": "f6012a47eea362340994d19c2a259b76175907173a702d99bee48492e103f360"
+    "feature-sample.png": {
+      "sha256": "96537bfddabe0916244f5310e539251614c39a453e02a248059b8bbc7a82ce8b",
+      "scope": "First-party application UI capture using the bundled non-clinical sample."
+    },
+    "benchmark-totalseg.png": {
+      "sha256": "5e86296675ac115864c3f40d1442d071c244271f3b53983d3bc6e160af5bcf40",
+      "scope": "Model-output render derived from owner-authorized CT data; raw DICOM excluded."
+    },
+    "benchmark-dentalseg.png": {
+      "sha256": "963d63b6a3ed489c5181abcdb2e5996bfb4d4d0ed37a306799a40449be2e82dc",
+      "scope": "Model-output render derived from owner-authorized CT data; raw DICOM excluded."
+    },
+    "benchmark-toothseg.png": {
+      "sha256": "3efe531007adb7809e2fdc3e2f42e4971a76fb92990b6cb94b431a958a35201d",
+      "scope": "Model-output render derived from owner-authorized CT data; raw DICOM excluded."
+    },
+    "benchmark-slicer.png": {
+      "sha256": "31ef1d783e0a9edb1627ee98e85bf8c8dfc3896ca54ad8ef4fa4a02942650089",
+      "scope": "Benchmark screenshot containing 3D Slicer UI and marks for nominative comparison; third-party UI and marks are not relicensed."
+    },
+    "old-article-thumbnail.png": {
+      "sha256": "868fea6c502689756e0b5293b3cb0d1c5ea1dc0dcfdfff091a68925c78a18ede",
+      "scope": "Thumbnail of the project owner's 2024 article; embedded third-party UI and marks are not relicensed."
     }
   }
 }

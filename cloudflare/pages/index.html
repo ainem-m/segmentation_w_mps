@@ -635,22 +635,22 @@
         <div class="preview-shell" data-preview-shell>
           <img
             class="preview-image"
-            src="/assets/sample1-web-preview.jpg"
-            alt="付属サンプルを3Dビューアーで表示した画面。顎骨、歯、歯髄腔の推定領域を個別に表示できる。"
-            width="1200"
-            height="544"
+            src="/assets/benchmark-dentalseg.png"
+            alt="権利者が公開を許可したCTから作成した、顎骨と歯のX-ray表示。"
+            width="1130"
+            height="858"
           >
           <div class="preview-overlay">
             <div>
               <h2 class="preview-title" id="sample-title">付属サンプルを3Dで操作</h2>
-              <p>ボタンを押すと、約7.2 MBの3Dデータを読み込みます。</p>
+              <p>ボタンを押すと、約23 MBの3Dデータを読み込みます。</p>
             </div>
-            <button class="button primary" type="button" data-preview-load>3Dサンプルを読み込む（約7.2 MB）</button>
+            <button class="button primary" type="button" data-preview-load>3Dサンプルを読み込む（約23 MB）</button>
           </div>
         </div>
         <p class="preview-caption">
           読み込み後は、ブラウザ上で回転、拡大縮小、表示方向の変更、構造ごとの表示切り替えを操作できます。
-          動作が遅い場合は、<a href="/preview/sample1.html" target="_blank" rel="noopener">3Dサンプルを別タブで開く</a>を選択してください。
+          動作が遅い場合は、<a href="/preview/dentalsegmentator-0.3.0.html" target="_blank" rel="noopener">3Dサンプルを別タブで開く</a>を選択してください。
         </p>
       </div>
     </section>
@@ -848,7 +848,7 @@
 
         const frame = document.createElement("iframe");
         frame.className = "preview-frame";
-        frame.src = "/preview/sample1.html";
+        frame.src = "/preview/dentalsegmentator-0.3.0.html";
         frame.title = "付属サンプルの3Dビューアー";
         frame.loading = "lazy";
         frame.setAttribute("allow", "fullscreen");

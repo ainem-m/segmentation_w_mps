@@ -241,12 +241,12 @@ silent.
 It also includes a `3Dサンプルを開く` button that opens the bundled offline
 Sample 1 surface-preview HTML in the default browser. After setup, the SwiftUI
 main window defaults to a two-choice flow around the bundled Sample 1 NIfTI and
-writes default runs under App Support. Sample 1 is Slicer SampleData-derived
-NIfTI plus precomputed preview artifacts for non-clinical UI inspection; it is
-not DICOM, a diagnostic asset, or an accuracy-evaluation asset. The app bundle includes
-`sample1/THIRD_PARTY_NOTICES.txt` with the Slicer unrestricted-use source note,
-source SHA256, TotalSegmentator Apache-2.0 attribution, and non-clinical
-limitation.
+writes default runs under App Support. Sample 1 is a rights-holder-authorized
+derived NIfTI plus precomputed ToothSeg preview artifacts for non-clinical UI
+inspection; it is not DICOM, a diagnostic asset, or an accuracy-evaluation
+asset. The raw DICOM is not included. The app bundle includes
+`sample1/THIRD_PARTY_NOTICES.txt` with the authorization scope, artifact
+SHA-256 values, ToothSeg attribution, and non-clinical limitation.
 The alpha launcher does not silently use the host `python3` for the runtime
 venv. It requires an explicit Python 3.12 executable from one of:
 

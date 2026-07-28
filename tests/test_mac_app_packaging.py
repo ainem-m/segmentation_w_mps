@@ -48,6 +48,7 @@ class MacAppPackagingTests(unittest.TestCase):
 
         self.assertIn('license = "Apache-2.0"', pyproject)
         self.assertIn('license-files = ["LICENSE", "NOTICE"]', pyproject)
+        self.assertNotIn("License :: OSI Approved", pyproject)
         self.assertIn("setuptools>=77", pyproject)
         self.assertIn("Apache License", license_text)
         self.assertIn("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION", license_text)
@@ -55,6 +56,37 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("not relicensed", notice)
         self.assertNotIn("LicenseRef-Proprietary", pyproject + notice)
         self.assertIn('"licenses/*.json"', pyproject)
+
+    def test_release_version_is_consistent_across_first_party_components(self) -> None:
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        package_init = (
+            ROOT / "src" / "totalsegmentator_wrapper_mac" / "__init__.py"
+        ).read_text(encoding="utf-8")
+        cmake = (ROOT / "native" / "dicom_normalizer" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        normalizer = (
+            ROOT / "native" / "dicom_normalizer" / "src" / "main.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn('version = "0.3.0"', pyproject)
+        self.assertIn('__version__ = "0.3.0"', package_init)
+        self.assertIn("VERSION 0.3.0", cmake)
+        self.assertIn('kVersion = "0.3.0"', normalizer)
+
+    def test_mac_app_exposes_first_party_and_third_party_license_documents(self) -> None:
+        app_source = (
+            ROOT
+            / "native"
+            / "macos"
+            / "TotalSegmentatorWrapperForMac"
+            / "TotalSegmentatorWrapperForMacApp.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn('openBundledDocument("LICENSE")', app_source)
+        self.assertIn('openBundledDocument("NOTICE")', app_source)
+        self.assertIn(
+            'openBundledDocument("licenses/THIRD_PARTY_LICENSES.txt")',
+            app_source,
+        )
 
     def test_wheel_build_includes_model_notices_and_task_audit(self) -> None:
         text = WHEEL_BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -126,7 +158,11 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"toothseg": "model_comparison/toothseg.png"', text)
         self.assertIn("non-clinical preview", text)
         self.assertIn("sample1/surface_preview/index.html", text)
-        self.assertIn("sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz", text)
+        self.assertIn("sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz", text)
+        self.assertIn(
+            "sample1/teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz",
+            text,
+        )
         self.assertIn("sample1/THIRD_PARTY_NOTICES.txt", text)
         for image_name in ("totalseg", "dentalseg", "individual", "toothseg"):
             with self.subTest(image_name=image_name):
@@ -508,9 +544,15 @@ class MacAppPackagingTests(unittest.TestCase):
 
     def test_bundled_sample1_viewer_is_offline_html(self) -> None:
         text = SAMPLE1_VIEWER_HTML.read_text(encoding="utf-8")
+        bundle_text = (
+            SAMPLE1_ROOT / "surface_preview" / "viewer_bundle.js"
+        ).read_text(encoding="utf-8")
+        combined = text + "\n" + bundle_text
 
         self.assertIn("TotalSegmentator 3Dビューアー", text)
-        self.assertIn("const DATA =", text)
+        self.assertIn('id="viewerData"', text)
+        self.assertIn('"geometryFormat":"tswm-geometry-v1"', text)
+        self.assertIn("viewer_bundle.js", text)
         self.assertIn('"dataLabel":"付属サンプル"', text)
         self.assertNotIn("teeth_multilabel_fullspace.nii.gz", text)
         self.assertIn("modeTrackpad", text)
@@ -518,11 +560,11 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("マウス", text)
         self.assertIn("全体に合わせる", text)
         self.assertIn("表面平滑化", text)
-        self.assertIn("ポリゴン数", text)
-        self.assertIn("歯髄腔（推定）", text)
-        self.assertNotIn("http://", text)
-        self.assertNotIn("https://", text)
-        self.assertNotIn("cdn", text.lower())
+        self.assertIn("ポリゴン数", combined)
+        self.assertIn("歯髄腔（推定）", combined)
+        self.assertNotIn("http://", combined)
+        self.assertNotIn("https://", combined)
+        self.assertNotIn("cdn", combined.lower())
         self.assertNotIn("<script src=", text.lower())
 
     def test_bundled_sample1_manifest_and_notices_document_license_and_purpose(self) -> None:
@@ -530,18 +572,23 @@ class MacAppPackagingTests(unittest.TestCase):
         notices = SAMPLE1_NOTICES.read_text(encoding="utf-8")
         license_text = TOTALSEGMENTATOR_LICENSE.read_text(encoding="utf-8")
 
-        self.assertEqual(manifest["sample_id"], "sample1_dz_cbct_jawcrop_0p5mm")
-        self.assertEqual(manifest["default_input"], "input/DZ-CBCT_jawcrop_0p5mm.nii.gz")
+        self.assertEqual(manifest["sample_id"], "sample1_owner_cbct_jawcrop_0p5mm")
+        self.assertEqual(
+            manifest["default_input"],
+            "input/owner_cbct_jawcrop_0p5mm.nii.gz",
+        )
         self.assertEqual(manifest["surface_preview"], "surface_preview/index.html")
-        self.assertEqual(manifest["expected_runtime_seconds_approx"], 100)
-        self.assertIn("100秒前後", manifest["expected_runtime_note_ja"])
+        self.assertEqual(
+            manifest["precomputed_teeth_labelmap"],
+            "teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz",
+        )
         self.assertFalse(manifest["clinical_use"])
-        self.assertIn("CBCT-MR Head", notices)
-        self.assertIn("unrestricted", notices)
-        self.assertIn("4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db", notices)
-        self.assertIn("TotalSegmentator", notices)
-        self.assertIn("Apache License 2.0", notices)
-        self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", notices)
+        self.assertFalse(manifest["source"]["raw_dicom_included"])
+        self.assertIn("project rights holder", manifest["source"]["description"])
+        self.assertIn("raw DICOM is not", notices)
+        self.assertIn("ToothSeg", notices)
+        self.assertIn("CC BY 4.0", notices)
+        self.assertIn("Contents/Resources/licenses/ToothSeg-NOTICE.txt", notices)
         self.assertIn("not for diagnosis", notices)
         self.assertIn("Apache License", license_text)
         self.assertIn("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION", license_text)
@@ -611,10 +658,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("unmapped native library", text)
 
     def test_bundled_sample1_metadata_does_not_expose_developer_local_paths(self) -> None:
-        checked = [
-            *sorted((SAMPLE1_ROOT / "logs").glob("*.json")),
-            SAMPLE1_ROOT / "surface_preview" / "preview_summary.json",
-        ]
+        checked = sorted(SAMPLE1_ROOT.rglob("*.json"))
         self.assertTrue(checked)
         for path in checked:
             text = path.read_text(encoding="utf-8")
@@ -622,6 +666,19 @@ class MacAppPackagingTests(unittest.TestCase):
                 self.assertNotIn("/Users/ainem", text)
                 self.assertNotIn("segmentation_w_mps", text)
                 self.assertNotIn(".venv", text)
+
+    def test_bundled_sample1_contains_no_legacy_slicer_sample(self) -> None:
+        self.assertFalse(
+            (SAMPLE1_ROOT / "input" / "DZ-CBCT_jawcrop_0p5mm.nii.gz").exists()
+        )
+        self.assertFalse(
+            (SAMPLE1_ROOT / "teeth_result" / "teeth_multilabel_fullspace.nii.gz").exists()
+        )
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(SAMPLE1_ROOT.rglob("*.json"))
+        )
+        self.assertNotIn("3D Slicer SampleData", combined)
 
     def test_build_mac_wheel_uses_pep517_frontend(self) -> None:
         text = WHEEL_BUILD_SCRIPT.read_text(encoding="utf-8")

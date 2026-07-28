@@ -120,7 +120,7 @@ cloudflare/r2/upload-plan.json
 cloudflare/pages/index.html
 cloudflare/pages/_headers
 cloudflare/pages/_redirects
-cloudflare/pages/assets/sample1-preview.png
+cloudflare/pages/assets/benchmark-dentalseg.png
 cloudflare/app-hub/index.html
 cloudflare/app-hub/_headers
 cloudflare/app-hub/_redirects

@@ -28,7 +28,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr std::string_view kVersion = "0.2.1";
+constexpr std::string_view kVersion = "0.3.0";
 constexpr std::size_t kDicomdirReadLimitBytes = 64 * 1024 * 1024;
 constexpr std::size_t kPreviewReadLimitBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kMinVolumeSlices = 32;

@@ -80,12 +80,12 @@ TotalSegmentator Wrapper for Mac alpha
 用途:
 - 非臨床preview専用です。
 - TotalSegmentatorを利用する非公式Mac wrapperです。TotalSegmentator公式アプリではありません。
-- Sample 1は3D Slicer SampleData由来のNIfTIとprecomputed previewで、DICOMではありません。
-- Sample 1の出典、SHA256、TotalSegmentator Apache-2.0表記はアプリ内
+- Sample 1は権利者が公開を許諾したCTから作成したNIfTIとprecomputed previewで、DICOMではありません。
+- 元DICOMは配布物に含まれません。Sample 1の来歴、SHA256、ToothSeg表記はアプリ内
   Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt に記録しています。
 - wrapper本体のApache-2.0ライセンスと適用範囲はDMG内のLICENSE.txt、
   NOTICE.txt、およびアプリ内Contents/Resources/LICENSE、NOTICEに記録しています。
-- 第三者コード、別途取得するモデル、Sample 1、モデルやSample由来の画像、
+- 第三者コード、別途取得するモデル、モデル出力やSample由来の画像、
   第三者の名称・商標はwrapperのApache-2.0へ再ライセンスされません。
 - TotalSegmentator Apache-2.0ライセンス本文はアプリ内
   Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt に同梱しています。
