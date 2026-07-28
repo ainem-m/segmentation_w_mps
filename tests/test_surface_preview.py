@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,7 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     mask_to_mesh,
     run_surface_preview,
     smoothing_config_from_options,
+    write_binary_stl,
     _externalize_viewer_script,
     _html_document,
 )
@@ -136,6 +138,39 @@ class SurfacePreviewTests(unittest.TestCase):
             first_stl = Path(summary["labels"][0]["stl"])
             self.assertTrue(first_stl.exists())
             self.assertGreater(first_stl.stat().st_size, 84)
+
+    def test_vectorized_binary_stl_matches_scalar_writer_byte_for_byte(self) -> None:
+        vertices = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+                [0, 0, 0],
+            ],
+            dtype=np.uint32,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actual = root / "actual.stl"
+            expected = root / "expected.stl"
+
+            write_binary_stl(actual, vertices, faces, solid_name="byte_match")
+            _write_scalar_reference_stl(
+                expected,
+                vertices,
+                faces,
+                solid_name="byte_match",
+            )
+
+            self.assertEqual(actual.read_bytes(), expected.read_bytes())
 
     def test_taubin_smoothing_is_finite_stable_and_moves_vertices(self) -> None:
         mask = _sphere_mask(shape=(24, 24, 24), center=(12, 12, 12), radius=6)
@@ -637,6 +672,31 @@ def _write_synthetic_labelmap(path: Path) -> Path:
     image = nib.Nifti1Image(data, np.eye(4))
     nib.save(image, str(path))
     return path
+
+
+def _write_scalar_reference_stl(
+    path: Path,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    *,
+    solid_name: str,
+) -> None:
+    header = f"TotalSegWrapper {solid_name}".encode("ascii", errors="ignore")[:80]
+    header = header + b" " * (80 - len(header))
+    with path.open("wb") as file:
+        file.write(header)
+        file.write(struct.pack("<I", int(faces.shape[0])))
+        for tri in faces:
+            points = vertices[tri]
+            normal = np.cross(points[1] - points[0], points[2] - points[0])
+            norm = float(np.linalg.norm(normal))
+            if norm > 0:
+                normal = normal / norm
+            else:
+                normal = np.zeros(3, dtype=np.float32)
+            file.write(struct.pack("<3f", *normal.astype(np.float32)))
+            file.write(struct.pack("<9f", *points.astype(np.float32).reshape(-1)))
+            file.write(struct.pack("<H", 0))
 
 
 def _write_toothseg_labelmap_with_sidecar(path: Path) -> Path:

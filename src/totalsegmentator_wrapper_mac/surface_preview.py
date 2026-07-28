@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import resource
 import struct
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -32,6 +34,15 @@ PREVIEW_STEP_SIZE_WARNING_THRESHOLD = 4
 PREVIEW_STEP_SIZE_WARNING = "small structures may be under-sampled"
 VIEWER_BUNDLE_FILENAME = "viewer_bundle.js"
 PERFORMANCE_PROFILE_FILENAME = "performance_profile.json"
+STL_WRITE_CHUNK_TRIANGLES = 100_000
+STL_TRIANGLE_DTYPE = np.dtype(
+    [
+        ("normal", "<f4", (3,)),
+        ("vertices", "<f4", (3, 3)),
+        ("attribute", "<u2"),
+    ],
+    align=False,
+)
 
 CRANIOFACIAL_SURFACE_LABELS: tuple[tuple[str, int, str], ...] = (
     ("mandible.nii.gz", 1, "lower_jawbone"),
@@ -79,6 +90,7 @@ class _StageProfiler:
             stages[stage] = stages.get(stage, 0.0) + float(event["seconds"])
         return {
             "total_seconds": time.perf_counter() - self._started,
+            "max_rss_bytes": _max_rss_bytes(),
             "stages_seconds": stages,
             "milestones_seconds": dict(self._milestones),
             "events": list(self._events),
@@ -567,17 +579,31 @@ def write_binary_stl(path: Path, vertices: np.ndarray, faces: np.ndarray, *, sol
     with path.open("wb") as file:
         file.write(header)
         file.write(struct.pack("<I", int(faces.shape[0])))
-        for tri in faces:
-            points = vertices[tri]
-            normal = np.cross(points[1] - points[0], points[2] - points[0])
-            norm = float(np.linalg.norm(normal))
-            if norm > 0:
-                normal = normal / norm
-            else:
-                normal = np.zeros(3, dtype=np.float32)
-            file.write(struct.pack("<3f", *normal.astype(np.float32)))
-            file.write(struct.pack("<9f", *points.astype(np.float32).reshape(-1)))
-            file.write(struct.pack("<H", 0))
+        for start in range(0, int(faces.shape[0]), STL_WRITE_CHUNK_TRIANGLES):
+            face_chunk = faces[start : start + STL_WRITE_CHUNK_TRIANGLES]
+            points = np.asarray(vertices[face_chunk], dtype=np.float32)
+            normals = np.cross(
+                points[:, 1] - points[:, 0],
+                points[:, 2] - points[:, 0],
+            )
+            norms = np.linalg.norm(normals, axis=1)
+            np.divide(
+                normals,
+                norms[:, np.newaxis],
+                out=normals,
+                where=norms[:, np.newaxis] > 0,
+            )
+            normals[norms == 0] = 0
+            records = np.empty(face_chunk.shape[0], dtype=STL_TRIANGLE_DTYPE)
+            records["normal"] = normals
+            records["vertices"] = points
+            records["attribute"] = 0
+            file.write(records.tobytes(order="C"))
+
+
+def _max_rss_bytes() -> int:
+    max_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return max_rss if sys.platform == "darwin" else max_rss * 1024
 
 
 def group_specs(label_entries: list[dict[str, Any]]) -> dict[str, list[int]]:
