@@ -1019,6 +1019,7 @@ def _externalize_viewer_script(
 
 
 def _webgl_html_document(payload_json: str) -> str:
+    script_safe_payload_json = payload_json.replace("<", "\\u003c")
     return """<!doctype html>
 <html lang="ja">
 <head>
@@ -1150,8 +1151,9 @@ code { color: #c9e2ff; }
   </aside>
   <canvas id="view" aria-label="3Dデータ表示領域"></canvas>
 </div>
+<script id="viewerData" type="application/json">__PAYLOAD__</script>
 <script>
-const DATA = __PAYLOAD__;
+const DATA = JSON.parse(document.getElementById('viewerData').textContent);
 const canvas = document.getElementById('view');
 const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
 const ctx2d = gl ? null : canvas.getContext('2d');
@@ -2804,7 +2806,7 @@ function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 </script>
 </body>
 </html>
-""".replace("__PAYLOAD__", payload_json)
+""".replace("__PAYLOAD__", script_safe_payload_json)
 
 
 def _laplacian_step(adjacency: Any, degree: np.ndarray, vertices: np.ndarray, weight: float) -> np.ndarray:

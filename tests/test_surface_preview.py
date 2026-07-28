@@ -59,12 +59,15 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(groups["dental_hard_tissue"], [11, 12])
             preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
             self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
+            index_html = (
+                case_dir / "surface_preview" / "index.html"
+            ).read_text(encoding="utf-8")
             bundle = (
                 case_dir / "surface_preview" / "viewer_bundle.js"
             ).read_text(encoding="utf-8")
             self.assertIn(
                 '"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true',
-                bundle,
+                index_html,
             )
             self.assertIn(
                 "const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));",
@@ -98,10 +101,10 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotEqual(hashlib.sha256(off_stl.read_bytes()).hexdigest(), hashlib.sha256(on_stl.read_bytes()).hexdigest())
             self.assertNotEqual(
                 hashlib.sha256(
-                    (case_dir / "preview_off" / "viewer_bundle.js").read_bytes()
+                    (case_dir / "preview_off" / "index.html").read_bytes()
                 ).hexdigest(),
                 hashlib.sha256(
-                    (case_dir / "preview_on" / "viewer_bundle.js").read_bytes()
+                    (case_dir / "preview_on" / "index.html").read_bytes()
                 ).hexdigest(),
             )
             self.assertEqual(off["smoothing"]["preset"], "none")
@@ -337,9 +340,17 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotIn("cdn", html.lower())
             self.assertNotIn("<script src=", html.lower())
             self.assertIn("viewer_bundle.js", index_html)
+            self.assertIn(
+                '<script id="viewerData" type="application/json">',
+                index_html,
+            )
             self.assertNotIn("const DATA = ", index_html)
-            self.assertIn("const DATA = ", bundle_js)
-            self.assertLess(len(index_html), len(bundle_js))
+            self.assertIn(
+                "const DATA = JSON.parse(document.getElementById('viewerData').textContent);",
+                bundle_js,
+            )
+            self.assertNotIn('"vertices":[', bundle_js)
+            self.assertIn('"vertices":[', index_html)
             self.assertIn("getContext('webgl'", html)
             self.assertIn("TotalSegmentator 3Dビューアー", html)
             self.assertIn(
@@ -517,7 +528,7 @@ class SurfacePreviewTests(unittest.TestCase):
 
     def test_comparison_payload_reader_supports_inline_and_external_viewers(self) -> None:
         payload = {
-            "dataLabel": "test",
+            "dataLabel": "test <script>",
             "labelCount": 1,
             "smoothing": {"preset": "none"},
             "meshes": [],
@@ -537,6 +548,8 @@ class SurfacePreviewTests(unittest.TestCase):
             external_path = root / "index.html"
             external_path.write_text(index_html, encoding="utf-8")
             (root / "viewer_bundle.js").write_text(bundle_js, encoding="utf-8")
+            self.assertNotIn('"test <script>"', index_html)
+            self.assertIn('"test \\u003cscript>"', index_html)
             self.assertEqual(read_payload(external_path), payload)
 
             comparison_path = root / "comparison.html"

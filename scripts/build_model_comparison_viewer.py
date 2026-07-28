@@ -13,6 +13,10 @@ from totalsegmentator_wrapper_mac.surface_preview import (
 
 
 DATA_PATTERN = re.compile(r"const DATA = (\{.*?\});\nconst canvas", re.DOTALL)
+DATA_JSON_PATTERN = re.compile(
+    r'<script id="viewerData" type="application/json">(.*?)</script>',
+    re.DOTALL,
+)
 
 
 def parse_source(value: str) -> tuple[str, str, Path]:
@@ -24,6 +28,9 @@ def parse_source(value: str) -> tuple[str, str, Path]:
 
 def read_payload(path: Path) -> dict:
     document = path.read_text(encoding="utf-8")
+    json_match = DATA_JSON_PATTERN.search(document)
+    if json_match is not None:
+        return json.loads(json_match.group(1))
     match = DATA_PATTERN.search(document)
     payload_path = path
     if match is None:
