@@ -2718,18 +2718,24 @@ void main() {
   float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
   vec3 reflectionDirection = normalize(reflect(-viewDir, normal));
   float glazeFresnel = 0.18 + 0.82 * pow(1.0 - viewFacing, 2.5);
-  float glazeMix = clamp(uGlazeStrength * glazeFresnel, 0.0, 0.42);
+  float glazeMix = clamp(uGlazeStrength * glazeFresnel, 0.0, 0.34);
   vec3 studioSample = proceduralStudio(reflectionDirection);
   vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
-  vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
+  vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.020;
   vec3 highlight = vec3(sharpSpec)
     + vec3(1.0, 0.96, 0.88) * broadSpec;
   vec3 glow = warmColor * rim + vec3(1.0, 0.91, 0.78) * subsurface + warmColor * uEmission;
   vec3 color = warmColor * diffuse + highlight + glow + coolFill;
   color = color / (color + vec3(0.48));
   color = min(color * 1.28, vec3(1.0));
-  vec3 studioDisplay = min(studioSample * vec3(1.05, 1.03, 1.0), vec3(1.0));
-  color = mix(color, studioDisplay, glazeMix);
+  float studioLuma = dot(studioSample, vec3(0.2126, 0.7152, 0.0722));
+  float softboxPresence = smoothstep(0.16, 0.72, studioLuma);
+  vec3 porcelainReflection = mix(
+    color * 0.88,
+    vec3(1.0, 0.985, 0.94),
+    softboxPresence
+  );
+  color = mix(color, porcelainReflection, glazeMix);
   float crispHighlight = clamp(
     sharpSpec * 1.35 * step(0.001, uGlazeStrength),
     0.0,

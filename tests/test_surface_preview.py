@@ -733,8 +733,14 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("rightSoftBox * 0.58", html)
             self.assertIn("studio *= mix(1.0, 0.38, floorMask);", html)
             self.assertIn("const leftStudioBand =", html)
-            self.assertIn("vec3 studioDisplay =", html)
-            self.assertIn("color = mix(color, studioDisplay, glazeMix);", html)
+            self.assertIn("float studioLuma = dot(studioSample", html)
+            self.assertIn("vec3 porcelainReflection = mix(", html)
+            self.assertIn("color * 0.88", html)
+            self.assertIn("vec3(1.0, 0.985, 0.94)", html)
+            self.assertIn(
+                "color = mix(color, porcelainReflection, glazeMix);",
+                html,
+            )
             self.assertIn("float crispHighlight = clamp(", html)
             self.assertIn(
                 "sharpSpec * 1.35 * step(0.001, uGlazeStrength)",
