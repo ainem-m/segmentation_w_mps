@@ -754,6 +754,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         surface_command = body(COMMANDS, "static func surfacePreviewCommand")
         self.assertIn('command.append("--smooth-preset")', surface_command)
         self.assertIn('smoothSurfaces ? "slicer_like" : "none"', surface_command)
+        self.assertIn('command.append("--defer-stl")', surface_command)
 
     def test_specific_toothseg_failure_classes_precede_generic_markers(self):
         failure = body(STATE, "func runFailureReason")

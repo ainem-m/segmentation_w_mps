@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +20,9 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     is_dental_hard_tissue,
     mask_to_mesh,
     run_surface_preview,
+    run_surface_preview_stl_only,
     smoothing_config_from_options,
+    write_binary_stl,
     _externalize_viewer_script,
     _html_document,
 )
@@ -56,12 +59,15 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(groups["dental_hard_tissue"], [11, 12])
             preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
             self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
+            index_html = (
+                case_dir / "surface_preview" / "index.html"
+            ).read_text(encoding="utf-8")
             bundle = (
                 case_dir / "surface_preview" / "viewer_bundle.js"
             ).read_text(encoding="utf-8")
             self.assertIn(
                 '"name":"dental_hard_tissue","labels":[11,12],"defaultVisible":true',
-                bundle,
+                index_html,
             )
             self.assertIn(
                 "const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));",
@@ -95,10 +101,10 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotEqual(hashlib.sha256(off_stl.read_bytes()).hexdigest(), hashlib.sha256(on_stl.read_bytes()).hexdigest())
             self.assertNotEqual(
                 hashlib.sha256(
-                    (case_dir / "preview_off" / "viewer_bundle.js").read_bytes()
+                    (case_dir / "preview_off" / "index.html").read_bytes()
                 ).hexdigest(),
                 hashlib.sha256(
-                    (case_dir / "preview_on" / "viewer_bundle.js").read_bytes()
+                    (case_dir / "preview_on" / "index.html").read_bytes()
                 ).hexdigest(),
             )
             self.assertEqual(off["smoothing"]["preset"], "none")
@@ -136,6 +142,64 @@ class SurfacePreviewTests(unittest.TestCase):
             first_stl = Path(summary["labels"][0]["stl"])
             self.assertTrue(first_stl.exists())
             self.assertGreater(first_stl.stat().st_size, 84)
+
+    def test_vectorized_binary_stl_preserves_scalar_geometry_and_normals(self) -> None:
+        vertices = np.array(
+            [
+                [0.125, 0.25, -0.5],
+                [1.75, -0.125, 0.375],
+                [-0.25, 1.5, 0.625],
+                [0.375, -0.75, 1.25],
+            ],
+            dtype=np.float32,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+                [0, 0, 0],
+            ],
+            dtype=np.uint32,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actual = root / "actual.stl"
+            expected = root / "expected.stl"
+
+            write_binary_stl(actual, vertices, faces, solid_name="byte_match")
+            _write_scalar_reference_stl(
+                expected,
+                vertices,
+                faces,
+                solid_name="byte_match",
+            )
+
+            actual_bytes = actual.read_bytes()
+            expected_bytes = expected.read_bytes()
+            self.assertEqual(actual_bytes[:84], expected_bytes[:84])
+            record_dtype = np.dtype(
+                [
+                    ("normal", "<f4", (3,)),
+                    ("vertices", "<f4", (3, 3)),
+                    ("attribute", "<u2"),
+                ]
+            )
+            actual_records = np.frombuffer(actual_bytes, dtype=record_dtype, offset=84)
+            expected_records = np.frombuffer(expected_bytes, dtype=record_dtype, offset=84)
+            np.testing.assert_array_equal(
+                actual_records["vertices"],
+                expected_records["vertices"],
+            )
+            np.testing.assert_array_equal(
+                actual_records["attribute"],
+                expected_records["attribute"],
+            )
+            np.testing.assert_allclose(
+                actual_records["normal"],
+                expected_records["normal"],
+                rtol=1e-6,
+                atol=2e-7,
+            )
 
     def test_taubin_smoothing_is_finite_stable_and_moves_vertices(self) -> None:
         mask = _sphere_mask(shape=(24, 24, 24), center=(12, 12, 12), radius=6)
@@ -202,6 +266,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertTrue((output_dir / "index.html").exists())
             self.assertTrue((output_dir / "viewer_bundle.js").exists())
             self.assertTrue((output_dir / "preview_summary.json").exists())
+            self.assertTrue((output_dir / "performance_profile.json").exists())
             for name in [
                 "all_nonzero_smooth.stl",
                 "dental_hard_tissue_smooth.stl",
@@ -213,6 +278,27 @@ class SurfacePreviewTests(unittest.TestCase):
 
             saved_summary = json.loads(
                 (output_dir / "preview_summary.json").read_text(encoding="utf-8")
+            )
+            profile = json.loads(
+                (output_dir / "performance_profile.json").read_text(encoding="utf-8")
+            )
+            self.assertGreater(profile["total_seconds"], 0.0)
+            self.assertLessEqual(
+                profile["milestones_seconds"]["preview_ready"],
+                profile["milestones_seconds"]["all_outputs_complete"],
+            )
+            self.assertEqual(
+                {
+                    "nifti_load",
+                    "label_scan_and_mask",
+                    "marching_cubes",
+                    "smoothing",
+                    "stl_write",
+                    "group_mesh_generation",
+                    "browser_mesh_generation",
+                    "json_html_write",
+                },
+                set(profile["stages_seconds"]),
             )
             self.assertEqual(saved_summary["html_viewer"], str((output_dir / "index.html").resolve()))
             self.assertEqual(
@@ -227,6 +313,7 @@ class SurfacePreviewTests(unittest.TestCase):
                 "jaw_depth_prepass_front_shell",
             )
             self.assertTrue(saved_summary["viewer"]["runtime_smoothing"])
+
             self.assertEqual(
                 saved_summary["viewer"]["runtime_smoothing_presets"],
                 ["none", "slicer_like", "medium", "strong"],
@@ -253,9 +340,17 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotIn("cdn", html.lower())
             self.assertNotIn("<script src=", html.lower())
             self.assertIn("viewer_bundle.js", index_html)
+            self.assertIn(
+                '<script id="viewerData" type="application/json">',
+                index_html,
+            )
             self.assertNotIn("const DATA = ", index_html)
-            self.assertIn("const DATA = ", bundle_js)
-            self.assertLess(len(index_html), len(bundle_js))
+            self.assertIn(
+                "const DATA = JSON.parse(document.getElementById('viewerData').textContent);",
+                bundle_js,
+            )
+            self.assertNotIn('"vertices":[', bundle_js)
+            self.assertIn('"vertices":[', index_html)
             self.assertIn("getContext('webgl'", html)
             self.assertIn("TotalSegmentator 3Dビューアー", html)
             self.assertIn(
@@ -374,9 +469,66 @@ class SurfacePreviewTests(unittest.TestCase):
             referenced_static_ids = set(re.findall(r"getElementById\('([^']+)'\)", html))
             self.assertLessEqual(referenced_static_ids, defined_ids)
 
+    def test_deferred_stl_keeps_browser_preview_ready_and_finishes_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case_dir = root / "case"
+            labelmap = (
+                case_dir
+                / "segmentations"
+                / "teeth_experimental"
+                / "teeth_multilabel_fullspace.nii.gz"
+            )
+            _write_synthetic_labelmap(labelmap)
+            output_dir = case_dir / "surface_preview"
+
+            with mock.patch(
+                "totalsegmentator_wrapper_mac.surface_preview.label_name_map",
+                return_value=SYNTHETIC_LABELS,
+            ):
+                preview = run_surface_preview(
+                    case_dir=case_dir,
+                    smoothing=smoothing_config_from_options(preset="none"),
+                    detailed_stl=False,
+                )
+
+                self.assertEqual(preview["stl_generation"]["status"], "pending")
+                self.assertTrue((output_dir / "index.html").exists())
+                self.assertTrue((output_dir / "viewer_bundle.js").exists())
+                self.assertFalse((output_dir / "labels").exists())
+                html_hash = hashlib.sha256(
+                    (output_dir / "index.html").read_bytes()
+                ).hexdigest()
+                bundle_hash = hashlib.sha256(
+                    (output_dir / "viewer_bundle.js").read_bytes()
+                ).hexdigest()
+
+                finished = run_surface_preview_stl_only(
+                    case_dir=case_dir,
+                    input_path=labelmap,
+                    output_dir=output_dir,
+                    smoothing=smoothing_config_from_options(preset="none"),
+                )
+
+            self.assertEqual(finished["stl_generation"]["status"], "complete")
+            self.assertEqual(
+                hashlib.sha256((output_dir / "index.html").read_bytes()).hexdigest(),
+                html_hash,
+            )
+            self.assertEqual(
+                hashlib.sha256((output_dir / "viewer_bundle.js").read_bytes()).hexdigest(),
+                bundle_hash,
+            )
+            self.assertTrue((output_dir / "labels").is_dir())
+            self.assertTrue((output_dir / "combined").is_dir())
+            for entry in finished["labels"] + finished["groups"]:
+                self.assertGreater(entry["vertices"], 0)
+                self.assertGreater(entry["triangles"], 0)
+                self.assertTrue(np.all(np.isfinite(np.asarray(entry["bounds_mm"]))))
+
     def test_comparison_payload_reader_supports_inline_and_external_viewers(self) -> None:
         payload = {
-            "dataLabel": "test",
+            "dataLabel": "test <script>",
             "labelCount": 1,
             "smoothing": {"preset": "none"},
             "meshes": [],
@@ -396,6 +548,8 @@ class SurfacePreviewTests(unittest.TestCase):
             external_path = root / "index.html"
             external_path.write_text(index_html, encoding="utf-8")
             (root / "viewer_bundle.js").write_text(bundle_js, encoding="utf-8")
+            self.assertNotIn('"test <script>"', index_html)
+            self.assertIn('"test \\u003cscript>"', index_html)
             self.assertEqual(read_payload(external_path), payload)
 
             comparison_path = root / "comparison.html"
@@ -615,6 +769,31 @@ def _write_synthetic_labelmap(path: Path) -> Path:
     image = nib.Nifti1Image(data, np.eye(4))
     nib.save(image, str(path))
     return path
+
+
+def _write_scalar_reference_stl(
+    path: Path,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    *,
+    solid_name: str,
+) -> None:
+    header = f"TotalSegWrapper {solid_name}".encode("ascii", errors="ignore")[:80]
+    header = header + b" " * (80 - len(header))
+    with path.open("wb") as file:
+        file.write(header)
+        file.write(struct.pack("<I", int(faces.shape[0])))
+        for tri in faces:
+            points = vertices[tri]
+            normal = np.cross(points[1] - points[0], points[2] - points[0])
+            norm = float(np.linalg.norm(normal))
+            if norm > 0:
+                normal = normal / norm
+            else:
+                normal = np.zeros(3, dtype=np.float32)
+            file.write(struct.pack("<3f", *normal.astype(np.float32)))
+            file.write(struct.pack("<9f", *points.astype(np.float32).reshape(-1)))
+            file.write(struct.pack("<H", 0))
 
 
 def _write_toothseg_labelmap_with_sidecar(path: Path) -> Path:

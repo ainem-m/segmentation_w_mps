@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import resource
 import struct
+import sys
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import nibabel as nib
 import numpy as np
@@ -29,6 +33,18 @@ GROUP_COLORS = {
 PREVIEW_STEP_SIZE_WARNING_THRESHOLD = 4
 PREVIEW_STEP_SIZE_WARNING = "small structures may be under-sampled"
 VIEWER_BUNDLE_FILENAME = "viewer_bundle.js"
+PERFORMANCE_PROFILE_FILENAME = "performance_profile.json"
+STL_PERFORMANCE_PROFILE_FILENAME = "stl_performance_profile.json"
+STL_GENERATION_LOG_FILENAME = "stl_generation.log"
+STL_WRITE_CHUNK_TRIANGLES = 100_000
+STL_TRIANGLE_DTYPE = np.dtype(
+    [
+        ("normal", "<f4", (3,)),
+        ("vertices", "<f4", (3, 3)),
+        ("attribute", "<u2"),
+    ],
+    align=False,
+)
 
 CRANIOFACIAL_SURFACE_LABELS: tuple[tuple[str, int, str], ...] = (
     ("mandible.nii.gz", 1, "lower_jawbone"),
@@ -44,6 +60,43 @@ class SmoothingConfig:
     iterations: int
     lambda_value: float
     mu: float
+
+
+class _StageProfiler:
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._events: list[dict[str, Any]] = []
+        self._milestones: dict[str, float] = {}
+
+    @contextmanager
+    def measure(self, stage: str, **details: Any) -> Iterator[None]:
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._events.append(
+                {
+                    "stage": stage,
+                    "seconds": time.perf_counter() - started,
+                    **details,
+                }
+            )
+
+    def milestone(self, name: str) -> None:
+        self._milestones[name] = time.perf_counter() - self._started
+
+    def snapshot(self) -> dict[str, Any]:
+        stages: dict[str, float] = {}
+        for event in self._events:
+            stage = str(event["stage"])
+            stages[stage] = stages.get(stage, 0.0) + float(event["seconds"])
+        return {
+            "total_seconds": time.perf_counter() - self._started,
+            "max_rss_bytes": _max_rss_bytes(),
+            "stages_seconds": stages,
+            "milestones_seconds": dict(self._milestones),
+            "events": list(self._events),
+        }
 
 
 def smoothing_config_from_options(
@@ -72,7 +125,9 @@ def run_surface_preview(
     min_voxels: int = 1,
     preview_step_size: int = 2,
     smoothing: SmoothingConfig | None = None,
+    detailed_stl: bool = True,
 ) -> dict[str, Any]:
+    profiler = _StageProfiler()
     if preview_step_size < 1:
         raise ValueError("preview_step_size must be >= 1")
     case_dir = case_dir.resolve()
@@ -81,30 +136,34 @@ def run_surface_preview(
         input_path=input_path,
     )
     output_dir = output_dir or case_dir / "surface_preview"
+    output_dir.mkdir(parents=True, exist_ok=True)
     smoothing = smoothing or smoothing_config_from_options(preset="slicer_like")
-    summary = export_labelmap_surfaces(
+    summary, image, data = _scan_preview_labelmap(
         input_path=input_path,
         output_dir=output_dir,
         min_voxels=min_voxels,
-        combined=True,
         smoothing=smoothing,
-        suffix="_smooth",
-        summary_filename="preview_summary.json",
-        readme_filename="README_SURFACE_PREVIEW.md",
+        profiler=profiler,
     )
     html_path = output_dir / "index.html"
     viewer_base_smoothing = smoothing_config_from_options(preset="none")
-    preview_meshes = _build_preview_meshes(
-        input_path=input_path,
-        summary=summary,
-        smoothing=viewer_base_smoothing,
-        step_size=preview_step_size,
-    )
-    viewer_bundle_path = _write_offline_viewer(
-        html_path,
-        summary=summary,
-        preview_meshes=preview_meshes,
-    )
+    with profiler.measure("browser_mesh_generation"):
+        preview_meshes = _build_preview_meshes(
+            input_path=input_path,
+            summary=summary,
+            smoothing=viewer_base_smoothing,
+            step_size=preview_step_size,
+            profiler=profiler,
+            image=image,
+            data=data,
+        )
+    with profiler.measure("json_html_write", artifact="offline_viewer"):
+        viewer_bundle_path = _write_offline_viewer(
+            html_path,
+            summary=summary,
+            preview_meshes=preview_meshes,
+        )
+    profiler.milestone("preview_ready")
     summary["html_viewer"] = str(html_path.resolve())
     summary["preview"] = {
         "step_size": preview_step_size,
@@ -151,11 +210,178 @@ def run_surface_preview(
         },
         "script_bundle": str(viewer_bundle_path.resolve()),
     }
-    (output_dir / "preview_summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
+    profile_path = output_dir / PERFORMANCE_PROFILE_FILENAME
+    summary["performance_profile"] = str(profile_path.resolve())
+    summary["stl_generation"] = {
+        "status": "running" if detailed_stl else "pending",
+    }
+    with profiler.measure("json_html_write", artifact="preview_summary"):
+        _write_json_atomic(output_dir / "preview_summary.json", summary)
+    profiler.milestone("preview_outputs_complete")
+    if not detailed_stl:
+        profile = profiler.snapshot()
+        _write_json_atomic(profile_path, profile)
+        summary["profile"] = profile
+        return summary
+
+    detailed_summary = export_labelmap_surfaces(
+        input_path=input_path,
+        output_dir=output_dir,
+        min_voxels=min_voxels,
+        combined=True,
+        smoothing=smoothing,
+        suffix="_smooth",
+        summary_filename=None,
+        readme_filename="README_SURFACE_PREVIEW.md",
+        profiler=profiler,
+    )
+    detailed_summary.update(
+        {
+            "html_viewer": summary["html_viewer"],
+            "preview": summary["preview"],
+            "source": summary["source"],
+            "viewer": summary["viewer"],
+            "performance_profile": summary["performance_profile"],
+            "stl_generation": {"status": "complete"},
+        }
+    )
+    summary = detailed_summary
+    with profiler.measure("json_html_write", artifact="final_summary"):
+        _write_json_atomic(output_dir / "preview_summary.json", summary)
+    profiler.milestone("all_stl_complete")
+    profiler.milestone("all_outputs_complete")
+    profile = profiler.snapshot()
+    _write_json_atomic(profile_path, profile)
+    summary["profile"] = profile
+    return summary
+
+
+def _scan_preview_labelmap(
+    *,
+    input_path: Path,
+    output_dir: Path,
+    min_voxels: int,
+    smoothing: SmoothingConfig,
+    profiler: _StageProfiler,
+) -> tuple[dict[str, Any], nib.Nifti1Image, np.ndarray]:
+    with profiler.measure("nifti_load", purpose="browser_preview"):
+        image = nib.load(str(input_path))
+        data = np.asanyarray(image.dataobj)
+    label_names = label_name_map(input_path)
+    with profiler.measure("label_scan_and_mask", operation="unique_labels"):
+        label_values, counts = np.unique(data, return_counts=True)
+    label_entries = [
+        {
+            "label": int(value),
+            "name": label_names.get(int(value), f"label_{int(value)}"),
+            "voxels": int(count),
+        }
+        for value, count in zip(label_values, counts, strict=True)
+        if int(value) != 0 and int(count) >= min_voxels
+    ]
+    groups = [
+        {"name": name, "labels": labels}
+        for name, labels in group_specs(label_entries).items()
+        if labels
+    ]
+    return (
+        {
+            "input": str(input_path.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "source_shape": [int(value) for value in image.shape[:3]],
+            "source_spacing": [float(value) for value in image.header.get_zooms()[:3]],
+            "label_count": len(label_entries),
+            "labels": label_entries,
+            "groups": groups,
+            "smoothing": _smoothing_to_dict(smoothing),
+        },
+        image,
+        data,
+    )
+
+
+def run_surface_preview_stl_only(
+    *,
+    case_dir: Path,
+    input_path: Path | None = None,
+    output_dir: Path | None = None,
+    min_voxels: int = 1,
+    smoothing: SmoothingConfig | None = None,
+) -> dict[str, Any]:
+    profiler = _StageProfiler()
+    case_dir = case_dir.resolve()
+    input_path, _source_info = resolve_surface_preview_input(
+        case_dir=case_dir,
+        input_path=input_path,
+    )
+    output_dir = (output_dir or case_dir / "surface_preview").resolve()
+    summary_path = output_dir / "preview_summary.json"
+    html_path = output_dir / "index.html"
+    bundle_path = output_dir / VIEWER_BUNDLE_FILENAME
+    if not summary_path.exists() or not html_path.exists() or not bundle_path.exists():
+        raise RuntimeError("Browser preview must be complete before deferred STL generation")
+    preview_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if Path(preview_summary.get("input", "")).resolve() != input_path:
+        raise RuntimeError("Deferred STL input does not match the browser preview input")
+    smoothing = smoothing or smoothing_config_from_options(preset="slicer_like")
+    if preview_summary.get("smoothing") != _smoothing_to_dict(smoothing):
+        raise RuntimeError("Deferred STL smoothing does not match the browser preview")
+    detailed_summary = export_labelmap_surfaces(
+        input_path=input_path,
+        output_dir=output_dir,
+        min_voxels=min_voxels,
+        combined=True,
+        smoothing=smoothing,
+        suffix="_smooth",
+        summary_filename=None,
+        readme_filename="README_SURFACE_PREVIEW.md",
+        profiler=profiler,
+    )
+    for key in (
+        "html_viewer",
+        "preview",
+        "source",
+        "viewer",
+        "performance_profile",
+    ):
+        detailed_summary[key] = preview_summary[key]
+    stl_profile_path = output_dir / STL_PERFORMANCE_PROFILE_FILENAME
+    detailed_summary["stl_performance_profile"] = str(stl_profile_path)
+    detailed_summary["stl_generation"] = {"status": "complete"}
+    with profiler.measure("json_html_write", artifact="final_summary"):
+        _write_json_atomic(summary_path, detailed_summary)
+    profiler.milestone("all_stl_complete")
+    profiler.milestone("all_outputs_complete")
+    profile = profiler.snapshot()
+    _write_json_atomic(stl_profile_path, profile)
+    detailed_summary["profile"] = profile
+    return detailed_summary
+
+
+def mark_surface_preview_stl_status(
+    *,
+    output_dir: Path,
+    status: str,
+    error_type: str | None = None,
+) -> None:
+    if status not in {"pending", "running", "complete", "failed"}:
+        raise ValueError(f"Unknown STL generation status: {status}")
+    summary_path = output_dir / "preview_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    state: dict[str, Any] = {"status": status}
+    if error_type is not None:
+        state["error_type"] = error_type
+    summary["stl_generation"] = state
+    _write_json_atomic(summary_path, summary)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    return summary
+    temporary.replace(path)
 
 
 def resolve_surface_preview_input(
@@ -303,8 +529,9 @@ def export_labelmap_surfaces(
     combined: bool = False,
     smoothing: SmoothingConfig | None = None,
     suffix: str = "",
-    summary_filename: str = "stl_export_summary.json",
+    summary_filename: str | None = "stl_export_summary.json",
     readme_filename: str = "README_STL_EXPORT.md",
+    profiler: _StageProfiler | None = None,
 ) -> dict[str, Any]:
     input_path = input_path.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -312,10 +539,13 @@ def export_labelmap_surfaces(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     smoothing = smoothing or smoothing_config_from_options(preset="none")
-    image = nib.load(str(input_path))
-    data = np.asanyarray(image.dataobj)
+    profiler = profiler or _StageProfiler()
+    with profiler.measure("nifti_load", purpose="stl_export"):
+        image = nib.load(str(input_path))
+        data = np.asanyarray(image.dataobj)
     label_names = label_name_map(input_path)
-    label_values, counts = np.unique(data, return_counts=True)
+    with profiler.measure("label_scan_and_mask", operation="unique_labels"):
+        label_values, counts = np.unique(data, return_counts=True)
 
     label_entries = []
     for value, count in zip(label_values, counts, strict=True):
@@ -326,8 +556,17 @@ def export_labelmap_surfaces(
         name = label_names.get(label, f"label_{label}")
         stl_path = labels_dir / f"label_{label:03d}_{safe_name(name)}{suffix}.stl"
         effective = effective_smoothing_for_label(name=name, voxels=voxels, smoothing=smoothing)
-        mesh = mask_to_mesh(data == label, image.affine, smoothing=effective)
-        write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=name)
+        with profiler.measure("label_scan_and_mask", operation="label_mask", label=label):
+            mask = data == label
+        mesh = mask_to_mesh(
+            mask,
+            image.affine,
+            smoothing=effective,
+            profiler=profiler,
+            mesh_kind="label",
+        )
+        with profiler.measure("stl_write", mesh_kind="label", name=name):
+            write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=name)
         label_entries.append(
             {
                 "label": label,
@@ -350,8 +589,22 @@ def export_labelmap_surfaces(
                 continue
             stl_path = combined_dir / f"{group_name}{suffix}.stl"
             effective = effective_smoothing_for_group(group_name=group_name, smoothing=smoothing)
-            mesh = mask_to_mesh(np.isin(data, labels), image.affine, smoothing=effective)
-            write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=group_name)
+            with profiler.measure("group_mesh_generation", name=group_name):
+                with profiler.measure(
+                    "label_scan_and_mask",
+                    operation="group_mask",
+                    name=group_name,
+                ):
+                    mask = np.isin(data, labels)
+                mesh = mask_to_mesh(
+                    mask,
+                    image.affine,
+                    smoothing=effective,
+                    profiler=profiler,
+                    mesh_kind="group",
+                )
+            with profiler.measure("stl_write", mesh_kind="group", name=group_name):
+                write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=group_name)
             groups.append(
                 {
                     "name": group_name,
@@ -374,11 +627,10 @@ def export_labelmap_surfaces(
         "groups": groups,
         "smoothing": _smoothing_to_dict(smoothing),
     }
-    (output_dir / summary_filename).write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    write_markdown_summary(output_dir / readme_filename, summary)
+    with profiler.measure("json_html_write", artifact="stl_summary"):
+        if summary_filename is not None:
+            _write_json_atomic(output_dir / summary_filename, summary)
+        write_markdown_summary(output_dir / readme_filename, summary)
     return summary
 
 
@@ -388,8 +640,16 @@ def mask_to_mesh(
     *,
     smoothing: SmoothingConfig | None = None,
     step_size: int = 1,
+    profiler: _StageProfiler | None = None,
+    mesh_kind: str = "unspecified",
 ) -> dict[str, Any]:
-    coords = np.argwhere(mask)
+    profiler = profiler or _StageProfiler()
+    with profiler.measure(
+        "label_scan_and_mask",
+        operation="bounding_box",
+        mesh_kind=mesh_kind,
+    ):
+        coords = np.argwhere(mask)
     if coords.size == 0:
         raise RuntimeError("Cannot mesh an empty mask")
     lo = np.maximum(coords.min(axis=0) - 1, 0)
@@ -397,21 +657,27 @@ def mask_to_mesh(
     slices = tuple(slice(int(start), int(stop)) for start, stop in zip(lo, hi, strict=True))
     cropped = mask[slices]
     padded = np.pad(cropped.astype(np.uint8), 1, mode="constant", constant_values=0)
-    vertices, faces, _normals, _values = measure.marching_cubes(
-        padded,
-        level=0.5,
-        step_size=step_size,
-    )
+    with profiler.measure("marching_cubes", mesh_kind=mesh_kind, step_size=step_size):
+        vertices, faces, _normals, _values = measure.marching_cubes(
+            padded,
+            level=0.5,
+            step_size=step_size,
+        )
     vertices = vertices + lo - 1
     vertices_mm = nib.affines.apply_affine(affine, vertices).astype(np.float32)
     if smoothing is not None and smoothing.iterations > 0:
-        vertices_mm = taubin_smooth(
-            vertices_mm,
-            faces.astype(np.uint32),
+        with profiler.measure(
+            "smoothing",
+            mesh_kind=mesh_kind,
             iterations=smoothing.iterations,
-            lambda_value=smoothing.lambda_value,
-            mu=smoothing.mu,
-        )
+        ):
+            vertices_mm = taubin_smooth(
+                vertices_mm,
+                faces.astype(np.uint32),
+                iterations=smoothing.iterations,
+                lambda_value=smoothing.lambda_value,
+                mu=smoothing.mu,
+            )
     bounds = np.vstack([vertices_mm.min(axis=0), vertices_mm.max(axis=0)])
     return {
         "vertices": vertices_mm,
@@ -470,17 +736,31 @@ def write_binary_stl(path: Path, vertices: np.ndarray, faces: np.ndarray, *, sol
     with path.open("wb") as file:
         file.write(header)
         file.write(struct.pack("<I", int(faces.shape[0])))
-        for tri in faces:
-            points = vertices[tri]
-            normal = np.cross(points[1] - points[0], points[2] - points[0])
-            norm = float(np.linalg.norm(normal))
-            if norm > 0:
-                normal = normal / norm
-            else:
-                normal = np.zeros(3, dtype=np.float32)
-            file.write(struct.pack("<3f", *normal.astype(np.float32)))
-            file.write(struct.pack("<9f", *points.astype(np.float32).reshape(-1)))
-            file.write(struct.pack("<H", 0))
+        for start in range(0, int(faces.shape[0]), STL_WRITE_CHUNK_TRIANGLES):
+            face_chunk = faces[start : start + STL_WRITE_CHUNK_TRIANGLES]
+            points = np.asarray(vertices[face_chunk], dtype=np.float32)
+            normals = np.cross(
+                points[:, 1] - points[:, 0],
+                points[:, 2] - points[:, 0],
+            )
+            norms = np.linalg.norm(normals, axis=1)
+            np.divide(
+                normals,
+                norms[:, np.newaxis],
+                out=normals,
+                where=norms[:, np.newaxis] > 0,
+            )
+            normals[norms == 0] = 0
+            records = np.empty(face_chunk.shape[0], dtype=STL_TRIANGLE_DTYPE)
+            records["normal"] = normals
+            records["vertices"] = points
+            records["attribute"] = 0
+            file.write(records.tobytes(order="C"))
+
+
+def _max_rss_bytes() -> int:
+    max_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return max_rss if sys.platform == "darwin" else max_rss * 1024
 
 
 def group_specs(label_entries: list[dict[str, Any]]) -> dict[str, list[int]]:
@@ -630,9 +910,15 @@ def _build_preview_meshes(
     summary: dict[str, Any],
     smoothing: SmoothingConfig,
     step_size: int,
+    profiler: _StageProfiler | None = None,
+    image: nib.Nifti1Image | None = None,
+    data: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
-    image = nib.load(str(input_path))
-    data = np.asanyarray(image.dataobj)
+    profiler = profiler or _StageProfiler()
+    if image is None or data is None:
+        with profiler.measure("nifti_load", purpose="browser_preview"):
+            image = nib.load(str(input_path))
+            data = np.asanyarray(image.dataobj)
     preview = []
     group_order = ["jaws", "dental_hard_tissue", "pulp", "all_nonzero"]
     groups = {group["name"]: group for group in summary["groups"]}
@@ -640,11 +926,19 @@ def _build_preview_meshes(
         group = groups.get(name)
         if not group:
             continue
+        with profiler.measure(
+            "label_scan_and_mask",
+            operation="browser_group_mask",
+            name=name,
+        ):
+            mask = np.isin(data, group["labels"])
         mesh = mask_to_mesh(
-            np.isin(data, group["labels"]),
+            mask,
             image.affine,
             smoothing=effective_smoothing_for_group(group_name=name, smoothing=smoothing),
             step_size=step_size,
+            profiler=profiler,
+            mesh_kind="browser",
         )
         preview.append(
             {
@@ -725,6 +1019,7 @@ def _externalize_viewer_script(
 
 
 def _webgl_html_document(payload_json: str) -> str:
+    script_safe_payload_json = payload_json.replace("<", "\\u003c")
     return """<!doctype html>
 <html lang="ja">
 <head>
@@ -856,8 +1151,9 @@ code { color: #c9e2ff; }
   </aside>
   <canvas id="view" aria-label="3Dデータ表示領域"></canvas>
 </div>
+<script id="viewerData" type="application/json">__PAYLOAD__</script>
 <script>
-const DATA = __PAYLOAD__;
+const DATA = JSON.parse(document.getElementById('viewerData').textContent);
 const canvas = document.getElementById('view');
 const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
 const ctx2d = gl ? null : canvas.getContext('2d');
@@ -2510,7 +2806,7 @@ function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 </script>
 </body>
 </html>
-""".replace("__PAYLOAD__", payload_json)
+""".replace("__PAYLOAD__", script_safe_payload_json)
 
 
 def _laplacian_step(adjacency: Any, degree: np.ndarray, vertices: np.ndarray, weight: float) -> np.ndarray:

@@ -800,6 +800,7 @@ struct CommandBuilder {
         }
         command.append("--smooth-preset")
         command.append(smoothSurfaces ? "slicer_like" : "none")
+        command.append("--defer-stl")
         return command
     }
 
