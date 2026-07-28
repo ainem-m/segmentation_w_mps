@@ -5,26 +5,26 @@
   "object_prefix": "totalsegmentator-wrapper-mac",
   "objects": [
     {
-      "source": "dist/TotalSegmentator Wrapper for Mac-0.2.1-20260728-surface-preview-arm64.dmg",
-      "key": "totalsegmentator-wrapper-mac/releases/0.2.1/TotalSegmentator Wrapper for Mac-0.2.1-20260728-surface-preview-arm64.dmg",
+      "source": "dist/TotalSegmentator Wrapper for Mac-0.3.0-20260729-final-arm64.dmg",
+      "key": "totalsegmentator-wrapper-mac/releases/0.3.0/TotalSegmentator Wrapper for Mac-0.3.0-20260729-final-arm64.dmg",
       "content_type": "application/x-apple-diskimage",
       "cache_control": "public, max-age=31536000, immutable"
     },
     {
-      "source": "cloudflare/r2/releases/0.2.1/SHA256SUMS.txt",
-      "key": "totalsegmentator-wrapper-mac/releases/0.2.1/SHA256SUMS.txt",
+      "source": "cloudflare/r2/releases/0.3.0/SHA256SUMS.txt",
+      "key": "totalsegmentator-wrapper-mac/releases/0.3.0/SHA256SUMS.txt",
       "content_type": "text/plain; charset=utf-8",
       "cache_control": "public, max-age=31536000, immutable"
     },
     {
-      "source": "cloudflare/r2/releases/0.2.1/RELEASE_NOTES.txt",
-      "key": "totalsegmentator-wrapper-mac/releases/0.2.1/RELEASE_NOTES.txt",
+      "source": "cloudflare/r2/releases/0.3.0/RELEASE_NOTES.txt",
+      "key": "totalsegmentator-wrapper-mac/releases/0.3.0/RELEASE_NOTES.txt",
       "content_type": "text/plain; charset=utf-8",
       "cache_control": "public, max-age=31536000, immutable"
     },
     {
-      "source": "cloudflare/r2/releases/0.2.1/release.json",
-      "key": "totalsegmentator-wrapper-mac/releases/0.2.1/release.json",
+      "source": "cloudflare/r2/releases/0.3.0/release.json",
+      "key": "totalsegmentator-wrapper-mac/releases/0.3.0/release.json",
       "content_type": "application/json; charset=utf-8",
       "cache_control": "public, max-age=31536000, immutable"
     },

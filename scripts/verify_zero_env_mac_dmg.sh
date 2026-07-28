@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.3.0-20260728-oss1-arm64.dmg}"
+DMG_PATH="${1:-${ROOT}/dist/TotalSegmentator Wrapper for Mac-0.3.0-20260729-final-arm64.dmg}"
 EXPECTED_APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION:-0.3.0}"
 
 if [[ ! -f "${DMG_PATH}" ]]; then

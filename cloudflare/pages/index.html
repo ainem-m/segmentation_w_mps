@@ -3,39 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TotalSegmentator Wrapper for Mac｜CT・CBCTをMacで3D表示</title>
+  <title>MacBook Airでもっと簡単・高速に！CTから顎骨・歯を3Dデータ化！</title>
   <link rel="canonical" href="https://totalsegmentator.lacramy.com/">
   <meta
     name="description"
-    content="医科用CT／歯科用CBCTのDICOMまたはNIfTIデータをApple Silicon搭載Macで扱い、顎骨・歯などの自動抽出結果を3D表示する研究・教育用アプリです。"
-  >
-  <meta property="og:url" content="https://totalsegmentator.lacramy.com/">
-  <meta property="og:title" content="TotalSegmentator Wrapper for Mac">
-  <meta
-    property="og:description"
-    content="CT／CBCT画像をMac内で処理し、自動抽出結果をブラウザ上の3Dビューアーで確認できる研究・教育用アプリです。"
-  >
-  <meta
-    property="og:image:alt"
-    content="顎骨と歯の自動抽出結果を表示したTotalSegmentator Wrapper for Macの3Dビューアー"
+    content="CTのDICOMを選ぶだけ。初回準備はアプリ内のボタンひとつで行い、MacのGPUを活用して顎骨や歯の3Dデータを作成します。"
   >
   <style>
     :root {
       color-scheme: light;
-      --ink: #13272b;
-      --muted: #53666a;
-      --surface: #f5f8f6;
+      --ink: #10272b;
+      --muted: #5a6c70;
+      --paper: #fbfcfa;
+      --surface: #f0f6f3;
       --panel: #ffffff;
-      --line: #c9d7d3;
-      --line-strong: #9bb4ae;
-      --teal: #1f7a73;
-      --teal-dark: #173f46;
-      --amber: #8a540f;
-      --amber-soft: #fff6e4;
-      --red-soft: #fff0ed;
-      --blue: #315e8a;
-      --blue-soft: #eef6fb;
-      --green-soft: #eef7f1;
+      --line: #d5e1dc;
+      --green: #14766f;
+      --green-dark: #0b4645;
+      --green-soft: #dff1ea;
+      --blue: #416fa1;
+      --blue-soft: #e8f1f8;
+      --orange: #b45f22;
+      --orange-soft: #fff0df;
+      --shadow: 0 18px 50px rgba(18, 51, 50, 0.12);
+      --radius: 22px;
     }
 
     * {
@@ -48,180 +39,1048 @@
 
     body {
       margin: 0;
-      background: var(--surface);
+      overflow-x: hidden;
+      background: var(--paper);
       color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.65;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+        "Yu Gothic UI", "Yu Gothic", sans-serif;
+      line-height: 1.75;
     }
 
     a {
-      color: var(--blue);
+      color: inherit;
     }
 
-    .topbar {
-      background: var(--teal-dark);
-      color: #f8fbfa;
+    img {
+      max-width: 100%;
     }
 
-    .topbar-inner,
-    .main,
-    .band-inner,
-    .footer-inner {
-      max-width: 1160px;
+    .wrap {
+      width: min(1120px, calc(100% - 40px));
       margin: 0 auto;
-      padding: 0 28px;
     }
 
-    .topbar-inner {
-      min-height: 76px;
+    .site-header {
+      position: sticky;
+      z-index: 10;
+      top: 0;
+      border-bottom: 1px solid rgba(213, 225, 220, 0.82);
+      background: rgba(251, 252, 250, 0.9);
+      backdrop-filter: blur(16px);
+    }
+
+    .header-inner {
+      min-height: 68px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 24px;
+      gap: 28px;
     }
 
     .brand {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-decoration: none;
     }
 
-    .status {
-      margin: 0;
-      color: #cfe4e2;
-      font-size: 14px;
-      white-space: nowrap;
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--green-dark);
+      color: #fff;
+      font-size: 12px;
     }
 
     .nav {
       display: flex;
       align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
-      font-size: 14px;
-    }
-
-    .nav a {
-      color: #e8f4f2;
-      text-decoration: none;
-    }
-
-    .main {
-      padding-top: 46px;
-      padding-bottom: 58px;
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 30px;
-      align-items: start;
-    }
-
-    .hero-copy {
-      max-width: 900px;
-    }
-
-    .eyebrow {
-      margin: 0 0 12px;
-      color: var(--teal);
-      font-size: 14px;
+      gap: 22px;
+      font-size: 13px;
       font-weight: 700;
     }
 
-    h1 {
-      margin: 0 0 16px;
-      font-size: 44px;
-      line-height: 1.12;
-      letter-spacing: 0;
+    .nav a {
+      text-decoration: none;
     }
 
-    .lead {
-      max-width: 820px;
-      margin: 0 0 16px;
+    .nav .nav-download {
+      border-radius: 999px;
+      padding: 9px 15px;
+      background: var(--green);
+      color: #fff;
+    }
+
+    .hero {
+      position: relative;
+      padding: 82px 0 70px;
+      background:
+        radial-gradient(circle at 83% 12%, rgba(204, 235, 222, 0.95), transparent 27%),
+        radial-gradient(circle at 6% 76%, rgba(232, 241, 248, 0.95), transparent 28%),
+        linear-gradient(180deg, #fbfcfa, #f3f8f5);
+    }
+
+    .hero::before {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(20, 118, 111, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(20, 118, 111, 0.045) 1px, transparent 1px);
+      background-size: 34px 34px;
+      content: "";
+      mask-image: linear-gradient(to bottom, black, transparent 82%);
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1.03fr) minmax(390px, 0.97fr);
+      gap: 56px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 20px;
+      border: 1px solid #a7d3c4;
+      border-radius: 999px;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--green-dark);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .eyebrow::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2bad82;
+      box-shadow: 0 0 0 5px rgba(43, 173, 130, 0.14);
+      content: "";
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      overflow-wrap: anywhere;
+    }
+
+    h1 {
+      max-width: 710px;
+      margin: 0;
+      font-size: clamp(38px, 5.2vw, 66px);
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+    }
+
+    .title-accent {
+      color: var(--green);
+    }
+
+    .hero-title-line {
+      display: block;
+      white-space: nowrap;
+    }
+
+    .hero-lead {
+      max-width: 650px;
+      margin: 25px 0 0;
+      color: #40585c;
+      font-size: clamp(17px, 2vw, 20px);
+      line-height: 1.8;
+    }
+
+    .hero-lead-line {
+      display: block;
+    }
+
+    .hero-lead-line + .hero-lead-line {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .hero-toc {
+      margin-top: 28px;
+      padding: 16px 18px 12px;
+      border-left: 4px solid var(--green);
+      border-radius: 0 14px 14px 0;
+      background: rgba(224, 241, 236, 0.68);
+    }
+
+    .hero-toc-label,
+    .hero-action-label {
+      margin: 0;
       color: var(--muted);
-      font-size: 18px;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.12em;
+    }
+
+    .hero-points {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 22px;
+      margin: 7px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .hero-points li {
+      border-top: 1px solid rgba(18, 78, 73, 0.14);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .hero-points a {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .hero-points a::after {
+      content: "↓";
+      color: var(--green);
+      font-size: 12px;
+    }
+
+    .hero-point-number {
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+    }
+
+    .hero-points a:hover {
+      color: var(--green);
+    }
+
+    .hero-actions-block {
+      margin-top: 24px;
+      padding-top: 17px;
+      border-top: 1px solid var(--line);
+    }
+
+    .hero-actions-block .actions {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+
+    .hero-actions-block .button {
+      white-space: nowrap;
     }
 
     .actions {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin: 26px 0 0;
+      margin-top: 30px;
     }
 
     .button {
-      min-height: 48px;
+      min-height: 50px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 9px;
-      border-radius: 8px;
-      padding: 0 18px;
-      border: 1px solid var(--teal);
-      cursor: pointer;
-      font: inherit;
+      gap: 8px;
+      border: 1px solid var(--green);
+      border-radius: 13px;
+      padding: 0 19px;
+      background: var(--panel);
+      color: var(--green-dark);
+      font-weight: 800;
       text-decoration: none;
-      font-weight: 700;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 24px rgba(18, 78, 73, 0.14);
     }
 
     .button.primary {
-      background: var(--teal);
-      color: #ffffff;
+      background: var(--green);
+      color: #fff;
     }
 
-    .button.secondary {
-      background: #ffffff;
-      color: var(--teal-dark);
+    .button.subtle {
+      border-color: var(--line);
     }
 
-    .button.compact {
-      min-height: 38px;
-      padding: 0 14px;
+    .button.small {
+      min-height: 43px;
+      padding-inline: 16px;
       font-size: 14px;
     }
 
-    .button.ghost {
-      border-color: var(--line-strong);
-      background: transparent;
-      color: var(--teal-dark);
+    .hero-note {
+      margin: 11px 0 0;
+      color: var(--muted);
+      font-size: 12px;
     }
 
-    .download-note {
-      margin: 10px 0 0;
+    .hero-use-note {
+      display: block;
+      margin-top: 4px;
+      color: #5c6d70;
+      font-weight: 700;
+    }
+
+    .hero-preview-column {
+      min-width: 0;
+    }
+
+    .app-window {
+      overflow: hidden;
+      border: 1px solid rgba(121, 154, 148, 0.5);
+      border-radius: 20px;
+      background: #101315;
+      box-shadow: var(--shadow);
+      transform: rotate(1deg);
+    }
+
+    .window-bar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 13px;
+      background: #e9eceb;
+    }
+
+    .window-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff5f57;
+    }
+
+    .window-dot:nth-child(2) {
+      background: #febc2e;
+    }
+
+    .window-dot:nth-child(3) {
+      background: #28c840;
+    }
+
+    .window-body {
+      position: relative;
+      aspect-ratio: 1.42;
+    }
+
+    .window-body img,
+    .hero-preview-frame {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 0;
+      object-fit: cover;
+    }
+
+    .hero-preview-loading {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #101315;
+      color: #fff;
+      text-align: center;
+      transition: opacity 180ms ease;
+    }
+
+    .hero-preview-loading[hidden] {
+      display: none;
+    }
+
+    .hero-preview-loading div {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 13px;
+      padding: 11px 13px;
+      background: rgba(9, 29, 31, 0.88);
+      font-size: 12px;
+    }
+
+    .hero-preview-loading strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 14px;
+    }
+
+    .hero-interaction-note {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 15px 4px 0;
+      border: 1px solid #b6d8cc;
+      border-radius: 14px;
+      padding: 11px 14px;
+      background: rgba(255, 255, 255, 0.86);
+      color: #40585c;
+      font-size: 12px;
+    }
+
+    .hero-interaction-note strong {
+      flex: 0 0 auto;
+      color: var(--green-dark);
+      font-size: 14px;
+    }
+
+    .section {
+      padding: 84px 0;
+    }
+
+    .section.alt {
+      background: var(--surface);
+    }
+
+    .section.dark {
+      background: var(--green-dark);
+      color: #fff;
+    }
+
+    .section-heading {
+      max-width: 780px;
+      margin-bottom: 36px;
+    }
+
+    .kicker {
+      margin: 0 0 10px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .dark .kicker {
+      color: #8dd8c5;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(29px, 4vw, 43px);
+      line-height: 1.25;
+      letter-spacing: -0.025em;
+    }
+
+    .section-intro {
+      max-width: 740px;
+      margin: 15px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .dark .section-intro {
+      color: #c7ddda;
+    }
+
+    .story-grid {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 50px;
+      align-items: start;
+    }
+
+    .quote-card {
+      position: sticky;
+      top: 96px;
+      border-radius: var(--radius);
+      padding: 28px;
+      background: var(--green-dark);
+      color: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .quote-card p {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 750;
+      line-height: 1.6;
+    }
+
+    .quote-card small {
+      display: block;
+      margin-top: 18px;
+      color: #b9d5d0;
+    }
+
+    .story-copy p {
+      margin: 0;
+      color: #3f565a;
+      font-size: 17px;
+    }
+
+    .story-copy p + p {
+      margin-top: 18px;
+    }
+
+    .article-card {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 24px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      color: inherit;
+      text-decoration: none;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+
+    .article-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px rgba(18, 78, 73, 0.12);
+    }
+
+    .article-card img {
+      width: 100%;
+      height: 132px;
+      display: block;
+      object-fit: cover;
+    }
+
+    .article-card-copy {
+      padding: 16px 18px 16px 0;
+    }
+
+    .article-card-copy small {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--green);
+      font-weight: 800;
+    }
+
+    .article-card-copy strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.45;
+    }
+
+    .article-card-copy span {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 38px;
+    }
+
+    .feature {
+      min-height: 230px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      background: var(--panel);
+    }
+
+    .feature-number {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 38px;
+      border-radius: 12px;
+      background: var(--green-soft);
+      color: var(--green-dark);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .feature h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.4;
+    }
+
+    .feature p {
+      margin: 0;
       color: var(--muted);
       font-size: 14px;
     }
 
-    .warning-box {
-      max-width: 900px;
-      margin: 24px 0 0;
-      padding: 18px;
-      border: 1px solid #e5b871;
-      border-radius: 8px;
-      background: var(--amber-soft);
+    .feature-detail-grid {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.8fr) minmax(0, 1.2fr);
+      gap: 42px;
+      align-items: center;
     }
 
-    .warning-box p {
+    .feature-detail-grid.visual-first {
+      grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+    }
+
+    .feature-index {
+      width: 44px;
+      height: 44px;
+      display: inline-grid;
+      place-items: center;
+      margin-bottom: 18px;
+      border-radius: 13px;
+      background: var(--green-soft);
+      color: var(--green-dark);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .feature-copy h2 {
       margin: 0;
+      font-size: clamp(30px, 3.5vw, 42px);
     }
 
-    .warning-box p + p {
-      margin-top: 10px;
+    .feature-copy > p {
+      margin: 18px 0 0;
+      color: #40585c;
+      font-size: 17px;
     }
 
-    .hero-preview {
-      min-width: 0;
+    .feature-list {
+      display: grid;
+      gap: 10px;
+      margin: 24px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .feature-list li {
+      position: relative;
+      padding-left: 26px;
+      color: #40585c;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .feature-list li::before {
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      content: "✓";
+      font-weight: 900;
+    }
+
+    .setup-details {
+      margin-top: 26px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #f5faf8;
+    }
+
+    .setup-details summary {
+      position: relative;
+      padding: 15px 48px 15px 18px;
+      cursor: pointer;
+      list-style: none;
+      color: var(--green-dark);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .setup-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .setup-details summary::after {
+      position: absolute;
+      top: 50%;
+      right: 18px;
+      content: "＋";
+      font-size: 20px;
+      line-height: 1;
+      transform: translateY(-50%);
+    }
+
+    .setup-details[open] summary::after {
+      content: "−";
+    }
+
+    .setup-details-body {
+      padding: 0 18px 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .setup-details-body p {
+      margin: 14px 0 0;
+      color: #40585c;
+      font-size: 14px;
+      line-height: 1.85;
+    }
+
+    .feature-visual {
+      overflow: hidden;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: #101315;
+      box-shadow: var(--shadow);
+    }
+
+    .feature-visual img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .feature-visual figcaption {
+      padding: 11px 14px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .benchmark-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+      gap: 26px;
+      align-items: stretch;
+    }
+
+    .benchmark-layout.performance-only {
+      grid-template-columns: 1fr;
+    }
+
+    .benchmark-card,
+    .mode-card,
+    .support-card,
+    .donation-card,
+    .dicom-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 28px;
+    }
+
+    .benchmark-card h3,
+    .mode-card h3,
+    .support-card h3,
+    .donation-card h3,
+    .dicom-card h3 {
+      margin: 0;
+      font-size: 21px;
+    }
+
+    .benchmark-sub {
+      margin: 6px 0 25px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .bar-row + .bar-row {
+      margin-top: 24px;
+    }
+
+    .bar-label {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .bar-label strong {
+      flex: 0 0 auto;
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bar-track {
+      height: 18px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e6ece9;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: inherit;
+      background: #8ba5a0;
+    }
+
+    .bar.fast {
+      width: 31.9%;
+      min-width: 60px;
+      background: linear-gradient(90deg, #2ca587, var(--green));
+    }
+
+    .benchmark-result {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-top: 28px;
+      border-radius: 16px;
+      padding: 16px 18px;
+      background: var(--green-soft);
+    }
+
+    .benchmark-result strong {
+      flex: 0 0 auto;
+      color: var(--green-dark);
+      font-size: 28px;
+    }
+
+    .benchmark-result span {
+      color: #315853;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .result-shots {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .result-shot {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #121619;
+    }
+
+    .result-shot img {
+      width: 100%;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+
+    .result-shot figcaption {
+      padding: 9px 11px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .mode-list {
+      display: grid;
+      gap: 13px;
+      margin-top: 20px;
+    }
+
+    .mode {
+      border-radius: 15px;
+      padding: 15px 16px;
+      background: var(--blue-soft);
+    }
+
+    .mode:nth-child(2) {
+      background: var(--orange-soft);
+    }
+
+    .mode strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 17px;
+    }
+
+    .mode p {
+      margin: 0;
+      color: #4e6266;
+      font-size: 13px;
+    }
+
+    .mode img {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin-top: 12px;
+      border-radius: 11px;
+      background: #121619;
+      object-fit: contain;
+    }
+
+    .model-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .model-option {
+      display: block;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      color: inherit;
+      text-decoration: none;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+
+    .model-option:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow);
+    }
+
+    .model-option-copy {
+      min-height: 164px;
+      padding: 20px;
+    }
+
+    .model-option .model-name {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+    }
+
+    .model-option h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.45;
+    }
+
+    .model-option p {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .model-link {
+      display: inline-block;
+      margin-top: 13px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .model-option img {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #121619;
+    }
+
+    .fine-print {
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dicom-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+      gap: 28px;
+      align-items: center;
+    }
+
+    .dicom-section {
+      padding: 58px 0;
+    }
+
+    .dicom-grid.dicom-compact {
+      grid-template-columns: 1fr;
+    }
+
+    .dicom-compact .dicom-card {
+      width: min(100%, 820px);
+      margin: 0 auto;
+    }
+
+    .dicom-card {
+      border-color: #b9d7cc;
+      background: linear-gradient(145deg, #fff, #edf7f3);
+    }
+
+    .dicom-flow {
+      display: grid;
+      gap: 12px;
+      margin: 20px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .dicom-flow li {
+      display: grid;
+      grid-template-columns: 31px minmax(0, 1fr);
+      gap: 11px;
+      align-items: start;
+      color: #40585c;
+    }
+
+    .dicom-flow span {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--green);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .dicom-contact {
+      margin-top: 22px;
+    }
+
+    .button.disabled-button {
+      border-color: #b7cbc5;
+      background: #e5efec;
+      color: #5c706d;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .dicom-copy p {
+      margin: 0;
+      color: #40585c;
+      font-size: 17px;
+    }
+
+    .dicom-copy p + p {
+      margin-top: 17px;
+    }
+
+    .privacy-line {
+      margin-top: 24px;
+      border-left: 4px solid var(--green);
+      padding: 6px 0 6px 18px;
+      color: #33514f;
+      font-weight: 700;
     }
 
     .preview-shell {
-      position: relative;
-      width: 100%;
-      height: 500px;
       overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #111317;
+      border: 1px solid #294f50;
+      border-radius: var(--radius);
+      background: #101315;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+    }
+
+    .preview-stage {
+      position: relative;
+      height: min(610px, 64vw);
+      min-height: 410px;
     }
 
     .preview-image,
@@ -229,633 +1088,805 @@
       width: 100%;
       height: 100%;
       display: block;
-    }
-
-    .preview-image {
-      object-fit: cover;
-    }
-
-    .preview-frame {
       border: 0;
-      background: #111317;
+      object-fit: cover;
     }
 
     .preview-overlay {
       position: absolute;
-      inset: auto 18px 18px 18px;
+      inset: auto 22px 22px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.26);
-      border-radius: 8px;
-      background: rgba(19, 39, 43, 0.88);
-      color: #ffffff;
-      backdrop-filter: blur(8px);
+      gap: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 16px;
+      padding: 16px;
+      background: rgba(7, 29, 30, 0.9);
+      color: #fff;
+      backdrop-filter: blur(14px);
     }
 
-    .preview-overlay p {
-      margin: 0;
-      font-size: 14px;
-      color: #dcebea;
-    }
-
-    .preview-title {
-      margin: 0 0 4px;
+    .preview-overlay strong {
+      display: block;
       font-size: 17px;
-      letter-spacing: 0;
     }
 
-    .preview-caption {
-      margin: 12px 0 0;
-      color: var(--muted);
+    .preview-overlay span {
+      color: #c7dbd8;
       font-size: 13px;
     }
 
-    .band {
-      border-top: 1px solid var(--line);
-      background: #ffffff;
+    .preview-overlay .button {
+      flex: 0 0 auto;
+      border-color: #5ab29e;
+      background: #fff;
+      color: var(--green-dark);
+      cursor: pointer;
     }
 
-    .band.alt {
-      background: var(--surface);
+    .preview-caption {
+      margin: 13px 2px 0;
+      color: #bdd3cf;
+      font-size: 12px;
     }
 
-    .band-inner {
-      padding-top: 42px;
-      padding-bottom: 46px;
-    }
-
-    .section-head {
-      max-width: 820px;
-      margin-bottom: 24px;
-    }
-
-    .section-head h2,
-    .release-panel h2 {
-      margin: 0 0 10px;
-      font-size: 26px;
-      line-height: 1.24;
-      letter-spacing: 0;
-    }
-
-    .section-head p {
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .grid-two,
-    .grid-three,
-    .grid-four {
+    .support-grid {
       display: grid;
-      gap: 18px;
-    }
-
-    .grid-two {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
     }
 
-    .grid-three {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .donation-card {
+      border-color: #b7d6ca;
+      background: linear-gradient(145deg, #f8fffb, #e9f5f0);
     }
 
-    .grid-four {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-
-    .card,
-    .notice-panel,
-    .release-panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 20px;
-    }
-
-    .card h3,
-    .step h3,
-    .notice-panel h3 {
-      margin: 0 0 9px;
-      font-size: 18px;
-      line-height: 1.3;
-      letter-spacing: 0;
-    }
-
-    .card p,
-    .step p,
-    .notice-panel p {
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .card p + p,
-    .notice-panel p + p {
-      margin-top: 10px;
-    }
-
-    .plain-list {
-      margin: 0;
-      padding-left: 1.15em;
-      color: var(--muted);
-    }
-
-    .plain-list li + li {
-      margin-top: 6px;
-    }
-
-    .spec-table {
-      display: grid;
-      gap: 0;
-      margin: 0;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-    }
-
-    .spec-row {
-      display: grid;
-      grid-template-columns: 180px minmax(0, 1fr);
-      gap: 18px;
-      padding: 18px 20px;
-    }
-
-    .spec-row + .spec-row {
-      border-top: 1px solid var(--line);
-    }
-
-    .spec-row dt {
-      margin: 0;
-      color: var(--ink);
-      font-weight: 700;
-    }
-
-    .spec-row dd {
-      margin: 0;
-    }
-
-    .install-layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 380px;
-      gap: 24px;
-      align-items: start;
-    }
-
-    .install-prep {
-      margin: 0 0 18px;
-    }
-
-    .steps {
-      display: grid;
-      gap: 14px;
-    }
-
-    .step {
-      display: grid;
-      grid-template-columns: 46px minmax(0, 1fr);
-      gap: 16px;
-      align-items: start;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 18px;
-    }
-
-    .step-number {
-      width: 34px;
-      height: 34px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 50%;
-      background: var(--green-soft);
-      color: var(--teal-dark);
-      font-weight: 700;
-    }
-
-    .step-download {
-      margin-top: 12px;
-    }
-
-    .roadmap-actions {
-      display: flex;
-      justify-content: center;
+    .codoc-embed {
+      min-height: 58px;
       margin-top: 24px;
     }
 
-    .meta {
-      display: grid;
-      grid-template-columns: 128px minmax(0, 1fr);
-      gap: 10px 14px;
-      margin: 0;
+    .support-card {
+      border-color: #ead3b9;
+      background: linear-gradient(145deg, #fff, #fff6eb);
+    }
+
+    .support-card .price {
+      margin: 16px 0 2px;
+      color: var(--orange);
+      font-size: 30px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+
+    .card-copy {
+      margin: 13px 0 0;
+      color: #4e6266;
+    }
+
+    .check-list {
+      margin: 20px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .check-list li {
+      position: relative;
+      padding-left: 25px;
+      color: #4e6266;
       font-size: 14px;
     }
 
-    .meta dt {
-      color: var(--muted);
+    .check-list li + li {
+      margin-top: 8px;
     }
 
-    .meta dd {
-      margin: 0;
-      overflow-wrap: anywhere;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    .check-list li::before {
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      content: "✓";
+      font-weight: 900;
     }
 
-    .release-note {
-      margin: 16px 0 0;
-      padding: 13px;
-      border-radius: 8px;
-      background: var(--blue-soft);
-      color: var(--ink);
-      font-size: 14px;
+    .support-caution {
+      margin-top: 18px;
+      border-top: 1px solid #ead3b9;
+      padding-top: 16px;
+      color: #6d5a47;
+      font-size: 12px;
     }
 
-    .limitation {
-      border-top: 3px solid var(--amber);
-      background: var(--amber-soft);
+    .bottom-cta {
+      border-radius: 28px;
+      padding: 45px;
+      background:
+        radial-gradient(circle at 90% 0, rgba(115, 212, 183, 0.3), transparent 33%),
+        var(--green-dark);
+      color: #fff;
+      text-align: center;
     }
 
-    .critical {
-      border-top: 3px solid #b44b35;
-      background: var(--red-soft);
+    .bottom-cta h2 {
+      max-width: 760px;
+      margin-inline: auto;
+    }
+
+    .bottom-cta p {
+      max-width: 660px;
+      margin: 14px auto 0;
+      color: #c7ddda;
+    }
+
+    .bottom-cta .actions {
+      justify-content: center;
+    }
+
+    .bottom-cta .button.primary {
+      border-color: #fff;
+      background: #fff;
+      color: var(--green-dark);
+    }
+
+    .release-meta {
+      margin: 13px 0 0;
+      color: #a9c9c4;
+      font-size: 12px;
     }
 
     footer {
       border-top: 1px solid var(--line);
-      background: #ffffff;
+      padding: 30px 0 46px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
     }
 
-    .footer-inner {
-      padding-top: 22px;
-      padding-bottom: 34px;
-      text-align: center;
+    .footer-grid {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 30px;
+    }
+
+    .footer-grid p {
+      max-width: 760px;
+      margin: 0;
     }
 
     .footer-links {
       display: flex;
-      justify-content: center;
       flex-wrap: wrap;
+      justify-content: flex-end;
       gap: 12px 18px;
-      margin-top: 12px;
+      font-weight: 700;
     }
 
-    .footer-links a {
-      color: var(--teal-dark);
+    @media (max-width: 920px) {
+      .hero-grid,
+      .story-grid,
+      .benchmark-layout,
+      .dicom-grid,
+      .feature-detail-grid,
+      .feature-detail-grid.visual-first {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-grid {
+        gap: 42px;
+      }
+
+      .app-window {
+        max-width: 680px;
+        transform: none;
+      }
+
+      .quote-card {
+        position: static;
+      }
+
+      .feature-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .model-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .feature-detail-grid.visual-first .feature-copy {
+        order: -1;
+      }
+
+      .nav a:not(.nav-download) {
+        display: none;
+      }
     }
 
-    @media (max-width: 980px) {
-      .install-layout,
-      .grid-four {
-        grid-template-columns: 1fr;
-      }
-
-      .grid-two,
-      .grid-three {
-        grid-template-columns: 1fr;
-      }
-
-      .spec-row {
-        grid-template-columns: 1fr;
-        gap: 8px;
-      }
-
+    @media (max-width: 680px) {
       h1 {
-        font-size: 36px;
+        font-size: clamp(28px, 9vw, 42px);
       }
 
-      .preview-shell {
-        height: 440px;
-      }
-    }
-
-    @media (max-width: 720px) {
-      .topbar-inner {
-        align-items: flex-start;
-        flex-direction: column;
-        justify-content: center;
-        padding-top: 16px;
-        padding-bottom: 16px;
+      .wrap {
+        width: min(100% - 28px, 1120px);
       }
 
-      .status {
-        white-space: normal;
+      .hero,
+      .section {
+        padding: 60px 0;
       }
 
-      .preview-overlay {
-        align-items: stretch;
-        flex-direction: column;
-      }
-    }
-
-    @media (max-width: 520px) {
-      .topbar-inner,
-      .main,
-      .band-inner,
-      .footer-inner {
-        padding-left: 18px;
-        padding-right: 18px;
+      .header-inner {
+        min-height: 60px;
       }
 
-      h1 {
-        font-size: 30px;
+      .brand {
+        font-size: 12px;
       }
 
-      .lead {
-        font-size: 16px;
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+      }
+
+      .nav-download {
+        font-size: 12px;
+      }
+
+      .feature-grid,
+      .support-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .feature {
+        min-height: 0;
+      }
+
+      .feature-number {
+        margin-bottom: 20px;
       }
 
       .actions {
         flex-direction: column;
       }
 
+      .hero-actions-block .actions {
+        flex-direction: row;
+        gap: 6px;
+      }
+
+      .hero-actions-block .button {
+        width: auto;
+        min-width: 0;
+        flex: 1 1 0;
+        padding-inline: 6px;
+        font-size: clamp(10px, 2.9vw, 13px);
+      }
+
+      .hero-points {
+        grid-template-columns: 1fr;
+      }
+
       .button {
         width: 100%;
       }
 
-      .preview-shell {
-        height: 320px;
+      .hero-preview-loading {
+        padding: 14px;
+      }
+
+      .hero-interaction-note {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .article-card {
+        grid-template-columns: 1fr;
+      }
+
+      .article-card img {
+        height: 160px;
+      }
+
+      .article-card-copy {
+        padding: 0 18px 18px;
+      }
+
+      .result-shots {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-stage {
+        height: 440px;
+        min-height: 0;
         overflow: auto;
       }
 
       .preview-frame {
-        min-width: 720px;
+        min-width: 760px;
       }
 
-      .step,
-      .meta {
-        grid-template-columns: 1fr;
+      .preview-overlay {
+        inset: auto 12px 12px;
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .bottom-cta {
+        padding: 34px 22px;
+      }
+
+      .footer-grid {
+        flex-direction: column;
+      }
+
+      .footer-links {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      .button {
+        transition: none;
       }
     }
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <p class="brand">TotalSegmentator Wrapper for Mac</p>
-        <p class="status">公開アルファ版（試用段階）0.2.1 ・ Apple Silicon搭載Mac ・ macOS 13以降</p>
-      </div>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top">
+        <span class="brand-mark">3D</span>
+        <span>TotalSegmentator Wrapper for Mac</span>
+      </a>
       <nav class="nav" aria-label="ページ内ナビゲーション">
-        <a href="#overview">概要</a>
-        <a href="#input-output">入力と出力</a>
-        <a href="#install">インストール</a>
-        <a href="#data">データと通信</a>
-        <a href="#limits">使用上の制限</a>
+        <a href="#setup">機能</a>
+        <a href="#gpu">処理時間</a>
+        <a href="#why">開発した理由</a>
+        <a href="#support">サポート</a>
+        <a class="nav-download" href="/download">ダウンロード</a>
       </nav>
     </div>
   </header>
 
-  <main class="main" id="overview">
-    <section class="hero" aria-labelledby="title">
-      <div class="hero-copy">
-        <p class="eyebrow">Mac内処理｜研究・教育用</p>
-        <h1 id="title">医科用CT／歯科用CBCTから、顎骨・歯などを自動抽出して3D表示</h1>
-        <p class="lead">
-          DICOM形式のCT／CBCTデータを選ぶと、顎骨・歯などの候補を自動で抽出し、Mac上で3D表示して確認できます。
-          研究用のNIfTIファイルにも対応しています。
-        </p>
-        <p class="lead">
-          まずは下の3Dサンプルで、表示内容と操作方法を確認できます。
-        </p>
-        <div class="actions" aria-label="主要リンク">
-          <a class="button primary" href="/download">アプリをダウンロード</a>
-          <a class="button secondary" href="#install">インストール手順を見る</a>
-          <a class="button ghost" href="/release-notes">リリースノート</a>
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow">Macで使えるCT 3D化アプリ</p>
+          <h1>
+            <span class="hero-title-line">MacBook Airでも</span>
+            <span class="hero-title-line title-accent">もっと簡単・高速に！</span>
+            <span class="hero-title-line">CTから顎骨・歯を</span>
+            <span class="hero-title-line">3Dデータ化！</span>
+          </h1>
+          <p class="hero-lead">
+            <span class="hero-lead-line">3D Slicerで必要だった複雑な準備を、ボタンひとつに。</span>
+            <span class="hero-lead-line">誰でも使える CT → 3D</span>
+          </p>
+          <nav class="hero-toc" aria-label="このページの内容">
+            <p class="hero-toc-label">TotalSegmentator Wrapper for Macの特徴</p>
+            <ol class="hero-points">
+              <li><a href="#setup"><span class="hero-point-number">01</span><span>かんたんセットアップ</span></a></li>
+              <li><a href="#sample"><span class="hero-point-number">02</span><span>サンプルですぐ試せる</span></a></li>
+              <li><a href="#gpu"><span class="hero-point-number">03</span><span>MacのGPUで高速化</span></a></li>
+              <li><a href="#models"><span class="hero-point-number">04</span><span>複数の方法から選べる</span></a></li>
+            </ol>
+          </nav>
+          <div class="hero-actions-block">
+            <p class="hero-action-label">ダウンロード・サポート</p>
+            <div class="actions">
+              <a class="button primary" href="/download">ダウンロード</a>
+              <a class="button subtle" href="#support">開発を応援</a>
+              <a class="button subtle" href="#dicom">DICOMを報告</a>
+            </div>
+          </div>
+          <p class="hero-note">
+            バージョン0.3.0・Apple Silicon搭載のMac・macOS 13以降
+            <span class="hero-use-note">
+              研究・教育・検証目的に限ってご利用ください。生成結果は診断には使用できません。
+            </span>
+          </p>
         </div>
-        <p class="download-note">Apple Silicon Mac用インストーラー（DMG）：57.1 MiB</p>
-        <div class="warning-box" role="note" aria-label="公開アルファ版の状態メモ">
-          <p>公開アルファ版（試用段階）です。画面や出力形式は変わる可能性があります。初回起動時に、動作に必要なファイルとモデルweightを取得します。回線速度によりしばらく時間がかかる場合があります。詳しくは<a href="#limits">使用上の制限</a>を確認してください。</p>
+
+        <div class="hero-preview-column">
+          <div class="app-window" aria-label="操作できるDentalSegmentatorの3D表示">
+            <div class="window-bar" aria-hidden="true">
+              <span class="window-dot"></span>
+              <span class="window-dot"></span>
+              <span class="window-dot"></span>
+            </div>
+            <div class="window-body">
+              <iframe
+                class="hero-preview-frame"
+                src="/preview/dentalsegmentator-0.3.0.html"
+                title="DentalSegmentatorで作成した顎骨と歯の3Dビューアー"
+                allow="fullscreen"
+                allowfullscreen
+                data-hero-preview
+              ></iframe>
+              <div class="hero-preview-loading" data-hero-loading>
+                <div>
+                  <strong>操作できる3Dを読み込み中…</strong>
+                  読み込み後、この画面上でそのまま動かせます。
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="hero-interaction-note">
+            <strong>この3Dは、その場で操作できます。</strong>
+            <span>ドラッグで回転、拡大縮小、表示方向の変更、X-ray表示をお試しください。</span>
+          </p>
         </div>
       </div>
+    </section>
 
-      <div class="hero-preview" aria-labelledby="sample-title">
-        <div class="preview-shell" data-preview-shell>
-          <img
-            class="preview-image"
-            src="/assets/benchmark-dentalseg.png"
-            alt="権利者が公開を許可したCTから作成した、顎骨と歯のX-ray表示。"
-            width="1130"
-            height="858"
-          >
-          <div class="preview-overlay">
-            <div>
-              <h2 class="preview-title" id="sample-title">付属サンプルを3Dで操作</h2>
-              <p>ボタンを押すと、約23 MBの3Dデータを読み込みます。</p>
+    <section class="section" id="setup">
+      <div class="wrap feature-detail-grid">
+        <div class="feature-copy">
+          <span class="feature-index">01</span>
+          <h2>かんたんセットアップ</h2>
+          <p>
+            最初に「準備を始める」を押すだけ。専門的なコマンドを入力せず、
+            アプリの案内に沿って必要な準備を進めます。
+          </p>
+          <ul class="feature-list">
+            <li>初回のみ必要な準備をまとめて実行</li>
+            <li>準備状況は画面で確認</li>
+          </ul>
+          <details class="setup-details">
+            <summary>以前の方法との違い</summary>
+            <div class="setup-details-body">
+              <p>
+                今回の検証で使った3D Slicer 5.8.0は、Intel Mac向けのアプリでした。
+                Apple Silicon搭載Macではその違いを補いながら動作します。さらにDentalSegmentatorでは、
+                画像処理に必要な追加部品（PyTorchなど）を組み合わせるため、
+                インストールが途中で止まることがありました。
+              </p>
+              <p>
+                本アプリはApple Silicon搭載Mac向けに作り、必要な追加部品の組み合わせを
+                アプリ側であらかじめ決めています。利用者が一つずつ調整する場面を減らし、
+                以前の方法よりセットアップ時のエラーが起こりにくい構成にしました。
+              </p>
             </div>
-            <button class="button primary" type="button" data-preview-load>3Dサンプルを読み込む（約23 MB）</button>
+          </details>
+        </div>
+        <figure class="feature-visual">
+          <img
+            src="assets/feature-setup.png"
+            alt="初回準備画面の準備を始めるボタン"
+            width="2300"
+            height="1672"
+          >
+          <figcaption>1つのボタンで準備が終わります</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section alt" id="sample">
+      <div class="wrap feature-detail-grid visual-first">
+        <figure class="feature-visual">
+          <img
+            src="assets/feature-sample.png"
+            alt="付属サンプルを選んだ入力画面"
+            width="2212"
+            height="1584"
+          >
+          <figcaption>
+            付属サンプルなら、手元にCTがなくても試せます。操作の流れを体験してから本番に進めます
+          </figcaption>
+        </figure>
+        <div class="feature-copy">
+          <span class="feature-index">02</span>
+          <h2>サンプルですぐ試せる</h2>
+          <p>
+            アプリには確認用のCTサンプルが付属しています。自分のデータを用意する前に、
+            処理の流れと3D表示の操作を確認できます。
+          </p>
+          <ul class="feature-list">
+            <li>CTデータを用意しなくても開始可能</li>
+            <li>操作を確認してから手元のCTへ進める</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="gpu">
+      <div class="wrap">
+        <div class="section-heading">
+          <span class="feature-index">03</span>
+          <h2>MacのGPUで高速化</h2>
+        </div>
+
+        <div class="benchmark-layout performance-only">
+          <article class="benchmark-card">
+            <p class="benchmark-sub">結果を操作できる状態になるまで</p>
+
+            <div class="bar-row">
+              <div class="bar-label">
+                <span>3D Slicer 5.8.0</span>
+                <strong>14分22秒</strong>
+              </div>
+              <div class="bar-track" aria-label="3D Slicerの処理時間14分22秒">
+                <div class="bar" style="width: 100%"></div>
+              </div>
+            </div>
+
+            <div class="bar-row">
+              <div class="bar-label">
+                <span>本アプリ 0.2.1</span>
+                <strong>4分34.88秒</strong>
+              </div>
+              <div class="bar-track" aria-label="本アプリの処理時間4分34.88秒">
+                <div class="bar fast"></div>
+              </div>
+            </div>
+
+            <div class="benchmark-result">
+              <strong>約3.1倍</strong>
+              <span>の速度で処理が完了しました。</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="models">
+      <div class="wrap">
+        <div class="section-heading">
+          <span class="feature-index">04</span>
+          <h2>目的に合わせた複数モデルを用意</h2>
+          <p class="section-intro">
+            短時間で全体像を確認する方法、顎骨・歯・下顎管を分ける方法、
+            歯を一本ずつ検出する方法から選べます。
+          </p>
+        </div>
+
+        <div class="model-grid">
+          <a
+            class="model-option"
+            href="https://github.com/wasserth/TotalSegmentator"
+            target="_blank"
+            rel="noopener"
+          >
+            <div class="model-option-copy">
+              <span class="model-name">TotalSegmentator</span>
+              <h3>2分11秒の高速セグメンテーション</h3>
+              <p>細かな形状より、まず顎骨と歯の全体像を早く確認したいときに使います。</p>
+              <span class="model-link">公式ページを見る ↗</span>
+            </div>
+            <img
+              src="assets/benchmark-totalseg.png"
+              alt="TotalSegmentatorで約2分11秒で作成した顎骨と歯の全体表示"
+              width="780"
+              height="593"
+            >
+          </a>
+
+          <a
+            class="model-option"
+            href="https://github.com/gaudot/SlicerDentalSegmentator"
+            target="_blank"
+            rel="noopener"
+          >
+            <div class="model-option-copy">
+              <span class="model-name">DentalSegmentator</span>
+              <h3>約4分35秒で顎骨・歯・下顎管を分離</h3>
+              <p>顎骨、上下の歯、下顎管を分けて確認できます。X-ray表示にも切り替えられます。</p>
+              <span class="model-link">公式ページを見る ↗</span>
+            </div>
+            <img
+              src="assets/benchmark-dentalseg.png"
+              alt="DentalSegmentatorで作成した顎骨と歯をX-ray表示した結果"
+              width="1130"
+              height="858"
+            >
+          </a>
+
+          <a
+            class="model-option"
+            href="https://github.com/MIC-DKFZ/ToothSeg"
+            target="_blank"
+            rel="noopener"
+          >
+            <div class="model-option-copy">
+              <span class="model-name">ToothSeg</span>
+              <h3>時間はかかるが高精細。歯を一本ずつ検出</h3>
+              <p>今回のCTでは約53分39秒で28本を識別しました。</p>
+              <span class="model-link">公式ページを見る ↗</span>
+            </div>
+            <img
+              src="assets/benchmark-toothseg.png"
+              alt="ToothSegで一本ずつ分けた歯の高精細な3D表示"
+              width="900"
+              height="685"
+            >
+          </a>
+        </div>
+
+        <p class="fine-print">
+          同じMacBook Airと同じCTで計測しました。処理時間はCTの大きさや
+          Macの状態によって変わります。
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="why">
+      <div class="wrap">
+        <div class="story-grid">
+          <aside class="quote-card">
+            <p>
+              「インストールできません」<br>
+              「途中で止まります」
+            </p>
+            <small>その声に応えたかった。</small>
+          </aside>
+          <div class="story-copy">
+            <a
+              class="article-card"
+              href="https://lacramy.hateblo.jp/entry/2024/07/31/174339"
+              target="_blank"
+              rel="noopener"
+            >
+              <img
+                src="assets/benchmark-slicer.png"
+                alt="旧記事に掲載した3D SlicerのDentalSegmentator画面"
+                width="1200"
+                height="797"
+              >
+              <span class="article-card-copy">
+                <small>2024年の記事</small>
+                <strong>macbook airでもできる！CTから顎骨・歯のSTLデータの切り出し！</strong>
+                <span>旧記事を読む →</span>
+              </span>
+            </a>
+            <p>
+              2024年に、3D SlicerとDentalSegmentatorを使って、MacBook AirでCTから
+              顎骨や歯を切り出す方法を記事にしました。ところが公開後、
+              「インストールできません」「途中で止まります」というDMを何度もいただきました。
+            </p>
+            <p>
+              正直なところ、私も今回もう一度セットアップしてみて、何度か同じところで
+              つまずきました。しかも3D Slicer側の不具合は、原因が分かっても私には直せません。
+              DMをいただいても「ここから先は開発元の対応待ちです」としか言えないことがあり、
+              ずっと歯がゆく感じていました。
+            </p>
+            <p>
+              それなら、自分でアプリを作ってしまえば、読み込めないDICOMや不具合にも
+              対応できるのでは？！ そう考えて作ったのが、このアプリです。
+            </p>
           </div>
         </div>
-        <p class="preview-caption">
-          読み込み後は、ブラウザ上で回転、拡大縮小、表示方向の変更、構造ごとの表示切り替えを操作できます。
-          動作が遅い場合は、<a href="/preview/dentalsegmentator-0.3.0.html" target="_blank" rel="noopener">3Dサンプルを別タブで開く</a>を選択してください。
-        </p>
+      </div>
+    </section>
+
+    <section class="section dicom-section" id="dicom">
+      <div class="wrap">
+        <div class="dicom-grid dicom-compact">
+          <aside class="dicom-card">
+            <h3>読み込めないときの対応</h3>
+            <p class="card-copy">
+              読み込めないDICOMが見つかった場合は、専用のGoogleフォームから状況を
+              教えてください。アプリからCTやログを自動送信することはありません。
+            </p>
+            <ol class="dicom-flow">
+              <li><span>1</span><div>処理に失敗した画面で「エラー情報をコピー」を押す</div></li>
+              <li><span>2</span><div>コピーした内容を確認し、相談フォームに貼り付ける</div></li>
+              <li><span>3</span><div>Lacramyが内容を確認し、対応できるものは今後の更新で改善できるよう努めます</div></li>
+            </ol>
+            <div class="dicom-contact">
+              <span class="button small disabled-button" aria-disabled="true">
+                読み込めないDICOMの相談フォーム（準備中）
+              </span>
+            </div>
+            <p class="fine-print">
+              すべてのDICOMを必ず読み込めることを保証するものではありません。
+              フォームには患者名などを入力せず、DICOMファイル自体も送らないでください。
+              元のDICOMは書き換えず、
+              選択したCTの画像処理はMac内で行います。
+            </p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="bottom-cta">
+          <p class="kicker">Download</p>
+          <h2>TotalSegmentator Wrapper for Macを<br>ダウンロード</h2>
+          <p>
+            アプリは無料です。インストール後は付属サンプルを使って、
+            CTの3Dデータ化をすぐに試せます。
+          </p>
+          <div class="actions">
+            <a class="button primary" href="/download">ダウンロード</a>
+            <a class="button" href="/release-notes">リリースノート</a>
+          </div>
+          <p class="release-meta">
+            TotalSegmentator Wrapper for Mac 0.3.0／Developer ID署名・Apple公証済み
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="support">
+      <div class="wrap">
+        <div class="section-heading">
+          <p class="kicker">Keep improving</p>
+          <h2>無料で使えるアプリを、育て続けるために。</h2>
+          <p class="section-intro">
+            アプリとソースコードを無料で公開しています。
+            不具合への対応やDICOM対応の拡大を継続するため、任意の応援と個別サポートを用意します。
+          </p>
+        </div>
+
+        <div class="support-grid">
+          <article class="donation-card">
+            <h3>開発を応援する</h3>
+            <p class="card-copy">
+              開発を応援していただける方から、codocを通じた任意のご支援を受け付けます。
+              ご支援の有無によって、アプリの基本機能や不具合報告への対応を区別することはありません。
+            </p>
+            <div class="codoc-embed">
+              <div id="codoc-entry-4IJ6Ilo0AQ" class="codoc-entries" data-without-body="1" data-support-message="開発を支援する"></div>
+            </div>
+          </article>
+
+          <article class="support-card">
+            <h3>リモート導入・操作サポート</h3>
+            <p class="price">60分 5,000円</p>
+            <p class="card-copy">
+              画面を共有しながら、インストール、初回準備、基本操作、
+              エラーの確認をお手伝いします。公開初期の限定サポートとして準備中です。
+            </p>
+            <ul class="check-list">
+              <li>事前に指定のリモートデスクトップアプリをインストール</li>
+              <li>利用者が同席し、接続を許可した状態で実施</li>
+              <li>終了後は接続を切断。録画、無人接続、パスワードのお預かりは行いません</li>
+            </ul>
+            <p class="support-caution">
+              診断、治療判断、生成結果の医学的評価は行いません。
+              患者情報が表示されない状態で実施し、問題の解決を保証するサービスではありません。
+            </p>
+          </article>
+        </div>
       </div>
     </section>
   </main>
 
-  <section class="band" aria-labelledby="what-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="what-title">このアプリでできること</h2>
-        <p>CT／CBCTデータからAIによる自動抽出結果を作成し、ブラウザ上の3Dビューアーで確認できます。</p>
-      </div>
-      <div class="grid-two">
-        <article class="card">
-          <h3>CT／CBCTから3D表示を作成</h3>
-          <p>通常のCT／CBCTとして確認できるDICOMフォルダ、またはNIfTIファイルを入力として、顎骨・歯などの推定領域を自動抽出し、3D表示用のデータを作成します。</p>
-        </article>
-        <article class="card">
-          <h3>ブラウザで3D結果を確認</h3>
-          <p>作成された確認画面（HTMLビューアー）で、回転、拡大縮小、表示方向の変更、構造ごとの表示切り替えを確認できます。</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="band alt" id="input-output" aria-labelledby="io-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="io-title">入力と出力</h2>
-        <p>入力できるデータと、作成されるファイルの一覧です。</p>
-      </div>
-      <dl class="spec-table">
-        <div class="spec-row">
-          <dt>入力</dt>
-          <dd>
-            <ul class="plain-list">
-              <li>通常のCT／CBCTとして確認できるDICOMフォルダ</li>
-              <li>NIfTIファイル（.nii／.nii.gz）</li>
-            </ul>
-          </dd>
-        </div>
-        <div class="spec-row">
-          <dt>出力</dt>
-          <dd>
-            <ul class="plain-list">
-              <li>自動抽出結果の保存ファイル（NIfTI）</li>
-              <li>3Dで確認するための画面（HTML）</li>
-              <li>3D表示用ファイル（STL）</li>
-              <li>処理記録（ログ）</li>
-            </ul>
-          </dd>
-        </div>
-      </dl>
-    </div>
-  </section>
-
-  <section class="band" id="install" aria-labelledby="install-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="install-title">インストール手順</h2>
-        <p>ここでは試用までの流れを簡単にまとめます。</p>
-      </div>
-      <article class="notice-panel install-prep">
-        <h3>事前準備</h3>
-        <p>M1/M2/M3/M4などのApple Silicon搭載Macとインターネット接続があれば始められます。追加のアプリや専門的な設定作業は不要です。</p>
-      </article>
-      <div class="install-layout">
-        <div class="steps">
-          <article class="step">
-            <span class="step-number">1</span>
-            <div>
-              <h3>インストールファイルを保存</h3>
-              <p>下のボタンを押し、DMG（Mac用のインストールファイル）を保存します。</p>
-              <a class="button primary compact step-download" href="/download">アプリをダウンロード</a>
-            </div>
-          </article>
-          <article class="step">
-            <span class="step-number">2</span>
-            <div>
-              <h3>「アプリケーション」フォルダへ移動</h3>
-              <p>ダウンロードしたDMGを開き、TotalSegmentator Wrapper for Macを「アプリケーション」フォルダへドラッグします。</p>
-            </div>
-          </article>
-          <article class="step">
-            <span class="step-number">3</span>
-            <div>
-              <h3>アプリを開いて初期設定</h3>
-              <p>初回起動時に、動作に必要なファイルと初回実行に必要なモデルweightを取得します。回線速度により数分以上かかる場合があります。</p>
-            </div>
-          </article>
-        </div>
-
-        <aside class="release-panel" aria-labelledby="release-title">
-          <h2 id="release-title">配布情報</h2>
-          <dl class="meta">
-            <dt>バージョン</dt>
-            <dd>0.2.1</dd>
-            <dt>ファイル名</dt>
-            <dd>TotalSegmentator Wrapper for Mac-0.2.1-20260728-surface-preview-arm64.dmg</dd>
-            <dt>ダウンロードサイズ</dt>
-            <dd>57.1 MiB</dd>
-            <dt>SHA-256</dt>
-            <dd>601173e25bc1cb2d9bc5dda697801a196c5ba1c93d95efc70c0fa2b9c46b7ee0</dd>
-            <dt>署名</dt>
-            <dd>Developer ID署名済み・Apple notarization済みDMG</dd>
-            <dt>TotalSegmentator</dt>
-            <dd>2.14.0</dd>
-            <dt>リリース日</dt>
-            <dd>2026-07-28</dd>
-          </dl>
-          <p class="release-note">
-            アプリは自動で更新を確認しません。ユーザーがアプリ内で「更新を確認」を選択した場合に限り、バージョン情報を取得します。
-          </p>
-        </aside>
-      </div>
-    </div>
-  </section>
-
-  <section class="band alt" id="data" aria-labelledby="data-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="data-title">データと通信</h2>
-        <p>画像処理はMac内で行います。外部へ送信しないデータと、インターネット接続を使う場面をまとめます。</p>
-      </div>
-      <article class="notice-panel">
-        <ul class="plain-list">
-          <li>選択したCT画像、作成された結果、保存場所の情報、処理記録は、処理のために外部へ送信しません。</li>
-          <li>初期設定、モデルweight準備、更新確認など、アプリ自体に必要な情報の取得ではインターネット接続を使います。</li>
-          <li>TotalSegmentator側の利用状況送信設定は、このアプリの初期設定時にオフにします。</li>
-        </ul>
-      </article>
-    </div>
-  </section>
-
-  <section class="band" id="limits" aria-labelledby="limits-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="limits-title">使用上の制限</h2>
-      </div>
-      <article class="notice-panel limitation">
-        <ul class="plain-list">
-          <li>研究・教育用のアプリです。医療機器として提供するものではなく、診断や治療計画などの臨床判断には使用しないでください。</li>
-          <li>AIによる自動抽出結果には誤りが含まれることがあります。結果を評価する場合は、原画像との照合と専門家による目視確認が必要です。</li>
-          <li>3D表示用データ（メッシュ）は、歯科CAD／CAMや3Dプリント用の製作用データではありません。寸法精度や適合精度を保証するものではありません。</li>
-          <li>ローカル処理は匿名化を意味しません。入力データ、フォルダ名、作成された確認画面（HTML）、自動抽出結果には患者由来の情報が含まれる場合があります。</li>
-        </ul>
-      </article>
-    </div>
-  </section>
-
-  <section class="band alt" id="roadmap" aria-labelledby="roadmap-title">
-    <div class="band-inner">
-      <div class="section-head">
-        <h2 id="roadmap-title">今後の展望</h2>
-        <p>公開アルファ版として、実際のCT／CBCTデータでの動作を確認しながら改善していきます。</p>
-      </div>
-      <div class="grid-two">
-        <article class="card">
-          <h3>読めないDICOMの改善</h3>
-          <p>通常のCT／CBCTとして確認できるDICOMフォルダでも読み込めない場合は、改善の参考にしたいので状況を教えてください。患者情報を含むファイルは送らず、まずは読み込めなかった状況やエラー内容だけ共有してください。</p>
-        </article>
-        <article class="card">
-          <h3>3D Slicerへの引き継ぎ</h3>
-          <p>今後、作成した結果を3D Slicerで確認・活用しやすくするためのデータ引き継ぎ機能を開発予定です。</p>
-        </article>
-      </div>
-      <div class="roadmap-actions">
-        <a class="button primary compact roadmap-download" href="/download">アプリをダウンロード</a>
-      </div>
-    </div>
-  </section>
-
   <footer>
-    <div class="footer-inner">
-      <p>TotalSegmentator Wrapper for Macは、TotalSegmentatorを利用する非公式ラッパーアプリです。</p>
-      <div class="footer-links" aria-label="TotalSegmentator関連リンク">
-        <a href="https://github.com/wasserth/TotalSegmentator" rel="noopener">TotalSegmentator公式プロジェクト</a>
-        <a href="https://github.com/wasserth/TotalSegmentator/blob/master/LICENSE" rel="noopener">TotalSegmentatorのライセンス（Apache-2.0）</a>
-        <a href="https://github.com/wasserth/TotalSegmentator#citation" rel="noopener">研究で使用する場合の引用方法</a>
-      </div>
-      <div class="footer-links" aria-label="TotalSegmentator Wrapper for Mac 関連リンク">
+    <div class="wrap footer-grid">
+      <p>
+        本アプリは研究・教育・検証用です。医療機器ではなく、生成結果は診断には使用できません。<br>
+        TotalSegmentator Wrapper for Macは、TotalSegmentator、DentalSegmentator、ToothSegを利用する
+        Lacramy開発の非公式Mac用アプリです。各プロジェクトの公式アプリではありません。
+      </p>
+      <div class="footer-links">
         <a href="/release-notes">リリースノート</a>
-        <a href="https://app.lacramy.com/">Lacramy Apps</a>
+        <a href="https://app.lacramy.com/" rel="noopener">Lacramy Apps</a>
+        <a href="https://github.com/wasserth/TotalSegmentator" rel="noopener">TotalSegmentator</a>
+        <a href="https://doi.org/10.5281/zenodo.10829675" rel="noopener">DentalSegmentator</a>
+        <a href="https://github.com/MIC-DKFZ/ToothSeg" rel="noopener">ToothSeg</a>
       </div>
     </div>
   </footer>
 
+  <script src="https://codoc.jp/js/cms.js" data-css="rainbow-square" data-usercode="ZT9mEjj5MQ" charset="UTF-8" defer></script>
   <script>
     (() => {
-      const loadButton = document.querySelector("[data-preview-load]");
-      const shell = document.querySelector("[data-preview-shell]");
-      if (!loadButton || !shell) return;
+      const frame = document.querySelector("[data-hero-preview]");
+      const loading = document.querySelector("[data-hero-loading]");
+      if (!frame || !loading) return;
 
-      loadButton.addEventListener("click", () => {
-        if (shell.querySelector("iframe")) return;
-
-        const frame = document.createElement("iframe");
-        frame.className = "preview-frame";
-        frame.src = "/preview/dentalsegmentator-0.3.0.html";
-        frame.title = "付属サンプルの3Dビューアー";
-        frame.loading = "lazy";
-        frame.setAttribute("allow", "fullscreen");
-        frame.setAttribute("allowfullscreen", "");
-
-        shell.replaceChildren(frame);
-      });
+      frame.addEventListener("load", () => {
+        loading.hidden = true;
+      }, { once: true });
     })();
   </script>
 </body>

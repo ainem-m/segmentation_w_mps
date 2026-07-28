@@ -64,7 +64,7 @@ Decision status: confirmed against the audit record.
 - release build ID: `20260728-oss1`
 - minimum supported version: `0.2.1`
 - planned DMG:
-  `TotalSegmentator Wrapper for Mac-0.3.0-20260728-oss1-arm64.dmg`
+  `TotalSegmentator Wrapper for Mac-0.3.0-20260729-final-arm64.dmg`
 
 No local `cloudflare/r2/releases/0.3.0/` release directory existed when this
 identity was selected. The planned public versioned `release.json` URL
