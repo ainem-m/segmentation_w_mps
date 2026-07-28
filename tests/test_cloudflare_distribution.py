@@ -36,6 +36,33 @@ def version_tuple(version: str) -> tuple[int, ...]:
 
 
 class CloudflareDistributionTests(unittest.TestCase):
+    def test_launch_preview_assets_fit_cloudflare_pages_and_keep_fixed_title_lines(self) -> None:
+        launch = (PAGES_ROOT / "launch2.html").read_text(encoding="utf-8")
+        preview_dir = PAGES_ROOT / "preview"
+
+        for path in preview_dir.iterdir():
+            if path.is_file():
+                self.assertLessEqual(
+                    path.stat().st_size,
+                    25 * 1024 * 1024,
+                    f"{path.name} exceeds the Cloudflare Pages per-file limit",
+                )
+        for line in [
+            "MacBook Airでも",
+            "もっと簡単・高速に！",
+            "CTから顎骨・歯を",
+            "3Dデータ化！",
+        ]:
+            self.assertIn(f'<span class="hero-title-line', launch)
+            self.assertIn(line, launch)
+        self.assertEqual(launch.count('class="hero-title-line'), 4)
+        self.assertIn("white-space: nowrap", launch)
+        self.assertIn(
+            'src="preview/dentalsegmentator-0.3.0.html"',
+            launch,
+        )
+        self.assertIn('rel="canonical" href="https://totalsegmentator.lacramy.com/"', launch)
+
     def test_public_preview_assets_have_hash_and_scope_provenance(self) -> None:
         provenance = json.loads(
             (PAGES_ROOT / "assets" / "ASSET_PROVENANCE.json").read_text(encoding="utf-8")
@@ -45,6 +72,15 @@ class CloudflareDistributionTests(unittest.TestCase):
             actual = hashlib.sha256((PAGES_ROOT / "assets" / name).read_bytes()).hexdigest()
             self.assertEqual(actual, metadata["sha256"])
 
+        preview_provenance = json.loads(
+            (PAGES_ROOT / "preview" / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(preview_provenance["apache_2_0_relicensed"])
+        self.assertIn("raw DICOM is not included", preview_provenance["description"])
+        for name, metadata in preview_provenance["files"].items():
+            actual = hashlib.sha256((PAGES_ROOT / "preview" / name).read_bytes()).hexdigest()
+            self.assertEqual(actual, metadata["sha256"])
+
     def test_totalsegmentator_page_uses_canonical_domain_and_r2_redirect_for_dmg(self) -> None:
         index = (PAGES_ROOT / "index.html").read_text(encoding="utf-8")
         redirects = (PAGES_ROOT / "_redirects").read_text(encoding="utf-8")
@@ -52,9 +88,11 @@ class CloudflareDistributionTests(unittest.TestCase):
 
         self.assertIn('rel="canonical" href="https://totalsegmentator.lacramy.com/"', index)
         self.assertIn('href="/download"', index)
-        self.assertIn("sample1-web-preview.jpg", index)
-        self.assertIn("/preview/sample1.html", index)
-        self.assertIn("3Dサンプルを読み込む（約7.2 MB）", index)
+        self.assertIn("benchmark-dentalseg.png", index)
+        self.assertIn("/preview/dentalsegmentator-0.3.0.html", index)
+        self.assertIn("3Dサンプルを読み込む（約23 MB）", index)
+        self.assertNotIn("sample1-web-preview.jpg", index)
+        self.assertNotIn("/preview/sample1.html", index)
         self.assertIn("Mac内処理｜研究・教育用", index)
         self.assertIn("公開アルファ版（試用段階）です。画面や出力形式は変わる可能性があります。", index)
         self.assertIn("詳しくは", index)
@@ -131,7 +169,7 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertNotIn("X-Frame-Options: DENY", headers)
         self.assertIn("Content-Security-Policy: frame-ancestors 'self'", headers)
         self.assertIn("Cache-Control: public, max-age=31536000, immutable", headers)
-        self.assertTrue((PAGES_ROOT / "preview" / "sample1.html").is_file())
+        self.assertFalse((PAGES_ROOT / "preview" / "sample1.html").exists())
 
     def test_app_hub_links_canonical_app_and_preserves_legacy_download(self) -> None:
         index = (APP_HUB_ROOT / "index.html").read_text(encoding="utf-8")
@@ -142,6 +180,11 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertIn('rel="canonical" href="https://app.lacramy.com/"', index)
         self.assertIn('href="https://totalsegmentator.lacramy.com/"', index)
         self.assertIn('href="/download"', index)
+        self.assertIn(
+            "https://totalsegmentator.lacramy.com/assets/benchmark-dentalseg.png",
+            index,
+        )
+        self.assertNotIn("sample1-preview.png", index)
         update = stable_update_manifest()
         release = release_metadata(update["latest_version"])
         self.assertIn(f"downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/{update['latest_version']}/", redirects)

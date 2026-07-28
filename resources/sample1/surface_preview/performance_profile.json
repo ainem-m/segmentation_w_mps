@@ -1,0 +1,59 @@
+{
+  "total_seconds": 0.2139644999988377,
+  "max_rss_bytes": 162430976,
+  "stages_seconds": {
+    "nifti_load": 0.00628495798446238,
+    "label_scan_and_mask": 0.0818914589472115,
+    "marching_cubes": 0.03996587509755045,
+    "browser_mesh_generation": 0.09816891700029373,
+    "json_html_write": 0.05495000001974404
+  },
+  "milestones_seconds": {
+    "preview_ready": 0.21332495799288154,
+    "preview_outputs_complete": 0.2139601670205593
+  },
+  "events": [
+    {
+      "stage": "nifti_load",
+      "seconds": 0.00628495798446238,
+      "purpose": "browser_preview"
+    },
+    {
+      "stage": "label_scan_and_mask",
+      "seconds": 0.05352924996986985,
+      "operation": "unique_labels"
+    },
+    {
+      "stage": "label_scan_and_mask",
+      "seconds": 0.01227354200091213,
+      "operation": "browser_group_mask",
+      "name": "dental_hard_tissue"
+    },
+    {
+      "stage": "label_scan_and_mask",
+      "seconds": 0.016088666976429522,
+      "operation": "bounding_box",
+      "mesh_kind": "browser"
+    },
+    {
+      "stage": "marching_cubes",
+      "seconds": 0.03996587509755045,
+      "mesh_kind": "browser",
+      "step_size": 1
+    },
+    {
+      "stage": "browser_mesh_generation",
+      "seconds": 0.09816891700029373
+    },
+    {
+      "stage": "json_html_write",
+      "seconds": 0.054506000014953315,
+      "artifact": "offline_viewer"
+    },
+    {
+      "stage": "json_html_write",
+      "seconds": 0.0004440000047907233,
+      "artifact": "preview_summary"
+    }
+  ]
+}

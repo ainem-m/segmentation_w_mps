@@ -1,0 +1,55 @@
+name: 読み込めないDICOMを報告
+description: DICOMファイルを送らず、アプリの確認結果から互換性を相談
+title: "[DICOM] "
+labels:
+  - dicom
+  - compatibility
+body:
+  - type: markdown
+    attributes:
+      value: |
+        DICOMファイルや患者情報は添付しないでください。まずアプリの失敗画面で「エラー情報をコピー」を押してください。
+  - type: input
+    id: version
+    attributes:
+      label: アプリのバージョン
+      placeholder: 例 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 利用環境
+      description: Macの機種、チップ、macOSのバージョン
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: データの種類
+      options:
+        - DICOMフォルダ
+        - NIfTIファイル
+        - 分からない
+    validations:
+      required: true
+  - type: textarea
+    id: copied_error
+    attributes:
+      label: コピーしたエラー情報
+      description: 個人情報がないことを確認してから貼り付けてください。
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足
+      description: どの画面まで進めたか、同じ装置の別データで再現するかなどを記載してください。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 個人情報の確認
+      options:
+        - label: 患者情報、DICOM、CT画像を含めていません
+          required: true

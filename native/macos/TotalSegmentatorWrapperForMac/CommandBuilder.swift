@@ -263,7 +263,7 @@ struct AppPaths {
     var constraints: URL { resources.appendingPathComponent("constraints/macos-arm64-py312.txt") }
     var normalizer: URL { resources.appendingPathComponent("bin/totalsegmentator-wrapper-dicom-normalizer") }
     var dcm2niix: URL { resources.appendingPathComponent("bin/dcm2niix") }
-    var sampleInput: URL { resources.appendingPathComponent("sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz") }
+    var sampleInput: URL { resources.appendingPathComponent("sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz") }
     var sampleViewer: URL { resources.appendingPathComponent("sample1/surface_preview/index.html") }
 }
 

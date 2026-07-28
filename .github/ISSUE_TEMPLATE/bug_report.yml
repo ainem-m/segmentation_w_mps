@@ -1,0 +1,57 @@
+name: 不具合を報告
+description: アプリの操作、セットアップ、処理、保存に関する不具合
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        患者名、生年月日、ID、施設名などの個人情報や、DICOM・CTファイルを添付しないでください。
+  - type: input
+    id: version
+    attributes:
+      label: アプリのバージョン
+      placeholder: 例 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 利用環境
+      description: Macの機種、チップ、macOSのバージョン
+      placeholder: 例 MacBook Air M2 / macOS 15.5
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: どの画面で何を押したか、順番に記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した結果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の結果
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: エラー情報
+      description: アプリの「エラー情報をコピー」で取得し、個人情報がないことを確認した内容だけを貼り付けてください。
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 個人情報の確認
+      options:
+        - label: 患者情報、DICOM、CT画像を含めていません
+          required: true

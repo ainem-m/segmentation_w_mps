@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: セキュリティ上の問題
+    url: https://github.com/ainem-m/segmentation_w_mps/security/advisories/new
+    about: 未公開の脆弱性や患者情報を含む可能性がある内容は、公開Issueへ投稿しないでください。

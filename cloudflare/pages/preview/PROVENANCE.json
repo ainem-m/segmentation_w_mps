@@ -1,0 +1,21 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.web_preview_provenance.v1",
+  "apache_2_0_relicensed": false,
+  "description": "Interactive DentalSegmentator launch preview derived from CT data whose owner authorized public derivative publication. The raw DICOM is not included. Model-output geometry and third-party model attribution remain outside the wrapper's Apache-2.0 scope.",
+  "authorization_record": "../../../docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md",
+  "model_notice": "../../../resources/third_party/licenses/DentalSegmentator-NOTICE.txt",
+  "files": {
+    "dentalsegmentator-0.3.0.html": {
+      "sha256": "f42521a2806dd4bafba305e5bcb43df2bbe0a3d4d8891e27e7cf03c7c0fcc22a"
+    },
+    "mesh-jaws.36b72316c14f8875.js": {
+      "sha256": "b9786755f84d518846da9f4dfde586e433d01310af2a42af166a0490a550a6d7"
+    },
+    "mesh-dental_hard_tissue.ea31e70ab9e898de.js": {
+      "sha256": "c4ed6b7f4b7c2a1e42148a6dabc488ddccfce04125a3441a34b595a96bbf7b94"
+    },
+    "viewer_bundle.js": {
+      "sha256": "c5113506ba027e9fb16afc6303c12a3f4aca03c7d3be64bfec3c7196a87318e3"
+    }
+  }
+}

@@ -47,7 +47,30 @@ struct TotalSegmentatorWrapperForMacApp: App {
                         ]
                     )
                 }
+                Divider()
+                Button("Apache License 2.0を表示") {
+                    openBundledDocument("LICENSE")
+                }
+                Button("NOTICE（適用範囲）を表示") {
+                    openBundledDocument("NOTICE")
+                }
+                Button("第三者ライセンスを表示") {
+                    openBundledDocument("licenses/THIRD_PARTY_LICENSES.txt")
+                }
             }
         }
     }
+}
+
+private func openBundledDocument(_ relativePath: String) {
+    let resourceURL = AppPaths.current().resources.appendingPathComponent(relativePath)
+    guard FileManager.default.fileExists(atPath: resourceURL.path) else {
+        let alert = NSAlert()
+        alert.messageText = "ライセンス文書を開けません"
+        alert.informativeText = "アプリをDMGからもう一度コピーしてからお試しください。"
+        alert.alertStyle = .warning
+        alert.runModal()
+        return
+    }
+    NSWorkspace.shared.open(resourceURL)
 }

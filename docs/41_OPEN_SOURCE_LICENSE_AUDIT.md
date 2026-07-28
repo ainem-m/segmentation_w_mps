@@ -40,8 +40,9 @@ code is copied or modified in the future.
 | ToothSeg checkpoint | first-use Zenodo download | DOI `10.5281/zenodo.14893540`, CC BY 4.0 | no; third party |
 | dcm2niix and DICOM runtime libraries | bundled in app/wheel | license files under `resources/third_party/licenses/` | no; third party |
 | Python dependencies and bundled runtime | bundled/installed | generated strict license inventory | no; third party |
-| Sample 1 and derived outputs/images | bundled | `resources/sample1/THIRD_PARTY_NOTICES.txt` | no; third party |
-| UI manual screenshots | repository docs | first-party UI captures; some show Sample 1 | first-party screenshot composition only; underlying sample remains third party |
+| Sample 1 source NIfTI | bundled | rights-holder authorization in `docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md`; hashes in `resources/sample1/sample_manifest.json` | first-party data authorization; not source code |
+| Sample 1 model outputs/images | bundled | `resources/sample1/THIRD_PARTY_NOTICES.txt` and applicable model notices | no; model-derived artifacts retain third-party attribution |
+| UI manual screenshots | repository docs | first-party UI captures; some show authorized Sample 1/model output | screenshot composition is first-party; applicable model attribution remains |
 | Third-party names and marks | source/docs/UI | nominative provenance references only | no |
 
 ## Model metadata verification
@@ -83,26 +84,25 @@ application's robust crop path.
 No task from the upstream commercial-model section is exposed, predownloaded,
 or included. Release tests must keep the allowlist and setup weight IDs aligned.
 
-## Assets and remaining legal review
+## Assets and publication decision
 
-Sample 1 comes from 3D Slicer SampleData `CBCT-MR Head`. The authoritative
-Slicer source says that this sample, MRHead, and CT-MR Brain were donated to the
-3D Slicer project for unrestricted use. This is not a named SPDX license.
-Before a general public binary release, confirm with the data owner or legal
-counsel that the statement covers redistribution of the bundled crop and model
-output derivatives. If it does not, remove Sample 1 and its derived comparison
-images from the public app/DMG.
+The previous 3D Slicer SampleData-derived bundle was removed before the 0.3.0
+release. Sample 1 now uses a CT of the project rights holder, who explicitly
+authorized publication of the derived NIfTI, model output, and preview
+artifacts. The raw DICOM remains excluded from source, app, DMG, release, and
+website distribution. The authorization record is
+`docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md`; artifact paths and SHA-256
+values are recorded in `resources/sample1/sample_manifest.json`.
 
 Comparison images under `resources/model_comparison/` and the web preview images
-are renders derived from Sample 1 and model output. They remain subject to the
-sample and model notices; their pixels are not relicensed as Apache-2.0.
+are renders derived from the authorized CT and model outputs. They remain
+subject to the applicable model notices; their pixels are not relicensed as
+Apache-2.0.
 
 ## Release blockers
 
 - Build a new app and DMG. Existing 0.1.x/0.2.x immutable release objects were
   created before this license transition and must not be relabelled or reused.
-- Confirm first-party copyright/licensing authority.
-- Confirm Sample 1 redistribution scope, or remove the sample-derived assets.
 - Run the strict dependency inventory with zero unresolved items.
 - Verify source, wheel, app, and mounted DMG contain the wrapper `LICENSE`,
   `NOTICE`, DentalSegmentator notice, ToothSeg notice, and no first-party

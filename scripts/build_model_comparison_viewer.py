@@ -9,6 +9,7 @@ from pathlib import Path
 from totalsegmentator_wrapper_mac.surface_preview import (
     VIEWER_BUNDLE_FILENAME,
     _html_document,
+    read_geometry_chunk,
 )
 
 
@@ -30,7 +31,10 @@ def read_payload(path: Path) -> dict:
     document = path.read_text(encoding="utf-8")
     json_match = DATA_JSON_PATTERN.search(document)
     if json_match is not None:
-        return json.loads(json_match.group(1))
+        return _hydrate_binary_geometry(
+            json.loads(json_match.group(1)),
+            viewer_dir=path.parent,
+        )
     match = DATA_PATTERN.search(document)
     payload_path = path
     if match is None:
@@ -42,7 +46,21 @@ def read_payload(path: Path) -> dict:
         match = DATA_PATTERN.search(payload_path.read_text(encoding="utf-8"))
     if match is None:
         raise ValueError(f"viewer payload not found: {payload_path}")
-    return json.loads(match.group(1))
+    return _hydrate_binary_geometry(
+        json.loads(match.group(1)),
+        viewer_dir=path.parent,
+    )
+
+
+def _hydrate_binary_geometry(payload: dict, *, viewer_dir: Path) -> dict:
+    for mesh in payload.get("meshes", []):
+        geometry_file = mesh.get("geometryFile")
+        if not geometry_file or ("vertices" in mesh and "faces" in mesh):
+            continue
+        vertices, faces = read_geometry_chunk(viewer_dir / str(geometry_file))
+        mesh["vertices"] = vertices.astype(float).tolist()
+        mesh["faces"] = faces.astype(int).tolist()
+    return payload
 
 
 def build_comparison_viewer(*, sources: list[tuple[str, str, Path]], output: Path) -> None:

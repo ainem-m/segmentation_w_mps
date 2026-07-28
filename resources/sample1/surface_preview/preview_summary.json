@@ -1,1487 +1,163 @@
 {
-  "input": "sample1/precomputed_teeth_case/segmentations/teeth_experimental/teeth_multilabel_fullspace.nii.gz",
-  "output_dir": "sample1/precomputed_teeth_case/surface_preview",
+  "input": "../teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz",
+  "output_dir": ".",
   "source_shape": [
-    230,
-    220,
-    160
+    209,
+    209,
+    161
   ],
   "source_spacing": [
-    0.4999999701976776,
-    0.4999999701976776,
+    0.5,
+    0.5,
     0.5
   ],
-  "label_count": 56,
+  "label_count": 28,
   "labels": [
     {
-      "label": 1,
-      "name": "lower_jawbone",
-      "voxels": 306614,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_001_lower_jawbone_smooth.stl",
-      "vertices": 98274,
-      "triangles": 197568,
-      "bounds_mm": [
-        [
-          -48.60248947143555,
-          37.05225372314453,
-          -37.68634796142578
-        ],
-        [
-          49.638362884521484,
-          109.1887435913086,
-          32.58985137939453
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 2,
-      "name": "upper_jawbone",
-      "voxels": 157343,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_002_upper_jawbone_smooth.stl",
-      "vertices": 92756,
-      "triangles": 186132,
-      "bounds_mm": [
-        [
-          -36.21092987060547,
-          52.49067306518555,
-          4.96108341217041
-        ],
-        [
-          42.40971755981445,
-          111.88522338867188,
-          33.30727767944336
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 3,
-      "name": "left_inferior_alveolar_canal",
-      "voxels": 3051,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_003_left_inferior_alveolar_canal_smooth.stl",
-      "vertices": 3366,
-      "triangles": 6728,
-      "bounds_mm": [
-        [
-          -44.20948791503906,
-          47.823822021484375,
-          -30.761747360229492
-        ],
-        [
-          -20.087543487548828,
-          91.10775756835938,
-          -1.6698353290557861
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 4,
-      "name": "right_inferior_alveolar_canal",
-      "voxels": 3236,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_004_right_inferior_alveolar_canal_smooth.stl",
-      "vertices": 3630,
-      "triangles": 7256,
-      "bounds_mm": [
-        [
-          24.67371368408203,
-          39.896549224853516,
-          -30.005952835083008
-        ],
-        [
-          47.517669677734375,
-          91.46692657470703,
-          0.6377148032188416
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 5,
-      "name": "left_maxillary_sinus",
-      "voxels": 35292,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_005_left_maxillary_sinus_smooth.stl",
-      "vertices": 11548,
-      "triangles": 23168,
-      "bounds_mm": [
-        [
-          -33.76789474487305,
-          55.993106842041016,
-          17.528156280517578
-        ],
-        [
-          14.483171463012695,
-          97.43685150146484,
-          32.38108825683594
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 6,
-      "name": "right_maxillary_sinus",
-      "voxels": 39462,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_006_right_maxillary_sinus_smooth.stl",
-      "vertices": 12822,
-      "triangles": 25676,
-      "bounds_mm": [
-        [
-          -16.284212112426758,
-          55.790283203125,
-          10.735520362854004
-        ],
-        [
-          40.20209884643555,
-          97.56956481933594,
-          29.066139221191406
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 7,
-      "name": "pharynx",
-      "voxels": 25970,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_007_pharynx_smooth.stl",
-      "vertices": 11399,
-      "triangles": 22826,
-      "bounds_mm": [
-        [
-          -16.61745262145996,
-          39.121177673339844,
-          10.052507400512695
-        ],
-        [
-          27.08717155456543,
-          97.48596954345703,
-          32.467041015625
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 9,
-      "name": "crown",
-      "voxels": 5448,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_009_crown_smooth.stl",
-      "vertices": 2613,
-      "triangles": 5242,
-      "bounds_mm": [
-        [
-          -31.657608032226562,
-          68.91155242919922,
-          -8.603558540344238
-        ],
-        [
-          -17.400955200195312,
-          89.15132141113281,
-          2.7357170581817627
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
       "label": 11,
-      "name": "upper_right_central_incisor_fdi11",
-      "voxels": 4238,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_011_upper_right_central_incisor_fdi11_smooth.stl",
-      "vertices": 2448,
-      "triangles": 4884,
-      "bounds_mm": [
-        [
-          1.045001745223999,
-          104.02842712402344,
-          -1.9494531154632568
-        ],
-        [
-          9.676966667175293,
-          113.37944030761719,
-          18.676944732666016
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 11",
+      "voxels": 5896
     },
     {
       "label": 12,
-      "name": "upper_right_lateral_incisor_fdi12",
-      "voxels": 3101,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_012_upper_right_lateral_incisor_fdi12_smooth.stl",
-      "vertices": 2177,
-      "triangles": 4346,
-      "bounds_mm": [
-        [
-          9.147645950317383,
-          101.33889770507812,
-          -2.956545829772949
-        ],
-        [
-          16.136577606201172,
-          111.52246856689453,
-          19.52303695678711
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 12",
+      "voxels": 3821
     },
     {
       "label": 13,
-      "name": "upper_right_canine_fdi13",
-      "voxels": 4942,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_013_upper_right_canine_fdi13_smooth.stl",
-      "vertices": 3116,
-      "triangles": 6224,
-      "bounds_mm": [
-        [
-          14.361552238464355,
-          97.66079711914062,
-          -3.919475793838501
-        ],
-        [
-          21.90805435180664,
-          106.59944152832031,
-          21.740434646606445
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 13",
+      "voxels": 6407
     },
     {
       "label": 14,
-      "name": "upper_right_first_premolar_fdi14",
-      "voxels": 3559,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_014_upper_right_first_premolar_fdi14_smooth.stl",
-      "vertices": 2221,
-      "triangles": 4430,
-      "bounds_mm": [
-        [
-          16.746498107910156,
-          92.08929443359375,
-          -2.250657320022583
-        ],
-        [
-          25.108631134033203,
-          98.80438995361328,
-          18.13808822631836
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 14",
+      "voxels": 5966
     },
     {
       "label": 15,
-      "name": "upper_right_second_premolar_fdi15",
-      "voxels": 3657,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_015_upper_right_second_premolar_fdi15_smooth.stl",
-      "vertices": 2397,
-      "triangles": 4806,
-      "bounds_mm": [
-        [
-          18.514379501342773,
-          84.589599609375,
-          -1.6511417627334595
-        ],
-        [
-          27.005916595458984,
-          92.20571899414062,
-          17.408069610595703
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 15",
+      "voxels": 4748
     },
     {
       "label": 16,
-      "name": "upper_right_first_molar_fdi16",
-      "voxels": 7144,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_016_upper_right_first_molar_fdi16_smooth.stl",
-      "vertices": 4364,
-      "triangles": 8716,
-      "bounds_mm": [
-        [
-          22.158782958984375,
-          70.99298858642578,
-          -1.4452581405639648
-        ],
-        [
-          34.961055755615234,
-          84.6932144165039,
-          18.64133644104004
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 16",
+      "voxels": 12498
     },
     {
       "label": 17,
-      "name": "upper_right_second_molar_fdi17",
-      "voxels": 6071,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_017_upper_right_second_molar_fdi17_smooth.stl",
-      "vertices": 3936,
-      "triangles": 7864,
-      "bounds_mm": [
-        [
-          24.84078025817871,
-          65.53809356689453,
-          0.14111216366291046
-        ],
-        [
-          38.128780364990234,
-          75.15087127685547,
-          17.856639862060547
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 19,
-      "name": "upper_left_central_incisor_fdi21",
-      "voxels": 4386,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_019_upper_left_central_incisor_fdi21_smooth.stl",
-      "vertices": 2636,
-      "triangles": 5260,
-      "bounds_mm": [
-        [
-          -8.161354064941406,
-          102.65007781982422,
-          -1.939274787902832
-        ],
-        [
-          0.7187790274620056,
-          113.15165710449219,
-          18.969057083129883
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 20,
-      "name": "upper_left_lateral_incisor_fdi22",
-      "voxels": 3266,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_020_upper_left_lateral_incisor_fdi22_smooth.stl",
-      "vertices": 2243,
-      "triangles": 4474,
-      "bounds_mm": [
-        [
-          -14.328081130981445,
-          100.30501556396484,
-          -2.251136302947998
-        ],
-        [
-          -4.638056755065918,
-          111.65048217773438,
-          19.923147201538086
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 17",
+      "voxels": 7793
     },
     {
       "label": 21,
-      "name": "upper_left_canine_fdi23",
-      "voxels": 4934,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_021_upper_left_canine_fdi23_smooth.stl",
-      "vertices": 3033,
-      "triangles": 6054,
-      "bounds_mm": [
-        [
-          -20.433347702026367,
-          95.54673767089844,
-          -2.7563154697418213
-        ],
-        [
-          -12.186948776245117,
-          105.37836456298828,
-          22.274980545043945
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 21",
+      "voxels": 5745
     },
     {
       "label": 22,
-      "name": "upper_left_first_premolar_fdi24",
-      "voxels": 3609,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_022_upper_left_first_premolar_fdi24_smooth.stl",
-      "vertices": 2317,
-      "triangles": 4626,
-      "bounds_mm": [
-        [
-          -22.95436668395996,
-          89.52227020263672,
-          -1.536355972290039
-        ],
-        [
-          -14.230399131774902,
-          96.1766128540039,
-          19.608964920043945
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 22",
+      "voxels": 3673
     },
     {
       "label": 23,
-      "name": "upper_left_second_premolar_fdi25",
-      "voxels": 3873,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_023_upper_left_second_premolar_fdi25_smooth.stl",
-      "vertices": 2544,
-      "triangles": 5084,
-      "bounds_mm": [
-        [
-          -25.467802047729492,
-          81.81454467773438,
-          0.5451862215995789
-        ],
-        [
-          -16.36023712158203,
-          89.54351043701172,
-          20.077863693237305
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 23",
+      "voxels": 6080
     },
     {
       "label": 24,
-      "name": "upper_left_first_molar_fdi26",
-      "voxels": 6938,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_024_upper_left_first_molar_fdi26_smooth.stl",
-      "vertices": 4229,
-      "triangles": 8438,
-      "bounds_mm": [
-        [
-          -29.004545211791992,
-          71.5901870727539,
-          0.9630911350250244
-        ],
-        [
-          -19.336450576782227,
-          83.81980895996094,
-          20.83717918395996
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 24",
+      "voxels": 4349
     },
     {
       "label": 25,
-      "name": "upper_left_second_molar_fdi27",
-      "voxels": 5546,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_025_upper_left_second_molar_fdi27_smooth.stl",
-      "vertices": 3413,
-      "triangles": 6822,
-      "bounds_mm": [
-        [
-          -34.38924789428711,
-          65.57730102539062,
-          3.4367144107818604
-        ],
-        [
-          -24.05706214904785,
-          75.31220245361328,
-          20.591276168823242
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 25",
+      "voxels": 5097
+    },
+    {
+      "label": 26,
+      "name": "FDI 26",
+      "voxels": 9972
     },
     {
       "label": 27,
-      "name": "lower_left_central_incisor_fdi31",
-      "voxels": 2114,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_027_lower_left_central_incisor_fdi31_smooth.stl",
-      "vertices": 1882,
-      "triangles": 3748,
-      "bounds_mm": [
-        [
-          -0.9249796271324158,
-          99.53872680664062,
-          -18.328458786010742
-        ],
-        [
-          5.38269567489624,
-          111.15957641601562,
-          -0.5376184582710266
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 28,
-      "name": "lower_left_lateral_incisor_fdi32",
-      "voxels": 2392,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_028_lower_left_lateral_incisor_fdi32_smooth.stl",
-      "vertices": 2179,
-      "triangles": 4346,
-      "bounds_mm": [
-        [
-          -6.331262111663818,
-          99.02372741699219,
-          -20.224075317382812
-        ],
-        [
-          -0.654798150062561,
-          110.38892364501953,
-          0.3516692519187927
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 29,
-      "name": "lower_left_canine_fdi33",
-      "voxels": 4705,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_029_lower_left_canine_fdi33_smooth.stl",
-      "vertices": 3182,
-      "triangles": 6352,
-      "bounds_mm": [
-        [
-          -13.074892044067383,
-          96.928466796875,
-          -23.11641502380371
-        ],
-        [
-          -6.105190277099609,
-          107.88568878173828,
-          1.3176672458648682
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 30,
-      "name": "lower_left_first_premolar_fdi34",
-      "voxels": 2927,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_030_lower_left_first_premolar_fdi34_smooth.stl",
-      "vertices": 2227,
-      "triangles": 4446,
-      "bounds_mm": [
-        [
-          -17.118919372558594,
-          92.75288391113281,
-          -19.990293502807617
-        ],
-        [
-          -10.340962409973145,
-          102.18247985839844,
-          -0.10609088838100433
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 27",
+      "voxels": 8339
     },
     {
       "label": 31,
-      "name": "lower_left_second_premolar_fdi35",
-      "voxels": 3400,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_031_lower_left_second_premolar_fdi35_smooth.stl",
-      "vertices": 2478,
-      "triangles": 4948,
-      "bounds_mm": [
-        [
-          -20.94339942932129,
-          86.8683853149414,
-          -18.77874183654785
-        ],
-        [
-          -12.920608520507812,
-          96.18486785888672,
-          -0.23454323410987854
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 31",
+      "voxels": 2231
     },
     {
       "label": 32,
-      "name": "lower_left_first_molar_fdi36",
-      "voxels": 7314,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_032_lower_left_first_molar_fdi36_smooth.stl",
-      "vertices": 4886,
-      "triangles": 9760,
-      "bounds_mm": [
-        [
-          -27.671775817871094,
-          77.349609375,
-          -19.5819034576416
-        ],
-        [
-          -15.096474647521973,
-          90.25847625732422,
-          0.4477270245552063
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 32",
+      "voxels": 2873
     },
     {
       "label": 33,
-      "name": "lower_left_second_molar_fdi37",
-      "voxels": 2014,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_033_lower_left_second_molar_fdi37_smooth.stl",
-      "vertices": 1757,
-      "triangles": 3510,
-      "bounds_mm": [
-        [
-          -32.88050079345703,
-          67.13058471679688,
-          -15.338119506835938
-        ],
-        [
-          -20.97130584716797,
-          78.18463134765625,
-          -6.1394944190979
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 33",
+      "voxels": 4960
     },
     {
       "label": 34,
-      "name": "lower_left_third_molar_fdi38",
-      "voxels": 6442,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_034_lower_left_third_molar_fdi38_smooth.stl",
-      "vertices": 3735,
-      "triangles": 7470,
-      "bounds_mm": [
-        [
-          -35.39569854736328,
-          54.687782287597656,
-          -9.045466423034668
-        ],
-        [
-          -20.557254791259766,
-          69.62972259521484,
-          7.109650135040283
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 34",
+      "voxels": 4755
     },
     {
       "label": 35,
-      "name": "lower_right_central_incisor_fdi41",
-      "voxels": 2166,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_035_lower_right_central_incisor_fdi41_smooth.stl",
-      "vertices": 1948,
-      "triangles": 3868,
-      "bounds_mm": [
-        [
-          2.1173627376556396,
-          99.04033660888672,
-          -19.56870460510254
-        ],
-        [
-          10.676138877868652,
-          110.67088317871094,
-          -0.2699533700942993
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 35",
+      "voxels": 4600
     },
     {
       "label": 36,
-      "name": "lower_right_lateral_incisor_fdi42",
-      "voxels": 2390,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_036_lower_right_lateral_incisor_fdi42_smooth.stl",
-      "vertices": 2148,
-      "triangles": 4288,
-      "bounds_mm": [
-        [
-          8.936365127563477,
-          98.30159759521484,
-          -21.415952682495117
-        ],
-        [
-          15.469630241394043,
-          108.32898712158203,
-          -0.20073366165161133
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 36",
+      "voxels": 9945
     },
     {
       "label": 37,
-      "name": "lower_right_canine_fdi43",
-      "voxels": 4881,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_037_lower_right_canine_fdi43_smooth.stl",
-      "vertices": 3266,
-      "triangles": 6524,
-      "bounds_mm": [
-        [
-          13.803914070129395,
-          94.73212432861328,
-          -24.614656448364258
-        ],
-        [
-          21.52701187133789,
-          102.99774932861328,
-          0.6449686884880066
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 38,
-      "name": "lower_right_first_premolar_fdi44",
-      "voxels": 2877,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_038_lower_right_first_premolar_fdi44_smooth.stl",
-      "vertices": 2134,
-      "triangles": 4260,
-      "bounds_mm": [
-        [
-          17.995264053344727,
-          88.88420104980469,
-          -20.395456314086914
-        ],
-        [
-          24.783435821533203,
-          95.99249267578125,
-          -0.03597039729356766
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 39,
-      "name": "lower_right_second_premolar_fdi45",
-      "voxels": 3419,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_039_lower_right_second_premolar_fdi45_smooth.stl",
-      "vertices": 2400,
-      "triangles": 4792,
-      "bounds_mm": [
-        [
-          19.631319046020508,
-          82.43428039550781,
-          -20.6787166595459
-        ],
-        [
-          27.708887100219727,
-          89.743408203125,
-          -0.3512294888496399
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 37",
+      "voxels": 8676
     },
     {
       "label": 41,
-      "name": "lower_right_second_molar_fdi47",
-      "voxels": 7719,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_041_lower_right_second_molar_fdi47_smooth.stl",
-      "vertices": 4806,
-      "triangles": 9616,
-      "bounds_mm": [
-        [
-          22.155763626098633,
-          65.41060638427734,
-          -18.369216918945312
-        ],
-        [
-          35.035377502441406,
-          81.16766357421875,
-          0.029528718441724777
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 41",
+      "voxels": 2332
     },
     {
       "label": 42,
-      "name": "lower_right_third_molar_fdi48",
-      "voxels": 7009,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_042_lower_right_third_molar_fdi48_smooth.stl",
-      "vertices": 4032,
-      "triangles": 8064,
-      "bounds_mm": [
-        [
-          23.93538475036621,
-          54.848365783691406,
-          -13.502035140991211
-        ],
-        [
-          38.709896087646484,
-          69.46489715576172,
-          1.9185422658920288
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "name": "FDI 42",
+      "voxels": 2922
     },
     {
-      "label": 51,
-      "name": "upper_right_first_molar_pulp_fdi116",
-      "voxels": 267,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_051_upper_right_first_molar_pulp_fdi116_smooth.stl",
-      "vertices": 596,
-      "triangles": 1200,
-      "bounds_mm": [
-        [
-          25.2891788482666,
-          72.47854614257812,
-          3.958712339401245
-        ],
-        [
-          31.64225196838379,
-          81.37732696533203,
-          14.045032501220703
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "label": 43,
+      "name": "FDI 43",
+      "voxels": 5239
     },
     {
-      "label": 52,
-      "name": "upper_right_second_molar_pulp_fdi117",
-      "voxels": 250,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_052_upper_right_second_molar_pulp_fdi117_smooth.stl",
-      "vertices": 454,
-      "triangles": 896,
-      "bounds_mm": [
-        [
-          25.950647354125977,
-          68.70809936523438,
-          5.218883991241455
-        ],
-        [
-          35.376068115234375,
-          72.29595947265625,
-          14.32902717590332
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "label": 44,
+      "name": "FDI 44",
+      "voxels": 4647
     },
     {
-      "label": 59,
-      "name": "upper_left_first_molar_pulp_fdi126",
-      "voxels": 297,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_059_upper_left_first_molar_pulp_fdi126_smooth.stl",
-      "vertices": 599,
-      "triangles": 1186,
-      "bounds_mm": [
-        [
-          -26.30046844482422,
-          73.24516296386719,
-          5.8994646072387695
-        ],
-        [
-          -22.11768341064453,
-          81.04281616210938,
-          19.03352928161621
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "label": 45,
+      "name": "FDI 45",
+      "voxels": 4129
     },
     {
-      "label": 60,
-      "name": "upper_left_second_molar_pulp_fdi127",
-      "voxels": 253,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_060_upper_left_second_molar_pulp_fdi127_smooth.stl",
-      "vertices": 465,
-      "triangles": 930,
-      "bounds_mm": [
-        [
-          -31.784751892089844,
-          68.54219055175781,
-          8.867766380310059
-        ],
-        [
-          -25.50249671936035,
-          73.19662475585938,
-          16.746074676513672
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "label": 46,
+      "name": "FDI 46",
+      "voxels": 9985
     },
     {
-      "label": 62,
-      "name": "lower_left_central_incisor_pulp_fdi131",
-      "voxels": 89,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_062_lower_left_central_incisor_pulp_fdi131_smooth.stl",
-      "vertices": 260,
-      "triangles": 516,
-      "bounds_mm": [
-        [
-          0.32222089171409607,
-          101.15970611572266,
-          -16.2117919921875
-        ],
-        [
-          2.4835703372955322,
-          108.79270935058594,
-          -4.565245151519775
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 63,
-      "name": "lower_left_lateral_incisor_pulp_fdi132",
-      "voxels": 114,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_063_lower_left_lateral_incisor_pulp_fdi132_smooth.stl",
-      "vertices": 309,
-      "triangles": 618,
-      "bounds_mm": [
-        [
-          -4.307243824005127,
-          101.07770538330078,
-          -17.054061889648438
-        ],
-        [
-          -2.564453125,
-          107.9117431640625,
-          -3.884925603866577
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 64,
-      "name": "lower_left_canine_pulp_fdi133",
-      "voxels": 226,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_064_lower_left_canine_pulp_fdi133_smooth.stl",
-      "vertices": 469,
-      "triangles": 938,
-      "bounds_mm": [
-        [
-          -10.253924369812012,
-          98.43830871582031,
-          -21.101356506347656
-        ],
-        [
-          -8.173858642578125,
-          104.84495544433594,
-          -3.432648181915283
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 65,
-      "name": "lower_left_first_premolar_pulp_fdi134",
-      "voxels": 111,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_065_lower_left_first_premolar_pulp_fdi134_smooth.stl",
-      "vertices": 275,
-      "triangles": 550,
-      "bounds_mm": [
-        [
-          -14.87272834777832,
-          95.92505645751953,
-          -16.05948829650879
-        ],
-        [
-          -12.74394416809082,
-          99.29002380371094,
-          -4.316841125488281
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 66,
-      "name": "lower_left_second_premolar_pulp_fdi135",
-      "voxels": 146,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_066_lower_left_second_premolar_pulp_fdi135_smooth.stl",
-      "vertices": 338,
-      "triangles": 672,
-      "bounds_mm": [
-        [
-          -18.816408157348633,
-          89.74266815185547,
-          -14.995482444763184
-        ],
-        [
-          -15.777779579162598,
-          93.3903579711914,
-          -4.778489589691162
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 67,
-      "name": "lower_left_first_molar_pulp_fdi136",
-      "voxels": 330,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_067_lower_left_first_molar_pulp_fdi136_smooth.stl",
-      "vertices": 789,
-      "triangles": 1586,
-      "bounds_mm": [
-        [
-          -25.782691955566406,
-          79.10556030273438,
-          -16.8597412109375
-        ],
-        [
-          -18.651611328125,
-          87.5532455444336,
-          -4.473766326904297
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 68,
-      "name": "lower_left_second_molar_pulp_fdi137",
-      "voxels": 8,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_068_lower_left_second_molar_pulp_fdi137_smooth.stl",
-      "vertices": 36,
-      "triangles": 64,
-      "bounds_mm": [
-        [
-          -28.295740127563477,
-          73.57849884033203,
-          -10.9170560836792
-        ],
-        [
-          -23.566492080688477,
-          76.35920715332031,
-          -8.478711128234863
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 69,
-      "name": "lower_left_third_molar_pulp_fdi138",
-      "voxels": 198,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_069_lower_left_third_molar_pulp_fdi138_smooth.stl",
-      "vertices": 395,
-      "triangles": 786,
-      "bounds_mm": [
-        [
-          -31.990365982055664,
-          58.042869567871094,
-          -5.805020809173584
-        ],
-        [
-          -26.088275909423828,
-          64.61296844482422,
-          1.0729855298995972
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 70,
-      "name": "lower_right_central_incisor_pulp_fdi141",
-      "voxels": 92,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_070_lower_right_central_incisor_pulp_fdi141_smooth.stl",
-      "vertices": 256,
-      "triangles": 496,
-      "bounds_mm": [
-        [
-          5.930755138397217,
-          101.63948059082031,
-          -15.877851486206055
-        ],
-        [
-          8.386613845825195,
-          108.17347717285156,
-          -4.44371223449707
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 71,
-      "name": "lower_right_lateral_incisor_pulp_fdi142",
-      "voxels": 106,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_071_lower_right_lateral_incisor_pulp_fdi142_smooth.stl",
-      "vertices": 305,
-      "triangles": 618,
-      "bounds_mm": [
-        [
-          10.092045783996582,
-          99.82186126708984,
-          -18.367965698242188
-        ],
-        [
-          13.150530815124512,
-          105.82240295410156,
-          -4.410600185394287
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 72,
-      "name": "lower_right_canine_pulp_fdi143",
-      "voxels": 268,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_072_lower_right_canine_pulp_fdi143_smooth.stl",
-      "vertices": 510,
-      "triangles": 1016,
-      "bounds_mm": [
-        [
-          16.122085571289062,
-          96.7901840209961,
-          -22.524879455566406
-        ],
-        [
-          18.55865478515625,
-          100.02350616455078,
-          -3.3177244663238525
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 73,
-      "name": "lower_right_first_premolar_pulp_fdi144",
-      "voxels": 124,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_073_lower_right_first_premolar_pulp_fdi144_smooth.stl",
-      "vertices": 286,
-      "triangles": 568,
-      "bounds_mm": [
-        [
-          20.336082458496094,
-          91.38665008544922,
-          -17.21550941467285
-        ],
-        [
-          22.58258628845215,
-          93.71090698242188,
-          -4.657918930053711
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 74,
-      "name": "lower_right_second_premolar_pulp_fdi145",
-      "voxels": 164,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_074_lower_right_second_premolar_pulp_fdi145_smooth.stl",
-      "vertices": 350,
-      "triangles": 696,
-      "bounds_mm": [
-        [
-          22.836811065673828,
-          85.30668640136719,
-          -17.98805809020996
-        ],
-        [
-          25.587617874145508,
-          87.79842376708984,
-          -4.451040267944336
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 76,
-      "name": "lower_right_second_molar_pulp_fdi147",
-      "voxels": 341,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_076_lower_right_second_molar_pulp_fdi147_smooth.stl",
-      "vertices": 797,
-      "triangles": 1654,
-      "bounds_mm": [
-        [
-          25.99798011779785,
-          66.97550201416016,
-          -15.929486274719238
-        ],
-        [
-          33.468658447265625,
-          77.15814971923828,
-          -5.6631011962890625
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "label": 77,
-      "name": "lower_right_third_molar_pulp_fdi148",
-      "voxels": 274,
-      "stl": "sample1/precomputed_teeth_case/surface_preview/labels/label_077_lower_right_third_molar_pulp_fdi148_smooth.stl",
-      "vertices": 515,
-      "triangles": 1038,
-      "bounds_mm": [
-        [
-          29.465518951416016,
-          57.883235931396484,
-          -10.520390510559082
-        ],
-        [
-          36.29429626464844,
-          65.07684326171875,
-          -3.584385633468628
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+      "label": 47,
+      "name": "FDI 47",
+      "voxels": 8531
     }
   ],
   "groups": [
     {
       "name": "all_nonzero",
       "labels": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        9,
         11,
         12,
         13,
@@ -1489,17 +165,13 @@
         15,
         16,
         17,
-        19,
-        20,
         21,
         22,
         23,
         24,
         25,
+        26,
         27,
-        28,
-        29,
-        30,
         31,
         32,
         33,
@@ -1507,56 +179,18 @@
         35,
         36,
         37,
-        38,
-        39,
         41,
         42,
-        51,
-        52,
-        59,
-        60,
-        62,
-        63,
-        64,
-        65,
-        66,
-        67,
-        68,
-        69,
-        70,
-        71,
-        72,
-        73,
-        74,
-        76,
-        77
-      ],
-      "stl": "sample1/precomputed_teeth_case/surface_preview/combined/all_nonzero_smooth.stl",
-      "vertices": 194910,
-      "triangles": 390204,
-      "bounds_mm": [
-        [
-          -48.60248947143555,
-          37.05225372314453,
-          -37.68634796142578
-        ],
-        [
-          49.638362884521484,
-          113.37944030761719,
-          33.30727767944336
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+        43,
+        44,
+        45,
+        46,
+        47
+      ]
     },
     {
       "name": "dental_hard_tissue",
       "labels": [
-        9,
         11,
         12,
         13,
@@ -1564,17 +198,13 @@
         15,
         16,
         17,
-        19,
-        20,
         21,
         22,
         23,
         24,
         25,
+        26,
         27,
-        28,
-        29,
-        30,
         31,
         32,
         33,
@@ -1582,105 +212,14 @@
         35,
         36,
         37,
-        38,
-        39,
         41,
-        42
-      ],
-      "stl": "sample1/precomputed_teeth_case/surface_preview/combined/dental_hard_tissue_smooth.stl",
-      "vertices": 85834,
-      "triangles": 171668,
-      "bounds_mm": [
-        [
-          -35.39569854736328,
-          54.687782287597656,
-          -24.614656448364258
-        ],
-        [
-          38.709896087646484,
-          113.37944030761719,
-          22.274980545043945
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "name": "pulp",
-      "labels": [
-        51,
-        52,
-        59,
-        60,
-        62,
-        63,
-        64,
-        65,
-        66,
-        67,
-        68,
-        69,
-        70,
-        71,
-        72,
-        73,
-        74,
-        76,
-        77
-      ],
-      "stl": "sample1/precomputed_teeth_case/surface_preview/combined/pulp_smooth.stl",
-      "vertices": 8004,
-      "triangles": 16032,
-      "bounds_mm": [
-        [
-          -31.990365982055664,
-          57.883235931396484,
-          -22.524879455566406
-        ],
-        [
-          36.29429626464844,
-          108.79270935058594,
-          19.03352928161621
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 3,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
-    },
-    {
-      "name": "jaws",
-      "labels": [
-        1,
-        2
-      ],
-      "stl": "sample1/precomputed_teeth_case/surface_preview/combined/jaws_smooth.stl",
-      "vertices": 190682,
-      "triangles": 383004,
-      "bounds_mm": [
-        [
-          -48.60248947143555,
-          37.05225372314453,
-          -37.68634796142578
-        ],
-        [
-          49.638362884521484,
-          111.88522338867188,
-          33.30727767944336
-        ]
-      ],
-      "smoothing": {
-        "preset": "slicer_like",
-        "iterations": 10,
-        "lambda": 0.5,
-        "mu": -0.53
-      }
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ]
     }
   ],
   "smoothing": {
@@ -1689,26 +228,13 @@
     "lambda": 0.5,
     "mu": -0.53
   },
-  "html_viewer": "sample1/precomputed_teeth_case/surface_preview/index.html",
+  "html_viewer": "index.html",
   "preview": {
-    "step_size": 2,
+    "step_size": 1,
     "meshes": [
-      {
-        "name": "jaws",
-        "labels": [
-          1,
-          2
-        ],
-        "vertices": 46543,
-        "triangles": 94634,
-        "default_visible": true,
-        "opacity": 0.35,
-        "color": "#d6a455"
-      },
       {
         "name": "dental_hard_tissue",
         "labels": [
-          9,
           11,
           12,
           13,
@@ -1716,17 +242,13 @@
           15,
           16,
           17,
-          19,
-          20,
           21,
           22,
           23,
           24,
           25,
+          26,
           27,
-          28,
-          29,
-          30,
           31,
           32,
           33,
@@ -1734,118 +256,79 @@
           35,
           36,
           37,
-          38,
-          39,
           41,
-          42
+          42,
+          43,
+          44,
+          45,
+          46,
+          47
         ],
-        "vertices": 20912,
-        "triangles": 41952,
+        "vertices": 84683,
+        "triangles": 169570,
         "default_visible": true,
         "opacity": 1.0,
         "color": "#f5f1dc"
-      },
-      {
-        "name": "pulp",
-        "labels": [
-          51,
-          52,
-          59,
-          60,
-          62,
-          63,
-          64,
-          65,
-          66,
-          67,
-          68,
-          69,
-          70,
-          71,
-          72,
-          73,
-          74,
-          76,
-          77
-        ],
-        "vertices": 1694,
-        "triangles": 3288,
-        "default_visible": false,
-        "opacity": 1.0,
-        "color": "#d24b5a"
-      },
-      {
-        "name": "all_nonzero",
-        "labels": [
-          1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7,
-          9,
-          11,
-          12,
-          13,
-          14,
-          15,
-          16,
-          17,
-          19,
-          20,
-          21,
-          22,
-          23,
-          24,
-          25,
-          27,
-          28,
-          29,
-          30,
-          31,
-          32,
-          33,
-          34,
-          35,
-          36,
-          37,
-          38,
-          39,
-          41,
-          42,
-          51,
-          52,
-          59,
-          60,
-          62,
-          63,
-          64,
-          65,
-          66,
-          67,
-          68,
-          69,
-          70,
-          71,
-          72,
-          73,
-          74,
-          76,
-          77
-        ],
-        "vertices": 46907,
-        "triangles": 94354,
-        "default_visible": false,
-        "opacity": 1.0,
-        "color": "#b6d7f0"
       }
     ]
+  },
+  "source": {
+    "source": "explicit_input",
+    "input": "../teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz"
   },
   "viewer": {
     "renderer": "webgl",
     "fallback_renderer": "canvas2d",
     "camera_mode_default": "trackpad",
-    "transparent_rendering": "jaw_depth_prepass_front_shell"
+    "display_mode_default": "xray",
+    "display_modes": [
+      "normal",
+      "wireframe",
+      "xray"
+    ],
+    "transparent_rendering": "jaw_depth_prepass_front_shell",
+    "runtime_smoothing": true,
+    "runtime_smoothing_presets": [
+      "none",
+      "slicer_like",
+      "medium",
+      "strong"
+    ],
+    "material_default": "rich",
+    "material_presets": [
+      "standard",
+      "rich",
+      "realistic",
+      "neutral",
+      "high_contrast"
+    ],
+    "geometry_format": "tswm-geometry-v1",
+    "geometry_encoding": "base64-fixed-point-int32-and-uint32",
+    "geometry_files": [
+      "mesh-dental_hard_tissue.e415d298f15cfd92.js"
+    ],
+    "xray": {
+      "surface_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "base_alpha": 0.18,
+      "rim_power": 2.0,
+      "alpha_max": 0.62,
+      "compositing": "back_then_front",
+      "target_strategy": "translucent_layers_else_all",
+      "blend": "src_alpha_one_minus_src_alpha",
+      "depth_test": true,
+      "depth_write": false,
+      "outline_alpha": 0.58,
+      "outline_radius_physical_pixels": 1,
+      "background": "#313432"
+    },
+    "script_bundle": "viewer_bundle.js"
+  },
+  "performance_profile": "performance_profile.json",
+  "stl_generation": {
+    "status": "pending"
   }
 }

@@ -1,44 +1,63 @@
 {
   "schema": "totalsegmentator_wrapper_mac.sample.v1",
-  "sample_id": "sample1_dz_cbct_jawcrop_0p5mm",
-  "display_name": "Sample 1: DZ-CBCT jawcrop 0.5mm",
+  "sample_id": "sample1_owner_cbct_jawcrop_0p5mm",
+  "display_name": "Sample 1: owner-authorized CBCT 0.5 mm",
   "clinical_use": false,
-  "purpose": "Bundled non-clinical preview sample for first-run UI and local workflow testing.",
-  "default_input": "input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+  "purpose": "Bundled non-clinical sample for first-run UI and local workflow testing.",
+  "default_input": "input/owner_cbct_jawcrop_0p5mm.nii.gz",
   "surface_preview": "surface_preview/index.html",
-  "precomputed_teeth_labelmap": "teeth_result/teeth_multilabel_fullspace.nii.gz",
-  "expected_runtime_note_ja": "Sample 1の3Dプレビュー作成は、モデル取得済みの場合、このMacでおおむね100秒前後かかります。",
-  "expected_runtime_seconds_approx": 100,
+  "precomputed_teeth_labelmap": "teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz",
   "notices": "THIRD_PARTY_NOTICES.txt",
   "source": {
-    "dataset": "3D Slicer SampleData CBCT-MR Head",
-    "sample_data_name": "CBCTMRHead",
-    "source_file": "DZ-CBCT.nrrd",
-    "source_sha256": "4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db",
-    "source_url": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4ce7aa75278b5a7b757ed0c8d7a6b3caccfc3e2973b020532456dbc8f3def7db",
-    "license_note": "3D Slicer SampleData source states CBCT-MR Head was donated for unrestricted use."
+    "description": "CT of the project rights holder, explicitly authorized for public derived-data distribution.",
+    "authorization_record": "docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md",
+    "source_nifti_sha256": "2c674bf0b0158c5e7cb3a7ee38b1cc35ff573242fc90ab0236802634ad9fecd4",
+    "raw_dicom_included": false,
+    "redistribution_scope": "Derived jaw-region NIfTI, model output, and preview artifacts only."
   },
   "derived_files": {
-    "input/DZ-CBCT_jawcrop_0p5mm.nii.gz": {
-      "sha256": "2b369ff1a61dbf23fe4fdad8d95c39654e19dc34efcdc6af600198ef1ec960fc",
-      "description": "Jaw-cropped and resampled 0.5 mm isotropic NIfTI input."
+    "input/owner_cbct_jawcrop_0p5mm.nii.gz": {
+      "sha256": "69fc10771a9677a3b5f1f597a5f938d8b889633044cd8da7e6221fd123607824",
+      "description": "Rights-holder-authorized CT resampled to a 0.5 mm isotropic NIfTI input."
+    },
+    "teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz": {
+      "sha256": "57fa3cc887990b347cd13dc9a6ec1a43c88d89214eed1cd9ce553efda7465996",
+      "description": "ToothSeg FDI tooth labelmap resampled to the bundled input geometry."
+    },
+    "teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz.labels.json": {
+      "sha256": "bc13ebe92ca1fe3c639f938d6600e7a82d8f3d6f601b55aa3ff57c14efbdd7f4",
+      "description": "FDI label-name sidecar for the precomputed ToothSeg result."
     },
     "surface_preview/index.html": {
-      "sha256": "363f052bf2031f882256e30429dcd485b630a35ef0c4683ff86d074d5ef229a6",
+      "sha256": "971dc18d6281733bc9c1a9a78e89270071499f145339e0323318ca57d18d2954",
       "description": "Fully offline Sample 1 surface preview HTML."
     },
-    "teeth_result/teeth_multilabel_fullspace.nii.gz": {
-      "sha256": "b6b706ccdf14c6e3a8062fb6053300cf0d567378625786f1bf816db2e9d7f295",
-      "description": "Precomputed experimental teeth MPS full-space labelmap."
+    "surface_preview/mesh-dental_hard_tissue.e415d298f15cfd92.js": {
+      "sha256": "7b9bc0a8a68f238d88e37f3e38873913ee171134f4cc2ed47fd546e9b8849e5b",
+      "description": "Binary browser geometry for the bundled tooth preview."
+    },
+    "surface_preview/performance_profile.json": {
+      "sha256": "ed278686a375d8af308a7dd17d368ded026bbfc732d4b8202eb9701558a71546",
+      "description": "Performance record for preview generation."
+    },
+    "surface_preview/preview_summary.json": {
+      "sha256": "d1fc0ec5e969430b8732c7238b011c3212fefdbeab7c5cfe417b07f61f901dc0",
+      "description": "Preview geometry and display summary with distribution-relative paths."
+    },
+    "surface_preview/viewer_bundle.js": {
+      "sha256": "c5113506ba027e9fb16afc6303c12a3f4aca03c7d3be64bfec3c7196a87318e3",
+      "description": "Offline browser viewer runtime."
     }
   },
   "precomputed_teeth": {
-    "tool": "TotalSegmentator",
-    "tool_version": "2.14.0",
-    "license": "Apache-2.0",
+    "tool": "ToothSeg",
+    "source": "MIC-DKFZ/ToothSeg",
+    "model_doi": "10.5281/zenodo.14893540",
+    "code_license": "Apache-2.0",
+    "model_license": "CC-BY-4.0",
     "device": "mps",
-    "elapsed_seconds": 98.48210795898922,
-    "non_empty_label_count": 56,
+    "elapsed_seconds": 3210.9319605830824,
+    "non_empty_label_count": 28,
     "status": "success"
   }
 }

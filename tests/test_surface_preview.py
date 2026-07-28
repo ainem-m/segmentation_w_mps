@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import struct
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +27,9 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     write_binary_stl,
     _externalize_viewer_script,
     _html_document,
+    _write_geometry_chunk,
+    _write_offline_viewer,
+    read_geometry_chunk,
 )
 from scripts.build_model_comparison_viewer import (
     build_comparison_viewer,
@@ -41,6 +46,103 @@ SYNTHETIC_LABELS = {
 
 
 class SurfacePreviewTests(unittest.TestCase):
+    def test_binary_geometry_chunk_round_trips_current_preview_precision(self) -> None:
+        vertices = np.array(
+            [
+                [-43.440, 28.216, 0.401],
+                [0.001, 50.500, 76.725],
+                [51.153, 104.337, 10.000],
+            ],
+            dtype=np.float32,
+        )
+        faces = np.array([[0, 1, 2]], dtype=np.uint32)
+        mesh = {
+            "name": "jaws",
+            "vertices": np.round(vertices.astype(float), 3).tolist(),
+            "faces": faces.astype(int).tolist(),
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            filename, metadata = _write_geometry_chunk(root, mesh)
+            restored_vertices, restored_faces = read_geometry_chunk(root / filename)
+
+            np.testing.assert_array_equal(restored_vertices, vertices)
+            np.testing.assert_array_equal(restored_faces, faces)
+            self.assertEqual(metadata["vertexCount"], 3)
+            self.assertEqual(metadata["triangleCount"], 1)
+            self.assertEqual(metadata["geometryFile"], filename)
+
+    def test_binary_geometry_chunk_rejects_checksum_mismatch(self) -> None:
+        mesh = {
+            "name": "jaws",
+            "vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            "faces": [[0, 1, 2]],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            filename, _metadata = _write_geometry_chunk(root, mesh)
+            path = root / filename
+            script = path.read_text(encoding="utf-8")
+            script = script.replace('"sha256":"', '"sha256":"0', 1)
+            path.write_text(script, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                read_geometry_chunk(path)
+
+    def test_browser_decoder_rejects_same_length_geometry_corruption(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is required for the browser decoder harness")
+        mesh = {
+            "name": "jaws",
+            "labels": [1],
+            "defaultVisible": True,
+            "opacity": 0.35,
+            "color": "#d6a455",
+            "vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            "faces": [[0, 1, 2]],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_offline_viewer(
+                root / "index.html",
+                summary={"label_count": 1, "smoothing": {"preset": "none"}},
+                preview_meshes=[mesh],
+            )
+            harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const root = process.argv[1];
+global.window = global;
+const meshFile = fs.readdirSync(root).find(name => name.startsWith('mesh-jaws.'));
+vm.runInThisContext(fs.readFileSync(root + '/' + meshFile, 'utf8'));
+const bundle = fs.readFileSync(root + '/viewer_bundle.js', 'utf8');
+const start = bundle.indexOf('function decodeGeometryChunk');
+const end = bundle.indexOf('\nfunction updateLayerStats', start);
+vm.runInThisContext(bundle.slice(start, end));
+const html = fs.readFileSync(root + '/index.html', 'utf8');
+const payload = JSON.parse(html.match(/<script id="viewerData" type="application\/json">(.*?)<\/script>/s)[1]);
+const raw = payload.meshes[0];
+decodeGeometryChunk(raw);
+vm.runInThisContext(fs.readFileSync(root + '/' + meshFile, 'utf8'));
+const damaged = Buffer.from(window.__TSW_GEOMETRY_CHUNKS__.jaws.data, 'base64');
+damaged[32] ^= 1;
+window.__TSW_GEOMETRY_CHUNKS__.jaws.data = damaged.toString('base64');
+let rejected = false;
+try { decodeGeometryChunk(raw); } catch (error) { rejected = /checksum mismatch/.test(String(error)); }
+if (!rejected) throw new Error('same-length corruption was not rejected');
+"""
+            completed = subprocess.run(
+                [node, "-e", harness, str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_uppercase_fdi_labels_are_visible_as_dental_hard_tissue_by_default(self) -> None:
         self.assertTrue(is_dental_hard_tissue("FDI 11"))
 
@@ -59,6 +161,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertEqual(groups["dental_hard_tissue"], [11, 12])
             preview = {mesh["name"]: mesh for mesh in summary["preview"]["meshes"]}
             self.assertTrue(preview["dental_hard_tissue"]["default_visible"])
+            self.assertNotIn("all_nonzero", preview)
             index_html = (
                 case_dir / "surface_preview" / "index.html"
             ).read_text(encoding="utf-8")
@@ -265,6 +368,8 @@ class SurfacePreviewTests(unittest.TestCase):
             output_dir = case_dir / "surface_preview"
             self.assertTrue((output_dir / "index.html").exists())
             self.assertTrue((output_dir / "viewer_bundle.js").exists())
+            geometry_files = sorted(output_dir.glob("mesh-*.js"))
+            self.assertEqual(len(geometry_files), 4)
             self.assertTrue((output_dir / "preview_summary.json").exists())
             self.assertTrue((output_dir / "performance_profile.json").exists())
             for name in [
@@ -307,6 +412,11 @@ class SurfacePreviewTests(unittest.TestCase):
             )
             self.assertEqual(saved_summary["viewer"]["renderer"], "webgl")
             self.assertEqual(saved_summary["viewer"]["fallback_renderer"], "canvas2d")
+            self.assertEqual(
+                saved_summary["viewer"]["geometry_format"],
+                "tswm-geometry-v1",
+            )
+            self.assertEqual(len(saved_summary["viewer"]["geometry_files"]), 4)
             self.assertEqual(saved_summary["viewer"]["camera_mode_default"], "trackpad")
             self.assertEqual(
                 saved_summary["viewer"]["transparent_rendering"],
@@ -354,7 +464,20 @@ class SurfacePreviewTests(unittest.TestCase):
                 bundle_js,
             )
             self.assertNotIn('"vertices":[', bundle_js)
-            self.assertIn('"vertices":[', index_html)
+            self.assertNotIn('"vertices":[', index_html)
+            self.assertIn('"geometryFormat":"tswm-geometry-v1"', index_html)
+            self.assertIn('"geometryFile":"mesh-jaws.', index_html)
+            hydrated_payload = read_payload(output_dir / "index.html")
+            self.assertEqual(
+                [len(mesh["vertices"]) for mesh in hydrated_payload["meshes"]],
+                [mesh["vertices"] for mesh in saved_summary["preview"]["meshes"]],
+            )
+            self.assertEqual(
+                [len(mesh["faces"]) for mesh in hydrated_payload["meshes"]],
+                [mesh["triangles"] for mesh in saved_summary["preview"]["meshes"]],
+            )
+            self.assertIn("decodeGeometryChunk", bundle_js)
+            self.assertIn("new Uint32Array(mesh.faces)", bundle_js)
             self.assertIn("getContext('webgl'", html)
             self.assertIn("TotalSegmentator 3Dビューアー", html)
             self.assertIn(
@@ -369,6 +492,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("window.addEventListener('unhandledrejection'", index_html)
             self.assertIn("3D表示の準備中にエラーが発生しました。", index_html)
             self.assertIn("document.createElement('script')", index_html)
+            self.assertIn("Promise.all(geometryFiles.map(loadScript))", index_html)
             self.assertIn("scheduleViewerInitialization", html)
             self.assertIn("setTimeout(initializeViewer, 0)", html)
             self.assertIn("requestAnimationFrame(finishViewerLoading)", html)

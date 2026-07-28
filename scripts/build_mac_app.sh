@@ -478,9 +478,9 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     "third_party_license_summary": "licenses/THIRD_PARTY_LICENSES.txt",
     "sample1": {
       "root": "sample1",
-      "input": "sample1/input/DZ-CBCT_jawcrop_0p5mm.nii.gz",
+      "input": "sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz",
       "surface_preview": "sample1/surface_preview/index.html",
-      "precomputed_teeth_labelmap": "sample1/teeth_result/teeth_multilabel_fullspace.nii.gz",
+      "precomputed_teeth_labelmap": "sample1/teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz",
       "manifest": "sample1/sample_manifest.json",
       "notices": "sample1/THIRD_PARTY_NOTICES.txt"
     },
@@ -553,11 +553,11 @@ GDCM DICOM runtime
 - json-c license: Contents/Resources/licenses/json-c-MIT.txt
 - OpenSSL license: Contents/Resources/licenses/OpenSSL-Apache-2.0.txt
 
-Sample 1 notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
+Sample 1 provenance and notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
 Comparison images in Contents/Resources/model_comparison are non-clinical preview
-renders derived from bundled Sample 1 and model outputs. The Sample 1 source
-notice and the applicable TotalSegmentator, DentalSegmentator, or ToothSeg model
-notice apply. Exact hashes and generators are recorded in
+renders derived from rights-holder-authorized CT data and model outputs. The
+Sample 1 provenance and the applicable TotalSegmentator, DentalSegmentator, or
+ToothSeg model notice apply. Exact hashes and generators are recorded in
 Contents/Resources/model_comparison/ASSET_PROVENANCE.json.
 TotalSegmentator Wrapper for Mac is a non-clinical preview and is not for diagnosis or treatment planning.
 TXT
