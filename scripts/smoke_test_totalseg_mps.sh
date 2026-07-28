@@ -10,6 +10,14 @@ INPUT="$1"
 OUT="$2"
 TASK="${3:-craniofacial_structures}"
 
+case "${TASK}" in
+  craniofacial_structures|teeth) ;;
+  *)
+    echo "Unsupported task for this project's audited open-task smoke path: ${TASK}" >&2
+    exit 2
+    ;;
+esac
+
 mkdir -p "$OUT"
 
 echo "[TotalSegmentator Wrapper] Running TotalSegmentator smoke test"

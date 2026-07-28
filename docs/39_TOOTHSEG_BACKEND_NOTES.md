@@ -17,6 +17,13 @@ numbers. It is not a fallback for TotalSegmentator or DentalSegmentator.
 - Model file: `ToothSeg.zip` (about 920 MB)
 - Model MD5: `5d8dd061cce9529943567aeba3271143`
 - Model license: CC BY 4.0
+- License URL: `https://creativecommons.org/licenses/by/4.0/`
+- Model creators: Fabian Isensee, Niels van Nistelrooij, Lars Krämer, and
+  Shankeeth Vinayahalingam
+
+The downloaded checkpoint parameters are not modified. The project adapts the
+published inference and self-correction workflow and records those integration
+changes in `resources/third_party/licenses/ToothSeg-NOTICE.txt`.
 
 The app does not bundle the model. Selecting ToothSeg for the first time opens
 an explicit preparation sheet. The downloader supports HTTP range resume,

@@ -1,0 +1,34 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.asset_provenance.v1",
+  "apache_2_0_relicensed": false,
+  "source_sample_notice": "../sample1/THIRD_PARTY_NOTICES.txt",
+  "description": "Non-clinical preview renders derived from bundled Sample 1 and model outputs.",
+  "files": {
+    "totalseg.png": {
+      "sha256": "a55e4112d476255d292507ca2901b9c56869f57c261af126b22cebb1da69bb57",
+      "generator": "TotalSegmentator 2.14.0",
+      "task": "craniofacial_structures",
+      "model_notice": "../third_party/licenses/TotalSegmentator-Apache-2.0.txt"
+    },
+    "individual.png": {
+      "sha256": "735efdcec447de09bf815edd57cd444d9808e3e8a2a9c4cdf8d54efe560b991b",
+      "generator": "TotalSegmentator 2.14.0",
+      "task": "teeth",
+      "model_notice": "../third_party/licenses/TotalSegmentator-Apache-2.0.txt"
+    },
+    "dentalseg.png": {
+      "sha256": "7a5d4b0ad3ec2b97ac7dc0ea29b36c7e5a07f8d06838eb3b7022a42b240b805b",
+      "generator": "DentalSegmentator checkpoint",
+      "model_doi": "10.5281/zenodo.10829675",
+      "model_license": "CC-BY-4.0",
+      "model_notice": "../third_party/licenses/DentalSegmentator-NOTICE.txt"
+    },
+    "toothseg.png": {
+      "sha256": "d09fa71fc364e9bd8e347db217fd4e929fda23dec97e41b23bcf37302d78164c",
+      "generator": "ToothSeg checkpoint",
+      "model_doi": "10.5281/zenodo.14893540",
+      "model_license": "CC-BY-4.0",
+      "model_notice": "../third_party/licenses/ToothSeg-NOTICE.txt"
+    }
+  }
+}

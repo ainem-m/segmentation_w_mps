@@ -1,0 +1,21 @@
+TotalSegmentator Wrapper for Mac
+Copyright 2026 TotalSegmentator Wrapper for Mac contributors
+
+This product includes software developed by the TotalSegmentator Wrapper for
+Mac contributors and is licensed under the Apache License, Version 2.0.
+
+The Apache-2.0 license applies to this project's original source code,
+documentation, and first-party application resources except where a file or
+notice states otherwise.
+
+Third-party software, model checkpoints, sample data, generated sample
+artifacts, images derived from third-party data or models, and third-party
+names and marks are not relicensed by this project. Their respective terms and
+attributions are documented in resources/third_party/, resources/sample1/,
+README.md, and the license notices bundled in the macOS application.
+
+TotalSegmentator Wrapper for Mac is an independent, unofficial project.
+TotalSegmentator, DentalSegmentator, ToothSeg, 3D Slicer, dcm2niix, and other
+third-party project names and marks belong to their respective owners. Their
+use here identifies interoperability or provenance and does not imply
+endorsement.

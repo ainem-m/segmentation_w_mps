@@ -199,6 +199,18 @@ def verify_stable_notarized_dmg(dmg: Path) -> None:
             raise SystemExit(
                 f"stable DMG failed notarization verification ({command[0]}): {detail.strip()}"
             ) from exc
+    license_verifier = Path(__file__).with_name("verify_license_distribution.py")
+    try:
+        subprocess.run(
+            [sys.executable, str(license_verifier), "--dmg", str(dmg)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise SystemExit(f"stable DMG failed license verification: {detail.strip()}") from exc
 
 
 def normalize_https_origin(value: str) -> str:

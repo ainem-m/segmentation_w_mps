@@ -126,6 +126,8 @@ class LicenseInventoryTests(unittest.TestCase):
             self.assertEqual(inventory["schema"], "totalsegmentator_wrapper_mac.third_party_license_inventory.v1")
             self.assertEqual(inventory["dependency_set_id"], "fixture-deps")
             self.assertEqual(inventory["unresolved_count"], 0)
+            self.assertEqual(inventory["first_party_packages"], [])
+            self.assertTrue(all(package["scope"] == "third-party" for package in inventory["packages"]))
             self.assertTrue((output / "THIRD_PARTY_LICENSES.txt").is_file())
             self.assertTrue((output / "python-packages" / "mitpkg-1.0.0" / "LICENSE").is_file())
             self.assertTrue((output / "python-packages" / "lgplpkg-1.0.0" / "manual-lgplpkg-LICENSE.txt").is_file())
@@ -208,6 +210,53 @@ class LicenseInventoryTests(unittest.TestCase):
             inventory = json.loads((output / "third_party_license_inventory.json").read_text(encoding="utf-8"))
             codes = {item["code"] for item in inventory["unresolved"]}
             self.assertIn("attention_license_requires_review", codes)
+
+    def test_first_party_package_is_classified_without_weakening_license_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            site = root / "site"
+            output = root / "out"
+            site.mkdir()
+            overrides = root / "manual-overrides.json"
+            _write_overrides(overrides, [])
+            _write_dist(
+                site,
+                name="totalsegmentator-wrapper-mac",
+                version="0.2.1",
+                metadata_lines=["License-Expression: Apache-2.0"],
+                license_text="Apache License 2.0\n",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--output-dir",
+                    str(output),
+                    "--site-path",
+                    str(site),
+                    "--manual-overrides",
+                    str(overrides),
+                    "--first-party-package",
+                    "totalsegmentator-wrapper-mac",
+                    "--fail-on-unresolved",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            inventory = json.loads(
+                (output / "third_party_license_inventory.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(inventory["first_party_packages"], ["totalsegmentator-wrapper-mac"])
+            package = inventory["packages"][0]
+            self.assertEqual(package["scope"], "first-party")
+            self.assertEqual(package["license"], "Apache-2.0")
+            summary = (output / "THIRD_PARTY_LICENSES.txt").read_text(encoding="utf-8")
+            self.assertIn("First-party packages (classified separately)", summary)
 
 
 if __name__ == "__main__":

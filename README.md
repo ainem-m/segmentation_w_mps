@@ -1,7 +1,45 @@
-# TotalSegmentator Wrapper for Mac — Coding Agent Handoff Pack
+# TotalSegmentator Wrapper for Mac
+
+TotalSegmentator Wrapper for Mac is free, open-source software for creating
+local, non-clinical 3D previews on Apple Silicon Macs. The wrapper's original
+source code and documentation are licensed under the
+[Apache License 2.0](LICENSE).
+
+This software is provided without warranty. It is intended for research,
+education, and validation only; it is not a medical device and must not be used
+for diagnosis or treatment planning.
 
 This is an unofficial Mac wrapper powered by TotalSegmentator. It is not the
 official TotalSegmentator application or project.
+
+## License and third-party components
+
+Apache-2.0 covers this project's original Python, Swift, and C++ source,
+documentation, and first-party application resources except where a file or
+notice says otherwise. See [NOTICE](NOTICE) for the boundary.
+
+Third-party code, model checkpoints, sample data, generated sample artifacts,
+and third-party names or marks are not relicensed under the wrapper's
+Apache-2.0 license. In particular:
+
+- TotalSegmentator code is Apache-2.0; the application exposes only the audited
+  open tasks `craniofacial_structures` and `teeth`. Model terms remain upstream
+  task-dependent.
+- DentalSegmentator and ToothSeg checkpoints are downloaded separately on
+  first use and are CC BY 4.0. Their attribution notices are under
+  `resources/third_party/licenses/`.
+- dcm2niix, the DICOM runtime libraries, Python dependencies, the bundled
+  Python runtime, Sample 1, and sample-derived images keep their respective
+  notices and terms.
+
+The macOS app bundles the wrapper `LICENSE` and `NOTICE`, a strict generated
+dependency inventory, and the relevant third-party notices under
+`Contents/Resources/`. The complete audit and public-release blockers are in
+[`docs/41_OPEN_SOURCE_LICENSE_AUDIT.md`](docs/41_OPEN_SOURCE_LICENSE_AUDIT.md).
+
+Please report bugs through
+[GitHub Issues](https://github.com/ainem-m/segmentation_w_mps/issues). Do not
+attach patient data, DICOM files, or logs containing identifying information.
 
 目的: **Apple Silicon Macで歯科CBCT由来volumeをローカル処理し、offline HTML 3Dプレビューで確認できるMac Preview** まで進める。
 

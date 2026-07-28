@@ -34,6 +34,7 @@ Manual maintenance metadata
 9. [ToothSegなどの追加機能](#9-toothsegなどの追加機能)
 10. [失敗時の対処](#10-失敗時の対処)
 11. [データの扱い](#11-データの扱い)
+12. [ライセンスとバグ報告](#12-ライセンスとバグ報告)
 
 ## 1. このアプリでできること
 
@@ -356,6 +357,21 @@ ToothSegだけが失敗した場合も、先に作成した歯列・顎骨の結
 - 患者名、患者ID、施設名、撮影日時が写っていないか確認する
 - ログにローカルファイルの場所が含まれる可能性を考慮する
 - マニュアル用画像にはSampleまたはDEBUG用画面だけを使う
+
+## 12. ライセンスとバグ報告
+
+アプリ本体は無料のオープンソースソフトウェアで、Apache License 2.0
+により無保証で提供されます。アプリ内の`Contents/Resources/LICENSE`
+と`NOTICE`で本文と適用範囲を確認できます。
+
+TotalSegmentator、DentalSegmentator、ToothSeg、dcm2niix、Python依存物、
+Sample 1、Sampleやモデルから作られた画像にはそれぞれ別の条件が
+適用されます。第三者のライセンスと帰属表示は
+`Contents/Resources/licenses/`と`THIRD_PARTY_NOTICES.txt`にあります。
+
+バグは`https://github.com/ainem-m/segmentation_w_mps/issues`へ報告して
+ください。患者データ、DICOM、CT画像、患者識別情報を含むログは添付
+しないでください。
 
 <!--
 Maintenance checklist

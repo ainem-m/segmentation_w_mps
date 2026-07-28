@@ -1,0 +1,35 @@
+DentalSegmentator model attribution notice
+
+Model checkpoints
+-----------------
+Title: DentalSegmentator nnU-Net pretrained model for CBCT image segmentation
+Creator: Gauthier Dot
+Creator ORCID: https://orcid.org/0000-0003-2014-2623
+DOI: https://doi.org/10.5281/zenodo.10829675
+Source: https://zenodo.org/records/10829675
+File: Dataset112_DentalSegmentator_v100.zip
+Published checksum: MD5 b71cd5230168d28a4f71b078265b76be
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License URL: https://creativecommons.org/licenses/by/4.0/
+
+The model checkpoints are downloaded separately from Zenodo on first use and
+are not part of the repository or the macOS application bundle. The application
+verifies the published checksum and records the DOI, source, checksum, and
+license in local model metadata.
+
+Changes made by this project
+----------------------------
+The downloaded checkpoint parameters are not modified. During installation,
+the published nnU-Net archive is verified and installed into the application's
+private model directory. This project provides independent Apple Silicon MPS
+inference integration, input/output conversion, progress reporting, and local
+macOS application glue around the checkpoint.
+
+Related code
+------------
+The separately maintained SlicerDentalSegmentator project is available at:
+https://github.com/gaudot/SlicerDentalSegmentator
+
+Its code is licensed under the Apache License 2.0. This application is an
+independent, unofficial integration and does not claim endorsement by the
+model creator or upstream projects.

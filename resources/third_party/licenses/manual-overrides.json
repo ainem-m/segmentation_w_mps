@@ -94,16 +94,6 @@
       "reviewed_at": "2026-07-08",
       "decision": "accepted",
       "reason": "Attention terms are from bundled third-party notices, including dynamically linked libraries such as libquadmath. The wheel includes LICENSE.txt and component license files, and the inventory copies them."
-    },
-    {
-      "package": "totalsegmentator-wrapper-mac",
-      "version": "0.2.1",
-      "license": "LicenseRef-Proprietary",
-      "source_url": "local pyproject.toml",
-      "reviewed_at": "2026-07-08",
-      "decision": "accepted",
-      "reason": "This is the first-party wrapper package included in the signed app bundle.",
-      "license_file": "TotalSegmentatorWrapperMac-Proprietary-License.txt"
     }
   ]
 }

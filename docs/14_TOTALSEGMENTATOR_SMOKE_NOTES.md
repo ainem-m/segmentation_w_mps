@@ -73,7 +73,7 @@ Weights downloaded:
 ```text
 craniofacial_structures: ID 115, Dataset115_mandible
 teeth: ID 113, Dataset113_ToothFairy3
-crop helper: ID 298, Dataset298_TotalSegmentator_total_6mm_1559subj
+robust crop helper: ID 297, Dataset297_TotalSegmentator_total_3mm_1559subj
 ```
 
 ## craniofacial_structures Result

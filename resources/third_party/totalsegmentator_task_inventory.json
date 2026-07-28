@@ -1,0 +1,29 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.totalsegmentator_task_inventory.v1",
+  "upstream": "https://github.com/wasserth/TotalSegmentator",
+  "upstream_version": "2.14.0",
+  "upstream_license": "Apache-2.0",
+  "audited_at": "2026-07-28",
+  "user_selectable_tasks": [
+    {
+      "name": "craniofacial_structures",
+      "task_id": 115,
+      "requires_upstream_license_gate": false
+    },
+    {
+      "name": "teeth",
+      "task_id": 113,
+      "requires_upstream_license_gate": false
+    }
+  ],
+  "helper_weights": [
+    {
+      "name": "total",
+      "task_id": 297,
+      "purpose": "3 mm robust-crop helper",
+      "user_selectable": false,
+      "requires_upstream_license_gate": false
+    }
+  ],
+  "excluded": "All other TotalSegmentator tasks, including every task in the upstream Commercial models section"
+}

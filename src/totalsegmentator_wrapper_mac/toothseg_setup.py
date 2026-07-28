@@ -13,8 +13,16 @@ from uuid import uuid4
 
 
 MODEL_LICENSE = "CC-BY-4.0"
+MODEL_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 MODEL_DOI = "10.5281/zenodo.14893540"
 MODEL_SOURCE = "Zenodo"
+MODEL_CREATORS = (
+    "Fabian Isensee",
+    "Niels van Nistelrooij",
+    "Lars Krämer",
+    "Shankeeth Vinayahalingam",
+)
+MODEL_CHECKPOINTS_MODIFIED = False
 MODEL_STATUS_SCHEMA = "totalsegmentator_wrapper_mac.toothseg_model_status.v1"
 MODEL_SETUP_SCHEMA = "totalsegmentator_wrapper_mac.toothseg_model_setup.v1"
 PREP_PROGRESS_PREFIX = "TOOTHSEG_PREP_PROGRESS "
@@ -125,7 +133,10 @@ def install_toothseg_model(
         "dataset_ids": [branch[0] for branch in BRANCHES],
         "dataset_names": [branch[1] for branch in BRANCHES],
         "license": MODEL_LICENSE,
+        "license_url": MODEL_LICENSE_URL,
         "doi": MODEL_DOI,
+        "creators": list(MODEL_CREATORS),
+        "checkpoints_modified": MODEL_CHECKPOINTS_MODIFIED,
         "downloaded": False,
         "installed": False,
         "archive_removed_after_install": False,

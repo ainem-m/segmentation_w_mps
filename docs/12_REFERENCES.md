@@ -21,12 +21,20 @@ Related issue:
 ## TotalSegmentator
 
 - GitHub: https://github.com/wasserth/TotalSegmentator
+- Audited source tag: `v2.14.0`
 - README notes:
   - Works on Ubuntu, Mac, Windows; CPU and GPU.
   - Input can be NIfTI or a folder/zip with all DICOM slices of one patient.
   - M-series Mac can use `--device mps` for speedup.
   - It is not a medical device and not intended for clinical usage.
   - Openly available Apache-2.0 subtasks include dental-relevant tasks such as `craniofacial_structures` and `teeth`.
+- Pinned source audit:
+  - `craniofacial_structures` maps to task ID 115.
+  - `teeth` maps to task ID 113.
+  - both appear before the upstream `Commercial models` section and do not call
+    the upstream license gate.
+  - robust crop uses open 3 mm `total` helper ID 297; ID 298 is the 6 mm
+    non-robust helper and is not predownloaded by this app.
 
 ## SlicerTotalSegmentator
 

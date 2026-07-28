@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WRAPPER_LICENSE = ROOT / "LICENSE"
+WRAPPER_NOTICE = ROOT / "NOTICE"
 SWIFT_APP_DIR = ROOT / "native" / "macos" / "TotalSegmentatorWrapperForMac"
 BUILD_SCRIPT = ROOT / "scripts" / "build_mac_app.sh"
 WHEEL_BUILD_SCRIPT = ROOT / "scripts" / "build_mac_wheel.sh"
@@ -22,8 +25,11 @@ SAMPLE1_NOTICES = SAMPLE1_ROOT / "THIRD_PARTY_NOTICES.txt"
 TOTALSEGMENTATOR_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "TotalSegmentator-Apache-2.0.txt"
 DCM2NIIX_LICENSE = ROOT / "resources" / "third_party" / "licenses" / "dcm2niix-license.txt"
 TOOTHSEG_NOTICE = ROOT / "resources" / "third_party" / "licenses" / "ToothSeg-NOTICE.txt"
+DENTALSEG_NOTICE = ROOT / "resources" / "third_party" / "licenses" / "DentalSegmentator-NOTICE.txt"
 MANUAL_LICENSE_OVERRIDES = ROOT / "resources" / "third_party" / "licenses" / "manual-overrides.json"
 LICENSE_INVENTORY_SCRIPT = ROOT / "scripts" / "generate_third_party_license_inventory.py"
+LICENSE_DISTRIBUTION_SCRIPT = ROOT / "scripts" / "verify_license_distribution.py"
+TOTALSEGMENTATOR_TASK_INVENTORY = ROOT / "resources" / "third_party" / "totalsegmentator_task_inventory.json"
 DICOM_RUNTIME_LICENSES = (
     "GDCM-BSD-3-Clause.txt",
     "GDCM-IJG-JPEG-README.txt",
@@ -35,6 +41,41 @@ DICOM_RUNTIME_LICENSES = (
 
 
 class MacAppPackagingTests(unittest.TestCase):
+    def test_wrapper_source_license_is_apache_2_0_with_explicit_scope(self) -> None:
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        license_text = WRAPPER_LICENSE.read_text(encoding="utf-8")
+        notice = WRAPPER_NOTICE.read_text(encoding="utf-8")
+
+        self.assertIn('license = "Apache-2.0"', pyproject)
+        self.assertIn('license-files = ["LICENSE", "NOTICE"]', pyproject)
+        self.assertIn("setuptools>=77", pyproject)
+        self.assertIn("Apache License", license_text)
+        self.assertIn("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION", license_text)
+        self.assertIn("Third-party software", notice)
+        self.assertIn("not relicensed", notice)
+        self.assertNotIn("LicenseRef-Proprietary", pyproject + notice)
+
+    def test_totalsegmentator_public_task_inventory_matches_runtime_allowlists(self) -> None:
+        from totalsegmentator_wrapper_mac.cli import TASKS
+        from totalsegmentator_wrapper_mac.setup_manager import DEFAULT_TOTALSEG_WEIGHT_TASK_IDS
+
+        inventory = json.loads(TOTALSEGMENTATOR_TASK_INVENTORY.read_text(encoding="utf-8"))
+        user_tasks = inventory["user_selectable_tasks"]
+        helpers = inventory["helper_weights"]
+        self.assertEqual(tuple(item["name"] for item in user_tasks), TASKS)
+        self.assertEqual(
+            set(DEFAULT_TOTALSEG_WEIGHT_TASK_IDS),
+            {item["task_id"] for item in user_tasks} | {item["task_id"] for item in helpers},
+        )
+        self.assertFalse(
+            any(item["requires_upstream_license_gate"] for item in [*user_tasks, *helpers])
+        )
+        template = json.loads((ROOT / "templates" / "model_manifest.example.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["id"] for item in template["engines"][0]["tasks"]],
+            list(TASKS),
+        )
+
     def test_build_mac_app_script_has_expected_bundle_steps(self) -> None:
         text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
@@ -68,6 +109,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("resources/model_comparison", text)
         self.assertIn('"${RESOURCES_DIR}/model_comparison"', text)
         self.assertIn('"model_comparison": {', text)
+        self.assertIn('"provenance": "model_comparison/ASSET_PROVENANCE.json"', text)
         self.assertIn('"toothseg": "model_comparison/toothseg.png"', text)
         self.assertIn("non-clinical preview", text)
         self.assertIn("sample1/surface_preview/index.html", text)
@@ -76,6 +118,17 @@ class MacAppPackagingTests(unittest.TestCase):
         for image_name in ("totalseg", "dentalseg", "individual", "toothseg"):
             with self.subTest(image_name=image_name):
                 self.assertTrue((ROOT / "resources" / "model_comparison" / f"{image_name}.png").is_file())
+        provenance = json.loads(
+            (ROOT / "resources" / "model_comparison" / "ASSET_PROVENANCE.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertFalse(provenance["apache_2_0_relicensed"])
+        for image_name, metadata in provenance["files"].items():
+            actual = hashlib.sha256(
+                (ROOT / "resources" / "model_comparison" / image_name).read_bytes()
+            ).hexdigest()
+            self.assertEqual(actual, metadata["sha256"])
         self.assertIn("setup_manifest.json", text)
         self.assertIn('"ui_frontend": "swiftui"', text)
         self.assertNotIn("legacy_" + "tk_ui", text)
@@ -127,12 +180,24 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"dicom_normalizer_libraries": "bin/lib"', text)
         self.assertIn('find "${RESOURCES_DIR}/bin/lib" -type f -name "*.dylib"', text)
         self.assertIn('"dcm2niix": "bin/dcm2niix"', text)
+        self.assertIn("WRAPPER_LICENSE_PATH", text)
+        self.assertIn('cp "${WRAPPER_LICENSE_PATH}" "${RESOURCES_DIR}/LICENSE"', text)
+        self.assertIn('cp "${WRAPPER_NOTICE_PATH}" "${RESOURCES_DIR}/NOTICE"', text)
         self.assertIn("TOTALSEGMENTATOR_LICENSE_PATH", text)
         self.assertIn("resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt", text)
         self.assertIn('cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"', text)
         self.assertIn('"totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt"', text)
+        self.assertIn(
+            '"totalsegmentator_task_inventory": "licenses/TotalSegmentator-task-inventory.json"',
+            text,
+        )
         self.assertIn('cp "${TOOTHSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/ToothSeg-NOTICE.txt"', text)
+        self.assertIn(
+            'cp "${DENTALSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/DentalSegmentator-NOTICE.txt"',
+            text,
+        )
         self.assertIn('"toothseg_notice": "licenses/ToothSeg-NOTICE.txt"', text)
+        self.assertIn('"dentalsegmentator_notice": "licenses/DentalSegmentator-NOTICE.txt"', text)
         self.assertIn("Separately downloaded model license: CC BY 4.0", text)
         self.assertIn("DCM2NIIX_LICENSE_PATH", text)
         self.assertIn("resources/third_party/licenses/dcm2niix-license.txt", text)
@@ -146,18 +211,26 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("--site-path", text)
         self.assertIn('pip install -c "${CONSTRAINTS_PATH}" "${WHEEL_PATH}[dicom,mps,dentalseg,toothseg]"', text)
         self.assertIn("--fail-on-unresolved", text)
+        self.assertIn('--first-party-package "totalsegmentator-wrapper-mac"', text)
         self.assertIn('"third_party_licenses": {', text)
         self.assertIn('"inventory": "licenses/third_party_license_inventory.json"', text)
         self.assertIn('"summary": "licenses/THIRD_PARTY_LICENSES.txt"', text)
         self.assertIn('"unresolved_count": ${LICENSE_UNRESOLVED_COUNT}', text)
         self.assertIn('"third_party_license_inventory": "licenses/third_party_license_inventory.json"', text)
         self.assertIn('"third_party_license_summary": "licenses/THIRD_PARTY_LICENSES.txt"', text)
+        self.assertIn('"expression": "Apache-2.0"', text)
+        self.assertIn('"wrapper_license": "LICENSE"', text)
+        self.assertIn('"wrapper_notice": "NOTICE"', text)
         self.assertIn("THIRD_PARTY_NOTICES.txt", text)
         self.assertIn("TotalSegmentator", text)
         self.assertIn("Apache-2.0", text)
         self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", text)
         self.assertIn("Contents/Resources/licenses/dcm2niix-license.txt", text)
         self.assertIn("Contents/Resources/licenses/third_party_license_inventory.json", text)
+        self.assertIn("Contents/Resources/licenses/DentalSegmentator-NOTICE.txt", text)
+        self.assertIn("Contents/Resources/LICENSE", text)
+        self.assertIn("Contents/Resources/NOTICE", text)
+        self.assertIn("verify_license_distribution.py", text)
         self.assertNotIn("See the upstream license.txt", text)
         self.assertIn("sample1_manifest_sha256", text)
         self.assertIn("dependency_set_id", text)
@@ -460,10 +533,16 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("Apache License", license_text)
         self.assertIn("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION", license_text)
         self.assertIn("Redistribution", license_text)
+        for relative, metadata in manifest["derived_files"].items():
+            with self.subTest(relative=relative):
+                actual = hashlib.sha256((SAMPLE1_ROOT / relative).read_bytes()).hexdigest()
+                self.assertEqual(actual, metadata["sha256"])
+                self.assertIn(actual, notices)
 
     def test_static_third_party_license_files_are_present(self) -> None:
         dcm2niix_license = DCM2NIIX_LICENSE.read_text(encoding="utf-8")
         toothseg_notice = TOOTHSEG_NOTICE.read_text(encoding="utf-8")
+        dentalseg_notice = DENTALSEG_NOTICE.read_text(encoding="utf-8")
         manual_overrides = json.loads(MANUAL_LICENSE_OVERRIDES.read_text(encoding="utf-8"))
         inventory_script = LICENSE_INVENTORY_SCRIPT.read_text(encoding="utf-8")
         override_keys = {
@@ -485,6 +564,10 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("https://creativecommons.org/licenses/by/4.0/", toothseg_notice)
         self.assertIn("Changes made by this project", toothseg_notice)
         self.assertNotIn("Copyright (c) 2026", toothseg_notice)
+        self.assertIn("10.5281/zenodo.10829675", dentalseg_notice)
+        self.assertIn("Gauthier Dot", dentalseg_notice)
+        self.assertIn("https://creativecommons.org/licenses/by/4.0/", dentalseg_notice)
+        self.assertIn("checkpoint parameters are not modified", dentalseg_notice)
         self.assertEqual(
             manual_overrides["schema"],
             "totalsegmentator_wrapper_mac.manual_license_overrides.v1",
@@ -498,11 +581,21 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn(("matplotlib", "3.11.0", "accepted"), override_keys)
         self.assertIn(("scipy", "1.17.1", "accepted"), override_keys)
         self.assertIn(("scipy", "1.18.0", "accepted"), override_keys)
-        self.assertIn(("totalsegmentator-wrapper-mac", "0.2.1", "accepted"), override_keys)
+        self.assertNotIn(("totalsegmentator-wrapper-mac", "0.2.1", "accepted"), override_keys)
         self.assertIn("third_party_license_inventory.v1", inventory_script)
         self.assertIn("attention_license_requires_review", inventory_script)
         self.assertIn("license_metadata_unknown", inventory_script)
         self.assertIn("license_text_missing", inventory_script)
+
+    def test_distribution_license_verifier_checks_wheel_app_and_dmg(self) -> None:
+        text = LICENSE_DISTRIBUTION_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("License-Expression: Apache-2.0", text)
+        self.assertIn("verify_wheel", text)
+        self.assertIn("verify_app", text)
+        self.assertIn("verify_dmg", text)
+        self.assertIn("LicenseRef-Proprietary", text)
+        self.assertIn("unmapped native library", text)
 
     def test_bundled_sample1_metadata_does_not_expose_developer_local_paths(self) -> None:
         checked = [
@@ -563,6 +656,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('scripts/build_mac_app.sh', build_text)
         self.assertIn("chmod -R u+rwX", build_text)
         self.assertIn('ditto "${APP_PATH}" "${DMG_STAGING}/${APP_NAME}.app"', build_text)
+        self.assertIn('cp "${ROOT}/LICENSE" "${DMG_STAGING}/LICENSE.txt"', build_text)
+        self.assertIn('cp "${ROOT}/NOTICE" "${DMG_STAGING}/NOTICE.txt"', build_text)
         self.assertIn("README.txt", build_text)
         self.assertIn("TEST_ACCOUNT_INSTALL.txt", build_text)
         self.assertIn("ln -s /Applications", build_text)
@@ -594,6 +689,9 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt", build_text)
         self.assertIn("Contents/Resources/licenses/dcm2niix-license.txt", build_text)
         self.assertIn("Contents/Resources/licenses/third_party_license_inventory.json", build_text)
+        self.assertIn("Contents/Resources/licenses/DentalSegmentator-NOTICE.txt", build_text)
+        self.assertIn("Contents/Resources/licenses/ToothSeg-NOTICE.txt", build_text)
+        self.assertIn("verify_license_distribution.py", build_text)
         self.assertIn("精度評価用データではありません", build_text)
         self.assertIn("管理者権限", build_text)
         self.assertIn("DICOM、CT", build_text)
@@ -660,10 +758,16 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("dcm2niix_source", text)
         self.assertIn("third_party_licenses", text)
         self.assertIn("bundled_dcm2niix_exists", text)
+        self.assertIn("manifest_license_apache_2_0", text)
+        self.assertIn("wrapper_license_exists", text)
+        self.assertIn("wrapper_notice_exists", text)
         self.assertIn("totalsegmentator_license_exists", text)
+        self.assertIn("dentalsegmentator_notice_exists", text)
+        self.assertIn("toothseg_notice_exists", text)
         self.assertIn("dcm2niix_license_exists", text)
         self.assertIn("license_inventory_exists", text)
         self.assertIn("license_inventory_unresolved_zero", text)
+        self.assertIn("license_surfaces_no_old_first_party_markers", text)
         self.assertIn("update_allowed_hosts", text)
         self.assertIn("sample1_input_exists", text)
         self.assertIn("sample1_surface_preview_exists", text)
@@ -702,7 +806,13 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("manifest_has_dcm2niix_version", text)
         self.assertIn("manifest_has_dcm2niix_source", text)
         self.assertIn("bundled_dcm2niix_exists", text)
+        self.assertIn("manifest_license_apache_2_0", text)
+        self.assertIn("wrapper_license_exists", text)
+        self.assertIn("wrapper_notice_exists", text)
+        self.assertIn("dentalsegmentator_notice_exists", text)
+        self.assertIn("toothseg_notice_exists", text)
         self.assertIn("license_inventory_unresolved_zero", text)
+        self.assertIn("license_surfaces_no_old_first_party_markers", text)
         self.assertNotIn("sudo", text)
         self.assertNotIn("brew", text)
 

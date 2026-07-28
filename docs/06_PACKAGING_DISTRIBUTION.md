@@ -120,6 +120,12 @@ OpenSSL are signed from the inner dylibs outward and included in the app's
 notarization boundary. Their license texts are copied into
 `Contents/Resources/licenses/`.
 
+The wrapper's own Apache-2.0 `LICENSE` and scope `NOTICE` are stored separately
+at `Contents/Resources/LICENSE` and `Contents/Resources/NOTICE`. They do not
+replace or absorb the third-party inventory. DentalSegmentator and ToothSeg
+model notices are bundled even though their CC BY 4.0 checkpoints are downloaded
+only on first use.
+
 `Contents/MacOS/TotalSegmentatorWrapperForMac` is now a SwiftUI executable. It owns both the
 Setup window and the main workflow, while invoking the existing Python backend
 through argv-list subprocess calls. It is intentionally not a shell-script
@@ -320,6 +326,9 @@ Rules:
 - Download weights on demand.
 - Do not bundle Slicer.
 - Do not bundle every TotalSegmentator task.
+- Expose only the audited open tasks `craniofacial_structures` (115) and `teeth`
+  (113). The 297 weight is the open 3 mm `total` helper used by robust crop, not
+  another user-selectable task.
 - Apple Silicon only for first app.
 ```
 

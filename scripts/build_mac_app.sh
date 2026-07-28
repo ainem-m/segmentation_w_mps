@@ -36,7 +36,11 @@ BUNDLE_IDENTIFIER="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER:-jp.chino.to
 NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-}"
 APP_ENTITLEMENTS="${ROOT}/resources/entitlements/app.entitlements"
 PYTHON_ENTITLEMENTS="${ROOT}/resources/entitlements/python-runtime.entitlements"
+WRAPPER_LICENSE_PATH="${ROOT}/LICENSE"
+WRAPPER_NOTICE_PATH="${ROOT}/NOTICE"
 TOTALSEGMENTATOR_LICENSE_PATH="${ROOT}/resources/third_party/licenses/TotalSegmentator-Apache-2.0.txt"
+TOTALSEGMENTATOR_TASK_INVENTORY_PATH="${ROOT}/resources/third_party/totalsegmentator_task_inventory.json"
+DENTALSEG_NOTICE_PATH="${ROOT}/resources/third_party/licenses/DentalSegmentator-NOTICE.txt"
 TOOTHSEG_NOTICE_PATH="${ROOT}/resources/third_party/licenses/ToothSeg-NOTICE.txt"
 DCM2NIIX_LICENSE_PATH="${ROOT}/resources/third_party/licenses/dcm2niix-license.txt"
 DICOM_RUNTIME_LICENSE_PATHS=(
@@ -234,8 +238,20 @@ WHEEL_PATH="$(ls -1t "${DIST_DIR}"/totalsegmentator_wrapper_mac-*.whl | head -n 
 NORMALIZER_PATH="${ROOT}/build/dicom_normalizer/totalsegmentator-wrapper-dicom-normalizer"
 CONSTRAINTS_PATH="${ROOT}/constraints/macos-arm64-py312.txt"
 SAMPLE1_MANIFEST_PATH="${ROOT}/resources/sample1/sample_manifest.json"
+if [[ ! -f "${WRAPPER_LICENSE_PATH}" || ! -f "${WRAPPER_NOTICE_PATH}" ]]; then
+  echo "Wrapper Apache-2.0 LICENSE or NOTICE is missing." >&2
+  exit 1
+fi
 if [[ ! -f "${TOTALSEGMENTATOR_LICENSE_PATH}" ]]; then
   echo "TotalSegmentator Apache-2.0 license text is missing: ${TOTALSEGMENTATOR_LICENSE_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${TOTALSEGMENTATOR_TASK_INVENTORY_PATH}" ]]; then
+  echo "TotalSegmentator task inventory is missing: ${TOTALSEGMENTATOR_TASK_INVENTORY_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${DENTALSEG_NOTICE_PATH}" || ! -f "${TOOTHSEG_NOTICE_PATH}" ]]; then
+  echo "DentalSegmentator or ToothSeg attribution notice is missing." >&2
   exit 1
 fi
 if [[ ! -f "${DCM2NIIX_LICENSE_PATH}" ]]; then
@@ -288,7 +304,11 @@ cp "${CONSTRAINTS_PATH}" "${RESOURCES_DIR}/constraints/"
 cp "${NORMALIZER_PATH}" "${RESOURCES_DIR}/bin/totalsegmentator-wrapper-dicom-normalizer"
 cp -R "${ROOT}/build/dicom_normalizer/lib" "${RESOURCES_DIR}/bin/lib"
 cp "${DCM2NIIX_PATH}" "${RESOURCES_DIR}/bin/dcm2niix"
+cp "${WRAPPER_LICENSE_PATH}" "${RESOURCES_DIR}/LICENSE"
+cp "${WRAPPER_NOTICE_PATH}" "${RESOURCES_DIR}/NOTICE"
 cp "${TOTALSEGMENTATOR_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-Apache-2.0.txt"
+cp "${TOTALSEGMENTATOR_TASK_INVENTORY_PATH}" "${RESOURCES_DIR}/licenses/TotalSegmentator-task-inventory.json"
+cp "${DENTALSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/DentalSegmentator-NOTICE.txt"
 cp "${TOOTHSEG_NOTICE_PATH}" "${RESOURCES_DIR}/licenses/ToothSeg-NOTICE.txt"
 cp "${DCM2NIIX_LICENSE_PATH}" "${RESOURCES_DIR}/licenses/dcm2niix-license.txt"
 for license_path in "${DICOM_RUNTIME_LICENSE_PATHS[@]}"; do
@@ -324,6 +344,7 @@ LICENSE_INVENTORY_ARGS=(
   --output-dir "${RESOURCES_DIR}/licenses"
   --dependency-set-id "${DEPENDENCY_SET_ID}"
   --manual-overrides "${LICENSE_MANUAL_OVERRIDES_PATH}"
+  --first-party-package "totalsegmentator-wrapper-mac"
   --fail-on-unresolved
 )
 if [[ "${PYTHON_RUNTIME_STRATEGY}" == "bundled_python312" ]]; then
@@ -374,6 +395,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
   <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${APP_VERSION}</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright 2026 TotalSegmentator Wrapper for Mac contributors. Apache-2.0.</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSArchitecturePriority</key>
@@ -397,6 +420,12 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
   "architecture": "arm64",
   "dependency_set_id": "${DEPENDENCY_SET_ID}",
   "bundle_identifier": ${BUNDLE_IDENTIFIER_JSON},
+  "license": {
+    "expression": "Apache-2.0",
+    "text": "LICENSE",
+    "notice": "NOTICE",
+    "scope": "First-party wrapper code, documentation, and resources except where separately noted"
+  },
   "signing_mode": "${SIGNING_MODE}",
   "notarization_profile_name": ${NOTARY_PROFILE_JSON},
   "update_manifest_url": ${UPDATE_MANIFEST_URL_JSON},
@@ -433,12 +462,16 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     "app_support_directory": "~/Library/Application Support/TotalSegmentatorWrapperMac"
   },
   "bundled": {
+    "wrapper_license": "LICENSE",
+    "wrapper_notice": "NOTICE",
     "wheel": "$(basename "${WHEEL_PATH}")",
     "constraints": "constraints/macos-arm64-py312.txt",
     "dicom_normalizer": "bin/totalsegmentator-wrapper-dicom-normalizer",
     "dicom_normalizer_libraries": "bin/lib",
     "dcm2niix": "bin/dcm2niix",
     "totalsegmentator_license": "licenses/TotalSegmentator-Apache-2.0.txt",
+    "totalsegmentator_task_inventory": "licenses/TotalSegmentator-task-inventory.json",
+    "dentalsegmentator_notice": "licenses/DentalSegmentator-NOTICE.txt",
     "toothseg_notice": "licenses/ToothSeg-NOTICE.txt",
     "dcm2niix_license": "licenses/dcm2niix-license.txt",
     "third_party_license_inventory": "licenses/third_party_license_inventory.json",
@@ -453,6 +486,7 @@ cat > "${RESOURCES_DIR}/setup_manifest.json" <<JSON
     },
     "model_comparison": {
       "root": "model_comparison",
+      "provenance": "model_comparison/ASSET_PROVENANCE.json",
       "totalsegmentator": "model_comparison/totalseg.png",
       "dentalsegmentator": "model_comparison/dentalseg.png",
       "individual_teeth_beta": "model_comparison/individual.png",
@@ -469,6 +503,13 @@ TotalSegmentator Wrapper for Mac third-party notices
 TotalSegmentator Wrapper for Mac is an unofficial Mac wrapper powered by TotalSegmentator.
 It is not the official TotalSegmentator application or project.
 
+Wrapper license
+- The wrapper's original code, documentation, and first-party resources are Apache-2.0.
+- License: Contents/Resources/LICENSE
+- Notice and scope boundary: Contents/Resources/NOTICE
+- Third-party software, models, sample data, derived sample/model images, and marks
+  retain their respective terms and are not relicensed by the wrapper.
+
 License inventory
 - Inventory JSON: Contents/Resources/licenses/third_party_license_inventory.json
 - License summary: Contents/Resources/licenses/THIRD_PARTY_LICENSES.txt
@@ -477,7 +518,16 @@ License inventory
 TotalSegmentator
 - Upstream: https://github.com/wasserth/TotalSegmentator
 - License: Apache-2.0
+- Audited application tasks: craniofacial_structures (115), teeth (113)
+- Robust-crop helper model: open total 3 mm task ID 297
 - Bundled license text: Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt
+
+DentalSegmentator
+- Model source: https://doi.org/10.5281/zenodo.10829675
+- Creator: Gauthier Dot
+- Separately downloaded model license: CC BY 4.0
+- Attribution, license URL, checksum, and change status:
+  Contents/Resources/licenses/DentalSegmentator-NOTICE.txt
 
 ToothSeg
 - Upstream: https://github.com/MIC-DKFZ/ToothSeg
@@ -505,9 +555,14 @@ GDCM DICOM runtime
 
 Sample 1 notices remain in Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt.
 Comparison images in Contents/Resources/model_comparison are non-clinical preview
-renders derived from bundled Sample 1. The same Sample 1 source notices apply.
+renders derived from bundled Sample 1 and model outputs. The Sample 1 source
+notice and the applicable TotalSegmentator, DentalSegmentator, or ToothSeg model
+notice apply. Exact hashes and generators are recorded in
+Contents/Resources/model_comparison/ASSET_PROVENANCE.json.
 TotalSegmentator Wrapper for Mac is a non-clinical preview and is not for diagnosis or treatment planning.
 TXT
+
+"${PYTHON_BIN}" "${ROOT}/scripts/verify_license_distribution.py" --app "${APP_DIR}"
 
 if command -v xattr >/dev/null 2>&1; then
   find "${APP_DIR}" -type d -exec chmod u+rwx,go+rx {} +

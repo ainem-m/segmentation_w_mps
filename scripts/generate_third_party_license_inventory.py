@@ -157,6 +157,7 @@ def collect_package_inventory(
     output_dir: Path,
     site_paths: list[Path],
     manual_overrides_path: Path,
+    first_party_packages: set[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     overrides = load_manual_overrides(manual_overrides_path)
     if site_paths:
@@ -170,6 +171,7 @@ def collect_package_inventory(
     for dist in sorted(distributions, key=lambda d: (d.metadata.get("Name") or "").lower()):
         name = dist.metadata.get("Name") or "UNKNOWN"
         version = dist.version
+        scope = "first-party" if normalize_name(name) in first_party_packages else "third-party"
         license_summary, license_source, classifiers = license_metadata(dist)
         override = find_override(overrides, name, version)
         package_dir = packages_dir / f"{normalize_name(name)}-{safe_name(version)}"
@@ -226,6 +228,7 @@ def collect_package_inventory(
             {
                 "name": name,
                 "version": version,
+                "scope": scope,
                 "license": effective_license,
                 "license_source": "manual_override" if override and override.accepted else license_source,
                 "classifiers": classifiers,
@@ -273,10 +276,17 @@ def write_summary(output_dir: Path, inventory: dict[str, Any]) -> None:
         f"Dependency set: {inventory['dependency_set_id']}",
         f"Unresolved items: {inventory['unresolved_count']}",
         "",
-        "Python packages:",
+        "Third-party Python packages:",
     ]
     for package in inventory["packages"]:
+        if package["scope"] != "third-party":
+            continue
         lines.append(f"- {package['name']} {package['version']}: {package['license'] or 'UNKNOWN'}")
+    first_party = [package for package in inventory["packages"] if package["scope"] == "first-party"]
+    if first_party:
+        lines.extend(["", "First-party packages (classified separately):"])
+        for package in first_party:
+            lines.append(f"- {package['name']} {package['version']}: {package['license'] or 'UNKNOWN'}")
     if inventory["python_runtime_license_files"]:
         lines.extend(["", "Python runtime license files:"])
         for item in inventory["python_runtime_license_files"]:
@@ -300,6 +310,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=Path,
         default=Path("resources/third_party/licenses/manual-overrides.json"),
     )
+    parser.add_argument(
+        "--first-party-package",
+        action="append",
+        default=[],
+        help="Package name to classify as first-party while retaining strict license validation.",
+    )
     parser.add_argument("--fail-on-unresolved", action="store_true")
     return parser.parse_args(argv)
 
@@ -314,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=output_dir,
         site_paths=args.site_path,
         manual_overrides_path=args.manual_overrides,
+        first_party_packages={normalize_name(name) for name in args.first_party_package},
     )
     runtime_files, runtime_unresolved = collect_runtime_licenses(output_dir, args.python_runtime_root)
     unresolved.extend(runtime_unresolved)
@@ -326,6 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         "site_paths": [str(path) for path in args.site_path],
         "python_runtime_root": str(args.python_runtime_root) if args.python_runtime_root else None,
         "manual_overrides": str(args.manual_overrides),
+        "first_party_packages": sorted(
+            package["name"] for package in packages if package["scope"] == "first-party"
+        ),
         "packages": packages,
         "python_runtime_license_files": runtime_files,
         "unresolved": unresolved,
