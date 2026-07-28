@@ -202,6 +202,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertTrue((output_dir / "index.html").exists())
             self.assertTrue((output_dir / "viewer_bundle.js").exists())
             self.assertTrue((output_dir / "preview_summary.json").exists())
+            self.assertTrue((output_dir / "performance_profile.json").exists())
             for name in [
                 "all_nonzero_smooth.stl",
                 "dental_hard_tissue_smooth.stl",
@@ -213,6 +214,27 @@ class SurfacePreviewTests(unittest.TestCase):
 
             saved_summary = json.loads(
                 (output_dir / "preview_summary.json").read_text(encoding="utf-8")
+            )
+            profile = json.loads(
+                (output_dir / "performance_profile.json").read_text(encoding="utf-8")
+            )
+            self.assertGreater(profile["total_seconds"], 0.0)
+            self.assertLessEqual(
+                profile["milestones_seconds"]["preview_ready"],
+                profile["milestones_seconds"]["all_outputs_complete"],
+            )
+            self.assertEqual(
+                {
+                    "nifti_load",
+                    "label_scan_and_mask",
+                    "marching_cubes",
+                    "smoothing",
+                    "stl_write",
+                    "group_mesh_generation",
+                    "browser_mesh_generation",
+                    "json_html_write",
+                },
+                set(profile["stages_seconds"]),
             )
             self.assertEqual(saved_summary["html_viewer"], str((output_dir / "index.html").resolve()))
             self.assertEqual(

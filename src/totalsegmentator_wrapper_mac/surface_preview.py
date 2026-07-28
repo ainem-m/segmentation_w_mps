@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 import struct
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import nibabel as nib
 import numpy as np
@@ -29,6 +31,7 @@ GROUP_COLORS = {
 PREVIEW_STEP_SIZE_WARNING_THRESHOLD = 4
 PREVIEW_STEP_SIZE_WARNING = "small structures may be under-sampled"
 VIEWER_BUNDLE_FILENAME = "viewer_bundle.js"
+PERFORMANCE_PROFILE_FILENAME = "performance_profile.json"
 
 CRANIOFACIAL_SURFACE_LABELS: tuple[tuple[str, int, str], ...] = (
     ("mandible.nii.gz", 1, "lower_jawbone"),
@@ -44,6 +47,42 @@ class SmoothingConfig:
     iterations: int
     lambda_value: float
     mu: float
+
+
+class _StageProfiler:
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._events: list[dict[str, Any]] = []
+        self._milestones: dict[str, float] = {}
+
+    @contextmanager
+    def measure(self, stage: str, **details: Any) -> Iterator[None]:
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._events.append(
+                {
+                    "stage": stage,
+                    "seconds": time.perf_counter() - started,
+                    **details,
+                }
+            )
+
+    def milestone(self, name: str) -> None:
+        self._milestones[name] = time.perf_counter() - self._started
+
+    def snapshot(self) -> dict[str, Any]:
+        stages: dict[str, float] = {}
+        for event in self._events:
+            stage = str(event["stage"])
+            stages[stage] = stages.get(stage, 0.0) + float(event["seconds"])
+        return {
+            "total_seconds": time.perf_counter() - self._started,
+            "stages_seconds": stages,
+            "milestones_seconds": dict(self._milestones),
+            "events": list(self._events),
+        }
 
 
 def smoothing_config_from_options(
@@ -73,6 +112,7 @@ def run_surface_preview(
     preview_step_size: int = 2,
     smoothing: SmoothingConfig | None = None,
 ) -> dict[str, Any]:
+    profiler = _StageProfiler()
     if preview_step_size < 1:
         raise ValueError("preview_step_size must be >= 1")
     case_dir = case_dir.resolve()
@@ -91,20 +131,25 @@ def run_surface_preview(
         suffix="_smooth",
         summary_filename="preview_summary.json",
         readme_filename="README_SURFACE_PREVIEW.md",
+        profiler=profiler,
     )
     html_path = output_dir / "index.html"
     viewer_base_smoothing = smoothing_config_from_options(preset="none")
-    preview_meshes = _build_preview_meshes(
-        input_path=input_path,
-        summary=summary,
-        smoothing=viewer_base_smoothing,
-        step_size=preview_step_size,
-    )
-    viewer_bundle_path = _write_offline_viewer(
-        html_path,
-        summary=summary,
-        preview_meshes=preview_meshes,
-    )
+    with profiler.measure("browser_mesh_generation"):
+        preview_meshes = _build_preview_meshes(
+            input_path=input_path,
+            summary=summary,
+            smoothing=viewer_base_smoothing,
+            step_size=preview_step_size,
+            profiler=profiler,
+        )
+    with profiler.measure("json_html_write", artifact="offline_viewer"):
+        viewer_bundle_path = _write_offline_viewer(
+            html_path,
+            summary=summary,
+            preview_meshes=preview_meshes,
+        )
+    profiler.milestone("preview_ready")
     summary["html_viewer"] = str(html_path.resolve())
     summary["preview"] = {
         "step_size": preview_step_size,
@@ -151,10 +196,20 @@ def run_surface_preview(
         },
         "script_bundle": str(viewer_bundle_path.resolve()),
     }
-    (output_dir / "preview_summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
+    profile_path = output_dir / PERFORMANCE_PROFILE_FILENAME
+    summary["performance_profile"] = str(profile_path.resolve())
+    with profiler.measure("json_html_write", artifact="final_summary"):
+        (output_dir / "preview_summary.json").write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    profiler.milestone("all_outputs_complete")
+    profile = profiler.snapshot()
+    profile_path.write_text(
+        json.dumps(profile, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    summary["profile"] = profile
     return summary
 
 
@@ -305,6 +360,7 @@ def export_labelmap_surfaces(
     suffix: str = "",
     summary_filename: str = "stl_export_summary.json",
     readme_filename: str = "README_STL_EXPORT.md",
+    profiler: _StageProfiler | None = None,
 ) -> dict[str, Any]:
     input_path = input_path.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -312,10 +368,13 @@ def export_labelmap_surfaces(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     smoothing = smoothing or smoothing_config_from_options(preset="none")
-    image = nib.load(str(input_path))
-    data = np.asanyarray(image.dataobj)
+    profiler = profiler or _StageProfiler()
+    with profiler.measure("nifti_load", purpose="stl_export"):
+        image = nib.load(str(input_path))
+        data = np.asanyarray(image.dataobj)
     label_names = label_name_map(input_path)
-    label_values, counts = np.unique(data, return_counts=True)
+    with profiler.measure("label_scan_and_mask", operation="unique_labels"):
+        label_values, counts = np.unique(data, return_counts=True)
 
     label_entries = []
     for value, count in zip(label_values, counts, strict=True):
@@ -326,8 +385,17 @@ def export_labelmap_surfaces(
         name = label_names.get(label, f"label_{label}")
         stl_path = labels_dir / f"label_{label:03d}_{safe_name(name)}{suffix}.stl"
         effective = effective_smoothing_for_label(name=name, voxels=voxels, smoothing=smoothing)
-        mesh = mask_to_mesh(data == label, image.affine, smoothing=effective)
-        write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=name)
+        with profiler.measure("label_scan_and_mask", operation="label_mask", label=label):
+            mask = data == label
+        mesh = mask_to_mesh(
+            mask,
+            image.affine,
+            smoothing=effective,
+            profiler=profiler,
+            mesh_kind="label",
+        )
+        with profiler.measure("stl_write", mesh_kind="label", name=name):
+            write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=name)
         label_entries.append(
             {
                 "label": label,
@@ -350,8 +418,22 @@ def export_labelmap_surfaces(
                 continue
             stl_path = combined_dir / f"{group_name}{suffix}.stl"
             effective = effective_smoothing_for_group(group_name=group_name, smoothing=smoothing)
-            mesh = mask_to_mesh(np.isin(data, labels), image.affine, smoothing=effective)
-            write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=group_name)
+            with profiler.measure("group_mesh_generation", name=group_name):
+                with profiler.measure(
+                    "label_scan_and_mask",
+                    operation="group_mask",
+                    name=group_name,
+                ):
+                    mask = np.isin(data, labels)
+                mesh = mask_to_mesh(
+                    mask,
+                    image.affine,
+                    smoothing=effective,
+                    profiler=profiler,
+                    mesh_kind="group",
+                )
+            with profiler.measure("stl_write", mesh_kind="group", name=group_name):
+                write_binary_stl(stl_path, mesh["vertices"], mesh["faces"], solid_name=group_name)
             groups.append(
                 {
                     "name": group_name,
@@ -374,11 +456,12 @@ def export_labelmap_surfaces(
         "groups": groups,
         "smoothing": _smoothing_to_dict(smoothing),
     }
-    (output_dir / summary_filename).write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    write_markdown_summary(output_dir / readme_filename, summary)
+    with profiler.measure("json_html_write", artifact="stl_summary"):
+        (output_dir / summary_filename).write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        write_markdown_summary(output_dir / readme_filename, summary)
     return summary
 
 
@@ -388,8 +471,16 @@ def mask_to_mesh(
     *,
     smoothing: SmoothingConfig | None = None,
     step_size: int = 1,
+    profiler: _StageProfiler | None = None,
+    mesh_kind: str = "unspecified",
 ) -> dict[str, Any]:
-    coords = np.argwhere(mask)
+    profiler = profiler or _StageProfiler()
+    with profiler.measure(
+        "label_scan_and_mask",
+        operation="bounding_box",
+        mesh_kind=mesh_kind,
+    ):
+        coords = np.argwhere(mask)
     if coords.size == 0:
         raise RuntimeError("Cannot mesh an empty mask")
     lo = np.maximum(coords.min(axis=0) - 1, 0)
@@ -397,21 +488,27 @@ def mask_to_mesh(
     slices = tuple(slice(int(start), int(stop)) for start, stop in zip(lo, hi, strict=True))
     cropped = mask[slices]
     padded = np.pad(cropped.astype(np.uint8), 1, mode="constant", constant_values=0)
-    vertices, faces, _normals, _values = measure.marching_cubes(
-        padded,
-        level=0.5,
-        step_size=step_size,
-    )
+    with profiler.measure("marching_cubes", mesh_kind=mesh_kind, step_size=step_size):
+        vertices, faces, _normals, _values = measure.marching_cubes(
+            padded,
+            level=0.5,
+            step_size=step_size,
+        )
     vertices = vertices + lo - 1
     vertices_mm = nib.affines.apply_affine(affine, vertices).astype(np.float32)
     if smoothing is not None and smoothing.iterations > 0:
-        vertices_mm = taubin_smooth(
-            vertices_mm,
-            faces.astype(np.uint32),
+        with profiler.measure(
+            "smoothing",
+            mesh_kind=mesh_kind,
             iterations=smoothing.iterations,
-            lambda_value=smoothing.lambda_value,
-            mu=smoothing.mu,
-        )
+        ):
+            vertices_mm = taubin_smooth(
+                vertices_mm,
+                faces.astype(np.uint32),
+                iterations=smoothing.iterations,
+                lambda_value=smoothing.lambda_value,
+                mu=smoothing.mu,
+            )
     bounds = np.vstack([vertices_mm.min(axis=0), vertices_mm.max(axis=0)])
     return {
         "vertices": vertices_mm,
@@ -630,9 +727,12 @@ def _build_preview_meshes(
     summary: dict[str, Any],
     smoothing: SmoothingConfig,
     step_size: int,
+    profiler: _StageProfiler | None = None,
 ) -> list[dict[str, Any]]:
-    image = nib.load(str(input_path))
-    data = np.asanyarray(image.dataobj)
+    profiler = profiler or _StageProfiler()
+    with profiler.measure("nifti_load", purpose="browser_preview"):
+        image = nib.load(str(input_path))
+        data = np.asanyarray(image.dataobj)
     preview = []
     group_order = ["jaws", "dental_hard_tissue", "pulp", "all_nonzero"]
     groups = {group["name"]: group for group in summary["groups"]}
@@ -640,11 +740,19 @@ def _build_preview_meshes(
         group = groups.get(name)
         if not group:
             continue
+        with profiler.measure(
+            "label_scan_and_mask",
+            operation="browser_group_mask",
+            name=name,
+        ):
+            mask = np.isin(data, group["labels"])
         mesh = mask_to_mesh(
-            np.isin(data, group["labels"]),
+            mask,
             image.affine,
             smoothing=effective_smoothing_for_group(group_name=name, smoothing=smoothing),
             step_size=step_size,
+            profiler=profiler,
+            mesh_kind="browser",
         )
         preview.append(
             {
