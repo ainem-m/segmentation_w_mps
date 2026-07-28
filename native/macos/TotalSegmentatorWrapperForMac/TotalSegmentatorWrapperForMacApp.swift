@@ -33,7 +33,16 @@ struct TotalSegmentatorWrapperForMacApp: App {
                             .applicationName: appTitle,
                             .applicationVersion: currentAppVersion(),
                             .credits: NSAttributedString(
-                                string: "TotalSegmentatorを利用した非公式wrapperです。TotalSegmentator公式アプリではありません。研究・教育目的の非臨床プレビューです。DICOM/CT/処理結果は送信しません。"
+                                string: """
+                                無料のオープンソースソフトウェアです。アプリ本体はApache License 2.0で提供され、無保証です。
+
+                                TotalSegmentatorを利用した非公式wrapperです。TotalSegmentator公式アプリではありません。研究・教育・検証用の非臨床プレビューで、診断や治療計画には使用できません。
+
+                                第三者コード、別途取得するモデル、Sample 1と派生画像には各別条件が適用されます。LICENSE、NOTICE、第三者表示はアプリ内のContents/Resourcesにあります。
+
+                                バグ報告: https://github.com/ainem-m/segmentation_w_mps/issues
+                                DICOM/CT/処理結果は送信しません。
+                                """
                             ),
                         ]
                     )

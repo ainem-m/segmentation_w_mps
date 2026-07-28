@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import resource
@@ -187,7 +188,7 @@ def run_surface_preview(
         "renderer": "webgl",
         "fallback_renderer": "canvas2d",
         "camera_mode_default": "trackpad",
-        "display_mode_default": "normal",
+        "display_mode_default": "xray",
         "display_modes": ["normal", "wireframe", "xray"],
         "transparent_rendering": "jaw_depth_prepass_front_shell",
         "runtime_smoothing": True,
@@ -997,6 +998,8 @@ def _externalize_viewer_script(
         raise ValueError("Viewer document does not contain the expected inline script")
     body_start = script_start + len(script_open)
     bundle_js = document[body_start:script_end] + "\n"
+    bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+    bundle_url = f"{bundle_filename}?sha256={bundle_digest}"
     loader_script = """<script>
 (function () {
   requestAnimationFrame(function () {
@@ -1008,7 +1011,7 @@ def _externalize_viewer_script(
     document.head.appendChild(bundle);
   });
 })();
-</script>""".replace("__BUNDLE_FILENAME__", bundle_filename)
+</script>""".replace("__BUNDLE_FILENAME__", bundle_url)
     index_html = (
         document[:script_start]
         + loader_script
@@ -1041,29 +1044,42 @@ body { margin: 0; background: #15171b; color: #e9edf2; font-family: -apple-syste
   #loadingOverlay { transition: none; }
   .loadingSpinner { animation: none; border-top-color: #46515d; }
 }
-#app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
-#panel { padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
+#app { position: relative; display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; }
+#panel { z-index: 4; padding: 16px; background: #20242a; overflow: auto; border-right: 1px solid #343941; }
+#panelToggle { display: none; position: fixed; z-index: 6; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); min-width: 44px; min-height: 44px; padding: 0 13px; border: 1px solid #66717d; border-radius: 9px; background: rgba(32, 36, 42, 0.94); color: #fff; font: inherit; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); }
+#panelBackdrop { display: none; position: fixed; z-index: 3; inset: 0; background: rgba(5, 7, 10, 0.50); }
 #panel h1 { font-size: 18px; margin: 0 0 12px; }
 #panel h2 { font-size: 14px; margin: 16px 0 8px; color: #cfe4e2; }
 #panel p, #panel label { font-size: 13px; line-height: 1.45; }
 #panel button, #panel select { padding: 8px; border: 1px solid #535b66; background: #2e343d; color: #fff; border-radius: 6px; }
 #panel button.active { background: #496078; border-color: #71839a; }
-#mode, #views, .segmented { display: grid; gap: 6px; margin: 10px 0; }
+#mode, #viewActions, .segmented { display: grid; gap: 6px; margin: 10px 0; }
 #mode { grid-template-columns: 1fr 1fr; }
 #displayControls { display: grid; gap: 10px; margin: 10px 0 14px; }
-#views { grid-template-columns: 1fr 1fr; }
-#views button, .segmented button { width: 100%; }
+#viewActions { grid-template-columns: 1fr; }
+#viewActions button, .segmented button { width: 100%; }
 .segmented { grid-template-columns: 1fr 1fr; }
 #displayModeButtons { grid-template-columns: repeat(3, 1fr); }
 .controlRow { display: grid; gap: 6px; }
 .controlLabel { color: #cfe4e2; font-size: 13px; font-weight: 700; }
 #geometryControl[hidden] { display: none; }
-#smoothingControl, #materialControl { display: grid; gap: 6px; margin: 10px 0; }
+#smoothingControl { display: grid; gap: 6px; margin: 10px 0; }
 #advancedControls { border-top: 1px solid #343941; margin-top: 12px; padding-top: 10px; }
 #advancedControls summary { color: #cfe4e2; cursor: pointer; font-size: 14px; font-weight: 700; }
 #layers label { display: block; margin: 8px 0; }
 canvas { width: 100%; height: 100%; display: block; background: #111317; touch-action: none; }
 code { color: #c9e2ff; }
+@media (max-width: 900px) {
+  #app { grid-template-columns: minmax(0, 1fr); }
+  #panel { position: fixed; inset: 0 auto 0 0; width: min(320px, calc(100vw - 48px)); box-sizing: border-box; transform: translateX(-105%); transition: transform 180ms ease; box-shadow: 12px 0 30px rgba(0, 0, 0, 0.34); }
+  #app.panel-open #panel { transform: translateX(0); }
+  #panelToggle { display: block; }
+  #app.panel-open #panelToggle { left: min(272px, calc(100vw - 96px)); }
+  #app.panel-open #panelBackdrop { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #panel { transition: none; }
+}
 </style>
 </head>
 <body>
@@ -1097,11 +1113,10 @@ code { color: #c9e2ff; }
 })();
 </script>
 <div id="app">
-  <aside id="panel">
-    <h1>TotalSegmentator 3Dビューアー</h1>
-    <p>データ: <code id="dataName"></code></p>
-    <p>検出された構造ラベル: <code id="labelCount"></code><br>表示モード: <code id="displayModeLabel"></code><br>形状: <code id="geometryModeLabel"></code><br>表面平滑化: <code id="smoothingModeLabel"></code><br>質感: <code id="materialModeLabel"></code></p>
-    <h2>表示</h2>
+  <button id="panelToggle" type="button" aria-controls="panel" aria-expanded="false" aria-label="表示設定を開く">設定</button>
+  <div id="panelBackdrop" aria-hidden="true"></div>
+  <aside id="panel" aria-label="表示設定">
+    <h1>表示設定</h1>
     <div id="displayControls">
     <div id="displayModeControl" class="controlRow">
       <span class="controlLabel">表示モード</span>
@@ -1118,10 +1133,6 @@ code { color: #c9e2ff; }
         <button id="geometrySdf" type="button">なめらか補完</button>
       </div>
     </div>
-    <label id="materialControl" class="controlRow">
-      <span class="controlLabel">質感</span>
-      <select id="materialPreset" aria-label="質感"></select>
-    </label>
     </div>
     <details id="advancedControls">
       <summary>詳細設定</summary>
@@ -1134,16 +1145,8 @@ code { color: #c9e2ff; }
       <button id="modeTrackpad" class="active" type="button" aria-label="操作方法: トラックパッド">トラックパッド</button>
       <button id="modeMouse" type="button" aria-label="操作方法: マウス">マウス</button>
     </div>
-    <h2>表示方向</h2>
-    <div id="views">
-      <button id="viewFront" type="button" aria-label="標準方向で表示">標準方向</button>
-      <button id="viewBack" type="button" aria-label="標準方向の反対側から表示">反対方向</button>
-      <button id="viewLeft" type="button" aria-label="左回転方向で表示">左回転方向</button>
-      <button id="viewRight" type="button" aria-label="右回転方向で表示">右回転方向</button>
-      <button id="viewTop" type="button" aria-label="上方向から表示">上方向</button>
-      <button id="viewBottom" type="button" aria-label="下方向から表示">下方向</button>
+    <div id="viewActions">
       <button id="fitAll" type="button" aria-label="全体に合わせる">全体に合わせる</button>
-      <button id="reset" type="button" aria-label="初期表示に戻す">初期表示に戻す</button>
     </div>
     <h2>表示する構造</h2>
     <div id="layers"></div>
@@ -1175,12 +1178,11 @@ const GEOMETRY_PRESET_ORDER = geometryPresetNames();
 let inputMode = 'trackpad';
 let dragging = null;
 let lastPointer = null;
+const activePointers = new Map();
 let commandScrollFrame = 0;
 let pendingCommandScroll = [0, 0];
 let commandScrollSuppressZoom = false;
 const camera = {
-  orbitYawDegrees: 0,
-  orbitPitchDegrees: 0,
   orientation: identity3(),
   pan: [0, 0],
   zoom: 0.05,
@@ -1191,7 +1193,7 @@ const camera = {
 const visible = Object.fromEntries(DATA.meshes.map(m => [m.name, !!m.defaultVisible]));
 let currentGeometryPreset = normalizeGeometryPreset(DATA.geometryPreset || '');
 let currentMaterialMode = normalizeMaterialMode(DATA.materialPreset || 'rich');
-let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'normal');
+let currentDisplayMode = normalizeDisplayMode(DATA.displayMode || 'xray');
 let preparedMeshes = [];
 let currentSmoothingPreset = normalizeSmoothingPreset((DATA.smoothing && DATA.smoothing.preset) || 'slicer_like');
 let program = null;
@@ -1210,11 +1212,28 @@ const geometryControl = document.getElementById('geometryControl');
 const geometryOriginalButton = document.getElementById('geometryOriginal');
 const geometrySdfButton = document.getElementById('geometrySdf');
 const smoothingPresetSelect = document.getElementById('smoothingPreset');
-const materialPresetSelect = document.getElementById('materialPreset');
 const displayNormalButton = document.getElementById('displayNormal');
 const displayWireframeButton = document.getElementById('displayWireframe');
 const displayXrayButton = document.getElementById('displayXray');
+const app = document.getElementById('app');
+const panelToggle = document.getElementById('panelToggle');
+const panelBackdrop = document.getElementById('panelBackdrop');
+configureResponsivePanel();
 scheduleViewerInitialization();
+
+function configureResponsivePanel() {
+  panelToggle.onclick = () => setPanelOpen(!app.classList.contains('panel-open'));
+  panelBackdrop.onclick = () => setPanelOpen(false);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') setPanelOpen(false);
+  });
+}
+function setPanelOpen(open) {
+  app.classList.toggle('panel-open', open);
+  panelToggle.setAttribute('aria-expanded', String(open));
+  panelToggle.setAttribute('aria-label', open ? '表示設定を閉じる' : '表示設定を開く');
+  panelToggle.textContent = open ? '閉じる' : '設定';
+}
 
 function scheduleViewerInitialization() {
   requestAnimationFrame(() => {
@@ -1229,11 +1248,8 @@ function scheduleViewerInitialization() {
 function initializeViewer() {
   try {
     preparedMeshes = DATA.meshes.map(prepareMesh);
-    document.getElementById('dataName').textContent = DATA.dataLabel || '選択したデータ';
-    document.getElementById('labelCount').textContent = DATA.labelCount;
     populateGeometryControl();
     populateSmoothingControl();
-    populateMaterialControl();
     populateDisplayModeControl();
     applyMaterialMode(currentMaterialMode, false);
     applySmoothingPreset(currentSmoothingPreset, false);
@@ -1254,14 +1270,7 @@ function initializeViewer() {
     updateLayerStats();
     document.getElementById('modeTrackpad').onclick = () => setInputMode('trackpad');
     document.getElementById('modeMouse').onclick = () => setInputMode('mouse');
-    document.getElementById('viewFront').onclick = () => applyAxisView(0, 0);
-    document.getElementById('viewBack').onclick = () => applyAxisView(180, 0);
-    document.getElementById('viewLeft').onclick = () => applyAxisView(270, 0);
-    document.getElementById('viewRight').onclick = () => applyAxisView(90, 0);
-    document.getElementById('viewTop').onclick = () => applyAxisView(0, 89);
-    document.getElementById('viewBottom').onclick = () => applyAxisView(0, 271);
     document.getElementById('fitAll').onclick = () => { fitAll(); draw(); };
-    document.getElementById('reset').onclick = () => { resetCamera(); draw(); };
     if (gl) initWebGl();
     resetCamera();
     fitAll();
@@ -1341,17 +1350,6 @@ function geometryPresetNames() {
   if (!names.length) names.push('base');
   return names;
 }
-function geometryPresetLabel(name) {
-  const preset = DATA.geometryPresets && DATA.geometryPresets[name];
-  if (typeof preset === 'string') return preset;
-  if (preset && typeof preset.label === 'string') return preset.label;
-  const labels = {
-    base: '標準',
-    original: '元の形状',
-    sdf: 'なめらか補完'
-  };
-  return labels[name] || name;
-}
 function normalizeGeometryPreset(name) {
   if (GEOMETRY_PRESET_ORDER.includes(name)) return name;
   if (GEOMETRY_PRESET_ORDER.includes('sdf')) return 'sdf';
@@ -1360,24 +1358,6 @@ function normalizeGeometryPreset(name) {
 }
 function hasGeometryVariants() {
   return GEOMETRY_PRESET_ORDER.length > 1;
-}
-function materialModeLabel(name) {
-  const labels = {
-    standard: '標準',
-    rich: 'リッチ',
-    realistic: 'リアル',
-    neutral: 'ニュートラル',
-    high_contrast: '高コントラスト'
-  };
-  return labels[name] || name;
-}
-function displayModeLabel(name) {
-  const labels = {
-    normal: '通常',
-    wireframe: 'ワイヤーフレーム',
-    xray: 'X-ray'
-  };
-  return labels[name] || name;
 }
 function smoothingPresetNames() {
   const known = SMOOTHING_PRESET_ORDER.filter(name => Object.prototype.hasOwnProperty.call(SMOOTHING_PRESETS, name));
@@ -1402,7 +1382,6 @@ function normalizeDisplayMode(name) {
 function populateGeometryControl() {
   const hasVariants = hasGeometryVariants();
   geometryControl.hidden = !hasVariants;
-  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
   if (!hasVariants) return;
   geometryOriginalButton.onclick = () => setGeometryPreset('original');
   geometrySdfButton.onclick = () => setGeometryPreset('sdf');
@@ -1418,17 +1397,6 @@ function populateSmoothingControl() {
   }
   smoothingPresetSelect.value = currentSmoothingPreset;
   smoothingPresetSelect.onchange = () => setSmoothingPreset(smoothingPresetSelect.value);
-}
-function populateMaterialControl() {
-  materialPresetSelect.innerHTML = '';
-  for (const name of MATERIAL_MODE_ORDER) {
-    const option = document.createElement('option');
-    option.value = name;
-    option.textContent = materialModeLabel(name);
-    materialPresetSelect.appendChild(option);
-  }
-  materialPresetSelect.value = currentMaterialMode;
-  materialPresetSelect.onchange = () => setMaterialMode(materialPresetSelect.value);
 }
 function populateDisplayModeControl() {
   displayNormalButton.onclick = () => setDisplayMode('normal');
@@ -1449,8 +1417,6 @@ function updateDisplayModeControl() {
   displayNormalButton.setAttribute('aria-pressed', String(currentDisplayMode === 'normal'));
   displayWireframeButton.setAttribute('aria-pressed', String(currentDisplayMode === 'wireframe'));
   displayXrayButton.setAttribute('aria-pressed', String(currentDisplayMode === 'xray'));
-  materialPresetSelect.disabled = currentDisplayMode !== 'normal';
-  document.getElementById('displayModeLabel').textContent = displayModeLabel(currentDisplayMode);
 }
 function setSmoothingPreset(name) {
   const preset = normalizeSmoothingPreset(name);
@@ -1471,7 +1437,6 @@ function setGeometryPreset(name) {
     for (const mesh of preparedMeshes) rebuildMeshBuffers(mesh);
   }
   updateLayerStats();
-  document.getElementById('geometryModeLabel').textContent = geometryPresetLabel(currentGeometryPreset);
   draw();
 }
 function updateGeometryButtons() {
@@ -1481,16 +1446,11 @@ function updateGeometryButtons() {
   geometryOriginalButton.classList.toggle('active', currentGeometryPreset === 'original');
   geometrySdfButton.classList.toggle('active', currentGeometryPreset === 'sdf');
 }
-function setMaterialMode(name) {
-  applyMaterialMode(name, true);
-}
 function applyMaterialMode(name, redraw) {
   currentMaterialMode = normalizeMaterialMode(name);
-  materialPresetSelect.value = currentMaterialMode;
   for (const mesh of preparedMeshes) {
     mesh.material = materialFor(mesh.name, mesh.baseRgb, mesh.baseOpacity, currentMaterialMode);
   }
-  document.getElementById('materialModeLabel').textContent = materialModeLabel(currentMaterialMode);
   if (redraw) draw();
 }
 function applySmoothingPreset(presetName, refreshGpu) {
@@ -1502,8 +1462,6 @@ function applySmoothingPreset(presetName, refreshGpu) {
     mesh.bounds = computeBounds(mesh.vertices);
     if (refreshGpu) refreshMeshBuffers(mesh);
   }
-  const smoothingModeLabel = document.getElementById('smoothingModeLabel');
-  if (smoothingModeLabel) smoothingModeLabel.textContent = smoothingLabel(presetName);
 }
 function geometryForPreset(raw, presetName) {
   const variants = raw.variants || {};
@@ -1621,14 +1579,42 @@ function resize() {
 function onPointerDown(event) {
   const local = localPoint(event);
   lastPointer = local;
-  dragging = { button: event.button, lastLocal: local };
+  activePointers.set(event.pointerId, { local, button: event.button });
+  dragging = activePointers.size === 1
+    ? { pointerId: event.pointerId, button: event.button, lastLocal: local }
+    : null;
   canvas.setPointerCapture(event.pointerId);
   event.preventDefault();
 }
 function onPointerMove(event) {
   const local = localPoint(event);
   lastPointer = local;
-  if (!dragging) return;
+  if (!activePointers.has(event.pointerId)) return;
+  if (activePointers.size >= 2) {
+    const previousPair = Array.from(activePointers.values()).slice(0, 2);
+    activePointers.set(event.pointerId, {
+      local,
+      button: activePointers.get(event.pointerId).button
+    });
+    const currentPair = Array.from(activePointers.values()).slice(0, 2);
+    applyTwoPointerGesture(previousPair, currentPair);
+    dragging = null;
+    draw();
+    event.preventDefault();
+    return;
+  }
+  activePointers.set(event.pointerId, {
+    local,
+    button: activePointers.get(event.pointerId).button
+  });
+  if (!dragging || dragging.pointerId !== event.pointerId) {
+    dragging = {
+      pointerId: event.pointerId,
+      button: activePointers.get(event.pointerId).button,
+      lastLocal: local
+    };
+    return;
+  }
   const dx = local[0] - dragging.lastLocal[0];
   const dy = local[1] - dragging.lastLocal[1];
   if (inputMode === 'trackpad') {
@@ -1649,10 +1635,32 @@ function onPointerMove(event) {
   event.preventDefault();
 }
 function onPointerUp(event) {
-  if (dragging) {
-    try { canvas.releasePointerCapture(event.pointerId); } catch (_error) {}
+  try { canvas.releasePointerCapture(event.pointerId); } catch (_error) {}
+  activePointers.delete(event.pointerId);
+  const remaining = activePointers.entries().next();
+  if (!remaining.done) {
+    const [pointerId, pointer] = remaining.value;
+    dragging = { pointerId, button: pointer.button, lastLocal: pointer.local };
+  } else {
+    dragging = null;
   }
-  dragging = null;
+}
+function applyTwoPointerGesture(previousPair, currentPair) {
+  const previousCenter = midpoint2(previousPair[0].local, previousPair[1].local);
+  const currentCenter = midpoint2(currentPair[0].local, currentPair[1].local);
+  camera.pan[0] += currentCenter[0] - previousCenter[0];
+  camera.pan[1] += currentCenter[1] - previousCenter[1];
+  const previousDistance = distance2(previousPair[0].local, previousPair[1].local);
+  const currentDistance = distance2(currentPair[0].local, currentPair[1].local);
+  if (previousDistance > 1 && currentDistance > 1) {
+    zoomByLogDelta(Math.log(currentDistance / previousDistance));
+  }
+}
+function midpoint2(a, b) {
+  return [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+}
+function distance2(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 function onWheel(event) {
   event.preventDefault();
@@ -1727,8 +1735,6 @@ function zoomByLogDelta(delta) {
   camera.zoom = clamp(camera.zoom * Math.exp(clamped), MIN_ZOOM, MAX_ZOOM);
 }
 function resetCamera() {
-  camera.orbitYawDegrees = 0;
-  camera.orbitPitchDegrees = 0;
   camera.orientation = identity3();
   camera.pan = [0, 0];
   camera.zoom = 0.05;
@@ -1754,12 +1760,6 @@ function fitVisible(targetZoom) {
   camera.viewScale = extent > 0 ? 1.6 / extent : 1.0;
   camera.pan = [0, 0];
   camera.zoom = targetZoom;
-}
-function applyAxisView(yaw, pitch) {
-  camera.orbitYawDegrees = yaw;
-  camera.orbitPitchDegrees = pitch;
-  camera.orientation = orthonormalizeOrientation(orientationFromYawPitch(yaw, pitch));
-  draw();
 }
 function visibleBounds() {
   const active = preparedMeshes.filter(mesh => visible[mesh.name]);
@@ -1854,6 +1854,8 @@ function initWebGl() {
     color: gl.getUniformLocation(program, 'uColor'),
     opacity: gl.getUniformLocation(program, 'uOpacity'),
     specular: gl.getUniformLocation(program, 'uSpecular'),
+    broadSpecular: gl.getUniformLocation(program, 'uBroadSpecular'),
+    glazeStrength: gl.getUniformLocation(program, 'uGlazeStrength'),
     shininess: gl.getUniformLocation(program, 'uShininess'),
     ambient: gl.getUniformLocation(program, 'uAmbient'),
     diffuseBoost: gl.getUniformLocation(program, 'uDiffuseBoost'),
@@ -2182,6 +2184,8 @@ function drawMeshWebGl(mesh, renderMode, wireframe = false) {
   gl.uniform3fv(uniforms.color, new Float32Array(mesh.material.color));
   gl.uniform1f(uniforms.opacity, mesh.material.opacity);
   gl.uniform1f(uniforms.specular, mesh.material.specular);
+  gl.uniform1f(uniforms.broadSpecular, mesh.material.broadSpecular);
+  gl.uniform1f(uniforms.glazeStrength, mesh.material.glazeStrength);
   gl.uniform1f(uniforms.shininess, mesh.material.shininess);
   gl.uniform1f(uniforms.ambient, mesh.material.ambient);
   gl.uniform1f(uniforms.diffuseBoost, mesh.material.diffuseBoost);
@@ -2365,17 +2369,77 @@ function drawFallback2d() {
         sub3(vertexAt(mesh.vertices, face[1]), vertexAt(mesh.vertices, face[0])),
         sub3(vertexAt(mesh.vertices, face[2]), vertexAt(mesh.vertices, face[0]))
       ));
-      const facing = Math.abs(mat3Vec(camera.orientation, worldNormal)[2]);
+      const viewNormal = normalize3(mat3Vec(camera.orientation, worldNormal));
+      const facing = Math.abs(viewNormal[2]);
       const renderMode = currentDisplayMode === 'wireframe'
         ? 'wireframe'
         : (fallbackXrayTargets.has(mesh) ? 'xray' : 'normal');
-      tris.push({ a, b, c, depth, material: mesh.material, facing, renderMode });
+      tris.push({ a, b, c, depth, material: mesh.material, facing, viewNormal, renderMode });
     }
   }
   tris.sort((p, q) => q.depth - p.depth);
   for (const t of tris) {
-    const materialLift = (t.material.emission || 0) * 1.2 + (t.material.rimStrength || 0) * 0.10;
-    const shade = Math.max(0.45, Math.min(1.18, 0.45 + (1.0 - t.depth) * 0.65 + materialLift));
+    const keyLight = normalize3([0.30, 0.68, 0.64]);
+    const fillLight = normalize3([-0.58, 0.14, 0.80]);
+    const viewNormal = t.viewNormal[2] < 0 ? scale3(t.viewNormal, -1) : t.viewNormal;
+    const keyDiffuse = Math.max(dot3(viewNormal, keyLight), 0);
+    const fillDiffuse = Math.max(dot3(viewNormal, fillLight), 0);
+    const sharpHighlight = Math.pow(
+      Math.max(dot3(viewNormal, normalize3([keyLight[0], keyLight[1], keyLight[2] + 1])), 0),
+      Math.max(t.material.shininess * 0.30, 12)
+    ) * t.material.specular * 1.15;
+    const broadHighlight = Math.pow(
+      Math.max(dot3(viewNormal, normalize3([fillLight[0], fillLight[1], fillLight[2] + 1])), 0),
+      Math.max(t.material.shininess * 0.06, 2)
+    ) * (t.material.broadSpecular || 0);
+    const viewDot = clamp(viewNormal[2], 0, 1);
+    const reflection = normalize3([
+      2 * viewDot * viewNormal[0],
+      2 * viewDot * viewNormal[1],
+      2 * viewDot * viewNormal[2] - 1
+    ]);
+    const leftStudioBand = Math.pow(
+      clamp(1 - Math.abs(reflection[0] + 0.38) / 0.38, 0, 1),
+      3
+    ) * clamp(1 - Math.abs(reflection[1] - 0.16) / 0.78, 0, 1);
+    const rightStudioBand = Math.pow(
+      clamp(1 - Math.abs(reflection[0] - 0.46) / 0.28, 0, 1),
+      3
+    ) * clamp(1 - Math.abs(reflection[1] - 0.02) / 0.62, 0, 1);
+    const ceilingReflection = Math.pow(clamp((reflection[1] - 0.48) / 0.52, 0, 1), 2) * 0.18;
+    const floorShadow = 1 - Math.pow(clamp((-reflection[1] - 0.18) / 0.82, 0, 1), 2) * 0.62;
+    const glazeFresnel = 0.18 + 0.82 * Math.pow(1 - viewDot, 2.5);
+    const studioLevel = (
+      0.055
+      + leftStudioBand * 0.90
+      + rightStudioBand * 0.58
+      + ceilingReflection
+    ) * floorShadow;
+    const glazeMix = clamp(
+      (t.material.glazeStrength || 0) * glazeFresnel,
+      0,
+      0.42
+    );
+    const porcelainRim = Math.pow(clamp(1 - t.facing, 0, 1), 1.55)
+      * ((t.material.rimStrength || 0) + (t.material.subsurface || 0));
+    const materialLift = (t.material.emission || 0) * 1.2 + porcelainRim;
+    const baseShade = Math.max(
+      0.40,
+      Math.min(
+        1.22,
+        t.material.ambient
+          + keyDiffuse * 0.72 * t.material.diffuseBoost
+          + fillDiffuse * 0.24
+          + sharpHighlight
+          + broadHighlight
+          + materialLift
+      )
+    );
+    const shade = clamp(
+      baseShade * (1 - glazeMix) + studioLevel * 1.18 * glazeMix,
+      0.32,
+      1.18
+    );
     const rgb = t.material.color.map(v => Math.round(v * 255 * shade));
     ctx2d.beginPath();
     ctx2d.moveTo(t.a[0], t.a[1]);
@@ -2489,6 +2553,8 @@ precision mediump float;
 uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uSpecular;
+uniform float uBroadSpecular;
+uniform float uGlazeStrength;
 uniform float uShininess;
 uniform float uAmbient;
 uniform float uDiffuseBoost;
@@ -2501,6 +2567,32 @@ uniform float uSubsurface;
 uniform int uRenderMode;
 varying vec3 vNormal;
 varying vec3 vView;
+float studioSoftBox(vec2 direction, vec2 center, vec2 halfSize, float feather) {
+  vec2 outside = max(abs(direction - center) - halfSize, vec2(0.0));
+  return 1.0 - smoothstep(0.0, feather, length(outside));
+}
+vec3 proceduralStudio(vec3 reflectionDirection) {
+  vec3 studio = vec3(0.050, 0.056, 0.064);
+  float leftSoftBox = studioSoftBox(
+    reflectionDirection.xy,
+    vec2(-0.38, 0.16),
+    vec2(0.19, 0.54),
+    0.18
+  );
+  float rightSoftBox = studioSoftBox(
+    reflectionDirection.xy,
+    vec2(0.46, 0.02),
+    vec2(0.12, 0.40),
+    0.14
+  );
+  float ceiling = smoothstep(0.48, 0.96, reflectionDirection.y);
+  float floorMask = 1.0 - smoothstep(-0.82, -0.18, reflectionDirection.y);
+  studio += vec3(1.00, 0.965, 0.90) * leftSoftBox * 0.92;
+  studio += vec3(0.88, 0.94, 1.00) * rightSoftBox * 0.58;
+  studio += vec3(0.72, 0.79, 0.88) * ceiling * 0.16;
+  studio *= mix(1.0, 0.38, floorMask);
+  return studio;
+}
 void main() {
   if (uRenderMode == 1) {
     float facing = abs(normalize(vNormal).z);
@@ -2521,30 +2613,48 @@ void main() {
   vec3 normal = normalize(vNormal);
   if (!gl_FrontFacing) normal = -normal;
   vec3 keyLight = normalize(vec3(0.30, 0.68, 0.64));
-  vec3 fillLight = normalize(vec3(-0.62, -0.22, 0.55));
-  vec3 backLight = normalize(vec3(-0.20, 0.36, -0.86));
+  vec3 fillLight = normalize(vec3(-0.58, 0.14, 0.80));
   vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
   float viewFacing = max(dot(normal, viewDir), 0.0);
   float keyDiffuse = max((dot(normal, keyLight) + uWrapDiffuse) / (1.0 + uWrapDiffuse), 0.0);
   float fillDiffuse = max(dot(normal, fillLight), 0.0);
-  float backDiffuse = max(dot(normal, backLight), 0.0);
   float diffuse = uAmbient
-    + keyDiffuse * 0.68 * uDiffuseBoost
-    + fillDiffuse * 0.18
-    + backDiffuse * 0.14;
-  vec3 halfDir = normalize(keyLight + viewDir);
-  float specBase = max(dot(normal, halfDir), 0.0);
-  float spec = pow(specBase, uShininess) * uSpecular;
-  float broadSpec = pow(specBase, max(uShininess * 0.20, 2.0)) * uSpecular * 0.10;
+    + keyDiffuse * 0.74 * uDiffuseBoost
+    + fillDiffuse * 0.26;
+  vec3 keyHalfDir = normalize(keyLight + viewDir);
+  vec3 fillHalfDir = normalize(fillLight + viewDir);
+  float sharpSpecBase = max(dot(normal, keyHalfDir), 0.0);
+  float broadSpecBase = max(dot(normal, fillHalfDir), 0.0);
+  float sharpSpec = pow(sharpSpecBase, uShininess) * uSpecular;
+  float broadSpec = pow(broadSpecBase, max(uShininess * 0.12, 2.0)) * uBroadSpecular;
   float rim = pow(1.0 - viewFacing, uRimPower) * uRimStrength;
   float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
+  vec3 reflectionDirection = normalize(reflect(-viewDir, normal));
+  float glazeFresnel = 0.18 + 0.82 * pow(1.0 - viewFacing, 2.5);
+  float glazeMix = clamp(uGlazeStrength * glazeFresnel, 0.0, 0.34);
+  vec3 studioSample = proceduralStudio(reflectionDirection);
   vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
-  vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
-  vec3 highlight = vec3(spec) + warmColor * broadSpec;
-  vec3 glow = warmColor * rim + vec3(1.0, 0.64, 0.42) * subsurface + warmColor * uEmission;
+  vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.020;
+  vec3 highlight = vec3(sharpSpec)
+    + vec3(1.0, 0.96, 0.88) * broadSpec;
+  vec3 glow = warmColor * rim + vec3(1.0, 0.91, 0.78) * subsurface + warmColor * uEmission;
   vec3 color = warmColor * diffuse + highlight + glow + coolFill;
   color = color / (color + vec3(0.48));
   color = min(color * 1.28, vec3(1.0));
+  float studioLuma = dot(studioSample, vec3(0.2126, 0.7152, 0.0722));
+  float softboxPresence = smoothstep(0.16, 0.72, studioLuma);
+  vec3 porcelainReflection = mix(
+    color * 0.88,
+    vec3(1.0, 0.985, 0.94),
+    softboxPresence
+  );
+  color = mix(color, porcelainReflection, glazeMix);
+  float crispHighlight = clamp(
+    sharpSpec * 1.35 * step(0.001, uGlazeStrength),
+    0.0,
+    0.82
+  );
+  color = min(color + vec3(crispHighlight), vec3(1.0));
   gl_FragColor = vec4(color, uOpacity);
 }`;
 }
@@ -2594,6 +2704,8 @@ function compileShader(type, source) {
 function materialFor(name, rgb, opacity, mode) {
   let color = rgb.map(v => v / 255);
   let specular = 0.22;
+  let broadSpecular = 0.035;
+  let glazeStrength = 0.0;
   let shininess = 32;
   let ambient = 0.24;
   let diffuseBoost = 1.0;
@@ -2616,17 +2728,19 @@ function materialFor(name, rgb, opacity, mode) {
     wrapDiffuse = 0.16;
     subsurface = 0.02;
     if (name === 'dental_hard_tissue') {
-      color = [0.93, 0.86, 0.66];
-      specular = 0.62;
-      shininess = 148;
-      ambient = 0.24;
-      diffuseBoost = 0.88;
-      rimStrength = 0.12;
-      rimPower = 1.90;
-      warmth = 0.38;
-      wrapDiffuse = 0.06;
+      color = [0.965, 0.945, 0.88];
+      specular = 1.10;
+      broadSpecular = 0.24;
+      glazeStrength = 0.48;
+      shininess = 260;
+      ambient = 0.22;
+      diffuseBoost = 0.90;
+      rimStrength = 0.15;
+      rimPower = 1.72;
+      warmth = 0.18;
+      wrapDiffuse = 0.08;
       emission = 0.0;
-      subsurface = 0.018;
+      subsurface = 0.052;
     } else if (name === 'jaws') {
       color = [0.83, 0.68, 0.49];
       opacity = Math.max(opacity, 0.50);
@@ -2728,7 +2842,7 @@ function materialFor(name, rgb, opacity, mode) {
     if (name === 'pulp') { color = [1.00, 0.16, 0.22]; emission = 0.10; }
     if (name === 'all_nonzero') color = [0.46, 0.80, 1.00];
   }
-  return { color, opacity, specular, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
+  return { color, opacity, specular, broadSpecular, glazeStrength, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
 }
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -2784,11 +2898,6 @@ function axisAngleMatrix(axis, angle) {
     t*x*y+s*z, t*y*y+c, t*y*z-s*x,
     t*x*z-s*y, t*y*z+s*x, t*z*z+c
   ];
-}
-function orientationFromYawPitch(yawDegrees, pitchDegrees) {
-  const yaw = yawDegrees * Math.PI / 180;
-  const pitch = pitchDegrees * Math.PI / 180;
-  return mat3Multiply(axisAngleMatrix([1, 0, 0], pitch), axisAngleMatrix([0, 1, 0], yaw));
 }
 function sub3(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
 function cross3(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }

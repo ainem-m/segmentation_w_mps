@@ -11,9 +11,11 @@ TotalSegmentator and it does not provide individual tooth labels.
 ## Upstream Findings
 
 - Zenodo record: `10.5281/zenodo.10829675`
+- Creator: Gauthier Dot (`0000-0003-2014-2623`)
 - Zenodo model file: `Dataset112_DentalSegmentator_v100.zip`
 - Zenodo file md5: `b71cd5230168d28a4f71b078265b76be`
 - Model license: `cc-by-4.0`
+- License URL: `https://creativecommons.org/licenses/by/4.0/`
 - Slicer implementation: `gaudot/SlicerDentalSegmentator`
 - Slicer extension license: Apache-2.0
 - Runtime framework: nnU-Net v2
@@ -41,6 +43,10 @@ allowed, setup installs `nnunetv2` and prepares the Zenodo model under:
 The model setup step downloads `Dataset112_DentalSegmentator_v100.zip`,
 verifies the Zenodo md5, runs `nnUNetv2_install_pretrained_model_from_zip`,
 and writes `dentalsegmentator_model.json` with DOI/license/source metadata.
+The downloaded checkpoint parameters are not modified. The application adds
+independent MPS inference, conversion, progress, and macOS integration around
+the checkpoint. The canonical attribution is
+`resources/third_party/licenses/DentalSegmentator-NOTICE.txt`.
 
 The runner can also use a manually supplied model folder:
 

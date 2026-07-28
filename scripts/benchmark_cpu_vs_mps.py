@@ -37,7 +37,11 @@ def run_command(cmd: list[str], log_path: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--task", default="craniofacial_structures")
+    parser.add_argument(
+        "--task",
+        choices=("craniofacial_structures", "teeth"),
+        default="craniofacial_structures",
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--totalseg-bin", default="TotalSegmentator")
     args = parser.parse_args()

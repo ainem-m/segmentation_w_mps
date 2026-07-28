@@ -36,6 +36,15 @@ def version_tuple(version: str) -> tuple[int, ...]:
 
 
 class CloudflareDistributionTests(unittest.TestCase):
+    def test_public_preview_assets_have_hash_and_scope_provenance(self) -> None:
+        provenance = json.loads(
+            (PAGES_ROOT / "assets" / "ASSET_PROVENANCE.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(provenance["apache_2_0_relicensed"])
+        for name, metadata in provenance["files"].items():
+            actual = hashlib.sha256((PAGES_ROOT / "assets" / name).read_bytes()).hexdigest()
+            self.assertEqual(actual, metadata["sha256"])
+
     def test_totalsegmentator_page_uses_canonical_domain_and_r2_redirect_for_dmg(self) -> None:
         index = (PAGES_ROOT / "index.html").read_text(encoding="utf-8")
         redirects = (PAGES_ROOT / "_redirects").read_text(encoding="utf-8")

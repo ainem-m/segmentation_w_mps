@@ -339,7 +339,11 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotIn("https://", html)
             self.assertNotIn("cdn", html.lower())
             self.assertNotIn("<script src=", html.lower())
-            self.assertIn("viewer_bundle.js", index_html)
+            bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+            self.assertIn(
+                f"viewer_bundle.js?sha256={bundle_digest}",
+                index_html,
+            )
             self.assertIn(
                 '<script id="viewerData" type="application/json">',
                 index_html,
@@ -391,10 +395,15 @@ class SurfacePreviewTests(unittest.TestCase):
                 initialize_body.index("resize();"),
                 initialize_body.index("requestAnimationFrame(finishViewerLoading);"),
             )
-            self.assertIn("データ: <code id=\"dataName\"></code>", html)
+            self.assertIn("<h1>表示設定</h1>", html)
+            self.assertNotIn("データ: <code", html)
+            self.assertNotIn('id="dataName"', html)
+            self.assertNotIn('id="labelCount"', html)
             self.assertNotIn("inputName", html)
-            self.assertIn("形状: <code id=\"geometryModeLabel\"></code>", html)
-            self.assertIn("表面平滑化: <code id=\"smoothingModeLabel\"></code>", html)
+            self.assertNotIn('id="displayModeLabel"', html)
+            self.assertNotIn('id="geometryModeLabel"', html)
+            self.assertNotIn('id="smoothingModeLabel"', html)
+            self.assertNotIn("<h2>表示</h2>", html)
             self.assertIn("id=\"geometryControl\"", html)
             self.assertIn("id=\"displayControls\"", html)
             self.assertIn("id=\"geometryOriginal\"", html)
@@ -410,11 +419,18 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("トラックパッド", html)
             self.assertIn("マウス", html)
             self.assertIn("操作方法", html)
-            self.assertIn("標準方向", html)
             self.assertIn("全体に合わせる", html)
+            self.assertNotIn("表示方向", html)
+            self.assertNotIn("標準方向", html)
+            self.assertNotIn("反対方向", html)
+            self.assertNotIn("左回転方向", html)
+            self.assertNotIn("右回転方向", html)
+            self.assertNotIn("上方向", html)
+            self.assertNotIn("下方向", html)
+            self.assertNotIn("初期表示に戻す", html)
             self.assertIn("表面平滑化", html)
             self.assertIn("id=\"smoothingPreset\"", html)
-            self.assertIn("smoothingModeLabel", html)
+            self.assertNotIn("smoothingModeLabel", html)
             self.assertNotIn("getElementById('smooth')", html)
             self.assertIn("smoothingPresets", html)
             self.assertIn("applySmoothingPreset", html)
@@ -423,21 +439,20 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("meshAdjacency", html)
             self.assertIn("laplacianSmoothStep", html)
             self.assertIn("refreshMeshBuffers", html)
-            self.assertIn("質感", html)
-            self.assertIn("id=\"materialPreset\"", html)
+            self.assertNotIn("質感", html)
+            self.assertNotIn("id=\"materialPreset\"", html)
             self.assertIn("materialPreset", html)
-            self.assertIn("materialModeLabel", html)
             self.assertIn("applyMaterialMode", html)
-            self.assertIn("setMaterialMode", html)
+            self.assertNotIn("setMaterialMode", html)
             self.assertIn("uRimStrength", html)
             self.assertIn("uAmbient", html)
             self.assertIn("uWrapDiffuse", html)
             self.assertIn("uEmission", html)
             self.assertIn("uSubsurface", html)
-            self.assertIn("リッチ", html)
-            self.assertIn("リアル", html)
-            self.assertIn("ニュートラル", html)
-            self.assertIn("高コントラスト", html)
+            self.assertNotIn("リッチ", html)
+            self.assertNotIn("リアル", html)
+            self.assertNotIn("ニュートラル", html)
+            self.assertNotIn("高コントラスト", html)
             self.assertNotIn("臨床", html)
             self.assertIn("ポリゴン数", html)
             self.assertIn("meshDisplayName", html)
@@ -448,7 +463,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("modeMouse", html)
             self.assertIn("resetCamera", html)
             self.assertIn("fitAll", html)
-            self.assertIn("orientationFromYawPitch", html)
+            self.assertNotIn("orientationFromYawPitch", html)
             self.assertIn("uDepthNear", html)
             self.assertIn("uDepthFar", html)
             self.assertIn("arcballPoint", html)
@@ -545,6 +560,11 @@ class SurfacePreviewTests(unittest.TestCase):
                 inline_document,
                 bundle_filename="viewer_bundle.js",
             )
+            bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+            self.assertIn(
+                f"viewer_bundle.js?sha256={bundle_digest}",
+                index_html,
+            )
             external_path = root / "index.html"
             external_path.write_text(index_html, encoding="utf-8")
             (root / "viewer_bundle.js").write_text(bundle_js, encoding="utf-8")
@@ -633,7 +653,7 @@ class SurfacePreviewTests(unittest.TestCase):
                 )
 
             viewer = summary["viewer"]
-            self.assertEqual(viewer["display_mode_default"], "normal")
+            self.assertEqual(viewer["display_mode_default"], "xray")
             self.assertEqual(viewer["display_modes"], ["normal", "wireframe", "xray"])
             self.assertEqual(viewer["xray"]["surface_color"], [1.0, 1.0, 1.0])
             self.assertEqual(viewer["xray"]["base_alpha"], 0.18)
@@ -653,7 +673,17 @@ class SurfacePreviewTests(unittest.TestCase):
             html = index_html + "\n" + bundle_js
             for element_id in ["displayNormal", "displayWireframe", "displayXray"]:
                 self.assertIn(f'id="{element_id}"', html)
+            self.assertIn('id="panelToggle"', html)
+            self.assertIn('id="panelBackdrop"', html)
+            self.assertIn("@media (max-width: 900px)", html)
+            self.assertIn("#app.panel-open #panel", html)
+            self.assertIn("function setPanelOpen(open)", html)
             self.assertIn("const DISPLAY_MODE_ORDER = ['normal', 'wireframe', 'xray'];", html)
+            self.assertIn("DATA.displayMode || 'xray'", html)
+            self.assertIn("const activePointers = new Map();", html)
+            self.assertIn("function applyTwoPointerGesture(previousPair, currentPair)", html)
+            self.assertIn("zoomByLogDelta(Math.log(currentDistance / previousDistance));", html)
+            self.assertIn("camera.pan[0] += currentCenter[0] - previousCenter[0];", html)
             self.assertIn("function setDisplayMode(name)", html)
             self.assertIn("function drawXrayShells(meshes)", html)
             self.assertIn("function selectXrayTargets(meshes)", html)
@@ -684,6 +714,52 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("gl.clearColor(0.1921569, 0.2039216, 0.1960784, 1.0)", html)
             self.assertIn("function drawDepthAwareGrid", html)
             self.assertIn("function drawSelectionAndGizmoOverlay", html)
+            self.assertIn("uniform float uBroadSpecular;", html)
+            self.assertIn("uniform float uGlazeStrength;", html)
+            self.assertIn("vec3 fillLight = normalize(vec3(-0.58, 0.14, 0.80));", html)
+            self.assertNotIn("vec3 backLight", html)
+            self.assertIn("float sharpSpec = pow(sharpSpecBase, uShininess) * uSpecular;", html)
+            self.assertIn(
+                "float broadSpec = pow(broadSpecBase, max(uShininess * 0.12, 2.0)) * uBroadSpecular;",
+                html,
+            )
+            self.assertIn("color = [0.965, 0.945, 0.88];", html)
+            self.assertIn("specular = 1.10;", html)
+            self.assertIn("shininess = 260;", html)
+            self.assertIn("broadSpecular = 0.24;", html)
+            self.assertIn("glazeStrength = 0.48;", html)
+            self.assertIn("subsurface = 0.052;", html)
+            self.assertIn("const porcelainRim =", html)
+            self.assertIn("float studioSoftBox(", html)
+            self.assertIn("vec3 proceduralStudio(vec3 reflectionDirection)", html)
+            self.assertIn(
+                "vec3 reflectionDirection = normalize(reflect(-viewDir, normal));",
+                html,
+            )
+            self.assertIn(
+                "float glazeFresnel = 0.18 + 0.82 * pow(1.0 - viewFacing, 2.5);",
+                html,
+            )
+            self.assertIn("leftSoftBox * 0.92", html)
+            self.assertIn("rightSoftBox * 0.58", html)
+            self.assertIn("studio *= mix(1.0, 0.38, floorMask);", html)
+            self.assertIn("const leftStudioBand =", html)
+            self.assertIn("float studioLuma = dot(studioSample", html)
+            self.assertIn("vec3 porcelainReflection = mix(", html)
+            self.assertIn("color * 0.88", html)
+            self.assertIn("vec3(1.0, 0.985, 0.94)", html)
+            self.assertIn(
+                "color = mix(color, porcelainReflection, glazeMix);",
+                html,
+            )
+            self.assertIn("float crispHighlight = clamp(", html)
+            self.assertIn(
+                "sharpSpec * 1.35 * step(0.001, uGlazeStrength)",
+                html,
+            )
+            self.assertIn("color = min(color + vec3(crispHighlight), vec3(1.0));", html)
+            self.assertIn("const studioLevel =", html)
+            self.assertIn("baseShade * (1 - glazeMix)", html)
             draw_body = html[
                 html.index("function drawWebGl()") : html.index(
                     "function applySceneUniforms"

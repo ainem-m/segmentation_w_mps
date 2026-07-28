@@ -60,6 +60,12 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
             )
             self.assertEqual(metadata["doi"], "10.5281/zenodo.10829675")
             self.assertEqual(metadata["license"], "CC-BY-4.0")
+            self.assertEqual(
+                metadata["license_url"],
+                "https://creativecommons.org/licenses/by/4.0/",
+            )
+            self.assertEqual(metadata["creators"], ["Gauthier Dot"])
+            self.assertFalse(metadata["checkpoints_modified"])
 
             with _captured_output():
                 second = install_dentalsegmentator_model(

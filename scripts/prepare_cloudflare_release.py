@@ -149,7 +149,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Cloudflare R2 release metadata.")
-    parser.add_argument("--version", default="0.2.1")
+    parser.add_argument("--version", default="0.3.0")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--minimum-supported-version", default=None)
     parser.add_argument("--dmg", type=Path, default=None)
@@ -199,6 +199,18 @@ def verify_stable_notarized_dmg(dmg: Path) -> None:
             raise SystemExit(
                 f"stable DMG failed notarization verification ({command[0]}): {detail.strip()}"
             ) from exc
+    license_verifier = Path(__file__).with_name("verify_license_distribution.py")
+    try:
+        subprocess.run(
+            [sys.executable, str(license_verifier), "--dmg", str(dmg)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise SystemExit(f"stable DMG failed license verification: {detail.strip()}") from exc
 
 
 def normalize_https_origin(value: str) -> str:

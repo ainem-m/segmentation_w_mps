@@ -6,8 +6,8 @@ DIST_DIR="${ROOT}/dist"
 APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
 DMG_STAGING="${DIST_DIR}/dmg_staging"
-APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.1}"
-DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-surface-preview}"
+APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.3.0}"
+DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-oss1}"
 DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 
@@ -42,6 +42,8 @@ rm -rf "${DMG_STAGING}" "${DMG_PATH}"
 mkdir -p "${DMG_STAGING}"
 ditto "${APP_PATH}" "${DMG_STAGING}/${APP_NAME}.app"
 ln -s /Applications "${DMG_STAGING}/Applications"
+cp "${ROOT}/LICENSE" "${DMG_STAGING}/LICENSE.txt"
+cp "${ROOT}/NOTICE" "${DMG_STAGING}/NOTICE.txt"
 cp "${ROOT}/scripts/collect_test_account_install_evidence.sh" "${DMG_STAGING}/Verify Test Account Install.command"
 chmod 755 "${DMG_STAGING}/Verify Test Account Install.command"
 cp "${ROOT}/scripts/collect_launch_debug_logs.sh" "${DMG_STAGING}/Collect TotalSegmentator Wrapper Logs.command"
@@ -50,6 +52,7 @@ cat > "${DMG_STAGING}/README.txt" <<TXT
 TotalSegmentator Wrapper for Mac alpha
 
 これはTotalSegmentatorを利用する非公式Mac wrapperです。TotalSegmentator公式アプリではありません。
+アプリ本体は無料のオープンソースソフトウェアで、Apache License 2.0により無保証で提供されます。
 
 インストール手順:
 1. "TotalSegmentator Wrapper for Mac.app" を Applications、または管理者権限がない場合は ~/Applications へドラッグします。
@@ -80,14 +83,24 @@ TotalSegmentator Wrapper for Mac alpha
 - Sample 1は3D Slicer SampleData由来のNIfTIとprecomputed previewで、DICOMではありません。
 - Sample 1の出典、SHA256、TotalSegmentator Apache-2.0表記はアプリ内
   Contents/Resources/sample1/THIRD_PARTY_NOTICES.txt に記録しています。
+- wrapper本体のApache-2.0ライセンスと適用範囲はDMG内のLICENSE.txt、
+  NOTICE.txt、およびアプリ内Contents/Resources/LICENSE、NOTICEに記録しています。
+- 第三者コード、別途取得するモデル、Sample 1、モデルやSample由来の画像、
+  第三者の名称・商標はwrapperのApache-2.0へ再ライセンスされません。
 - TotalSegmentator Apache-2.0ライセンス本文はアプリ内
   Contents/Resources/licenses/TotalSegmentator-Apache-2.0.txt に同梱しています。
+- DentalSegmentatorモデルの作者、DOI、CC BY 4.0 URL、変更状況はアプリ内
+  Contents/Resources/licenses/DentalSegmentator-NOTICE.txt に同梱しています。
+- ToothSegのコード・モデル帰属、DOI、CC BY 4.0 URL、変更状況はアプリ内
+  Contents/Resources/licenses/ToothSeg-NOTICE.txt に同梱しています。
 - 同梱dcm2niixのライセンス本文はアプリ内
   Contents/Resources/licenses/dcm2niix-license.txt に同梱しています。
 - Python依存を含むthird-party license inventoryはアプリ内
   Contents/Resources/licenses/third_party_license_inventory.json に記録しています。
 - 同梱3DサンプルはUI体験用で、精度評価用データではありません。
 - 診断や治療計画には使用しないでください。
+- バグは https://github.com/ainem-m/segmentation_w_mps/issues へ報告してください。
+  患者データ、DICOM、識別情報を含むログは添付しないでください。
 
 テスト用アカウントでの検証:
 - Setup完了後、DMG内の "Verify Test Account Install.command" をダブルクリックします。
@@ -173,5 +186,6 @@ hdiutil create \
   "${DMG_PATH}" >/dev/null
 
 hdiutil verify "${DMG_PATH}" >/dev/null
+"${PYTHON_BIN}" "${ROOT}/scripts/verify_license_distribution.py" --dmg "${DMG_PATH}" >/dev/null
 
 echo "${DMG_PATH}"

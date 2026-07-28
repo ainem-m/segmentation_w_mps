@@ -80,7 +80,7 @@ The current thin-app alpha wheel is intentionally Python 3.12 / macOS arm64
 specific, for example:
 
 ```text
-totalsegmentator_wrapper_mac-0.2.1-cp312-cp312-macosx_11_0_arm64.whl
+totalsegmentator_wrapper_mac-0.3.0-cp312-cp312-macosx_11_0_arm64.whl
 ```
 
 This matches the app launcher’s Python 3.12 gate and avoids pretending the
@@ -120,6 +120,12 @@ OpenSSL are signed from the inner dylibs outward and included in the app's
 notarization boundary. Their license texts are copied into
 `Contents/Resources/licenses/`.
 
+The wrapper's own Apache-2.0 `LICENSE` and scope `NOTICE` are stored separately
+at `Contents/Resources/LICENSE` and `Contents/Resources/NOTICE`. They do not
+replace or absorb the third-party inventory. DentalSegmentator and ToothSeg
+model notices are bundled even though their CC BY 4.0 checkpoints are downloaded
+only on first use.
+
 `Contents/MacOS/TotalSegmentatorWrapperForMac` is now a SwiftUI executable. It owns both the
 Setup window and the main workflow, while invoking the existing Python backend
 through argv-list subprocess calls. It is intentionally not a shell-script
@@ -138,7 +144,7 @@ scripts/build_mac_dmg.sh
 This creates:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.2.1-20260728-surface-preview-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.3.0-20260728-oss1-arm64.dmg
 ```
 
 The DMG contains the app, an `/Applications` symlink, and a short README. Users
@@ -320,6 +326,9 @@ Rules:
 - Download weights on demand.
 - Do not bundle Slicer.
 - Do not bundle every TotalSegmentator task.
+- Expose only the audited open tasks `craniofacial_structures` (115) and `teeth`
+  (113). The 297 weight is the open 3 mm `total` helper used by robust crop, not
+  another user-selectable task.
 - Apple Silicon only for first app.
 ```
 
@@ -427,7 +436,7 @@ Do not write into Slicer directories.
 The preview should show its own version and backend versions:
 
 ```text
-TotalSegmentator Wrapper for Mac: 0.2.1
+TotalSegmentator Wrapper for Mac: 0.3.0
 Python: x.y.z
 Torch: x.y.z
 TotalSegmentator: x.y.z

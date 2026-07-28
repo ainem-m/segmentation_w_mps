@@ -17,8 +17,12 @@ from uuid import uuid4
 
 
 MODEL_LICENSE = "CC-BY-4.0"
+MODEL_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 MODEL_DOI = "10.5281/zenodo.10829675"
 MODEL_SOURCE = "Zenodo"
+MODEL_TITLE = "DentalSegmentator nnU-Net pretrained model for CBCT image segmentation"
+MODEL_CREATORS = ("Gauthier Dot",)
+MODEL_CHECKPOINTS_MODIFIED = False
 CHUNK_SIZE = 1024 * 1024
 MODEL_STATUS_SCHEMA = "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1"
 MODEL_SETUP_SCHEMA = "totalsegmentator_wrapper_mac.dentalsegmentator_model_setup.v1"
@@ -125,7 +129,11 @@ def install_dentalsegmentator_model(
         "dataset_id": dataset_id,
         "dataset_name": dataset_name,
         "license": MODEL_LICENSE,
+        "license_url": MODEL_LICENSE_URL,
         "doi": MODEL_DOI,
+        "title": MODEL_TITLE,
+        "creators": list(MODEL_CREATORS),
+        "checkpoints_modified": MODEL_CHECKPOINTS_MODIFIED,
         "versions": _runtime_versions(),
         "downloaded": False,
         "installed": False,

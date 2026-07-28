@@ -1,0 +1,14 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.asset_provenance.v1",
+  "apache_2_0_relicensed": false,
+  "source_sample_notice": "../../../resources/sample1/THIRD_PARTY_NOTICES.txt",
+  "description": "Web preview images derived from bundled Sample 1; the Sample 1 notice remains applicable.",
+  "files": {
+    "sample1-preview.png": {
+      "sha256": "8ce9865a8db2010c3db08ddee6d3b5ac162d7117baefb2b98d01de61e1286efa"
+    },
+    "sample1-web-preview.jpg": {
+      "sha256": "f6012a47eea362340994d19c2a259b76175907173a702d99bee48492e103f360"
+    }
+  }
+}

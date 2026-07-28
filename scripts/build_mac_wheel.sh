@@ -50,10 +50,15 @@ for license_name in \
   OpenJPEG-BSD-2-Clause.txt \
   CharLS-BSD-3-Clause.txt \
   json-c-MIT.txt \
-  OpenSSL-Apache-2.0.txt; do
+  OpenSSL-Apache-2.0.txt \
+  TotalSegmentator-Apache-2.0.txt \
+  DentalSegmentator-NOTICE.txt \
+  ToothSeg-NOTICE.txt; do
   cp "${ROOT}/resources/third_party/licenses/${license_name}" \
     "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/licenses/${license_name}"
 done
+cp "${ROOT}/resources/third_party/totalsegmentator_task_inventory.json" \
+  "${STAGE_DIR}/src/totalsegmentator_wrapper_mac/licenses/TotalSegmentator-task-inventory.json"
 
 if [[ "${SIGNING_MODE}" == "developer-id" ]]; then
   if [[ -z "${CODESIGN_IDENTITY}" ]]; then

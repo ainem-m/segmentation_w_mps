@@ -50,6 +50,22 @@ class ToothSegSetupTests(unittest.TestCase):
 
             self.assertEqual(result["model_state"], "ready")
             self.assertTrue(result["md5_verified"])
+            self.assertEqual(result["doi"], "10.5281/zenodo.14893540")
+            self.assertEqual(result["license"], "CC-BY-4.0")
+            self.assertEqual(
+                result["license_url"],
+                "https://creativecommons.org/licenses/by/4.0/",
+            )
+            self.assertEqual(
+                result["creators"],
+                [
+                    "Fabian Isensee",
+                    "Niels van Nistelrooij",
+                    "Lars Krämer",
+                    "Shankeeth Vinayahalingam",
+                ],
+            )
+            self.assertFalse(result["checkpoints_modified"])
             progress_events = [
                 json.loads(line.removeprefix("TOOTHSEG_PREP_PROGRESS "))
                 for line in progress_output.getvalue().splitlines()

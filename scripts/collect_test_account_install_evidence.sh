@@ -67,7 +67,11 @@ runtime_dir = resources / "python" / "cpython-3.12"
 runtime_python = runtime_dir / "bin" / "python3.12"
 bundled_dcm2niix = resources / "bin" / "dcm2niix"
 license_inventory = resources / "licenses" / "third_party_license_inventory.json"
+wrapper_license = resources / "LICENSE"
+wrapper_notice = resources / "NOTICE"
 totalsegmentator_license = resources / "licenses" / "TotalSegmentator-Apache-2.0.txt"
+dentalsegmentator_notice = resources / "licenses" / "DentalSegmentator-NOTICE.txt"
+toothseg_notice = resources / "licenses" / "ToothSeg-NOTICE.txt"
 dcm2niix_license = resources / "licenses" / "dcm2niix-license.txt"
 sample1_input = resources / "sample1" / "input" / "DZ-CBCT_jawcrop_0p5mm.nii.gz"
 sample1_viewer = resources / "sample1" / "surface_preview" / "index.html"
@@ -213,13 +217,35 @@ if expected_app_version:
         {"expected": expected_app_version, "actual": actual_app_version},
     )
 check("bundled_dcm2niix_exists", bundled_dcm2niix.exists() and os.access(bundled_dcm2niix, os.X_OK), str(bundled_dcm2niix))
+check("manifest_license_apache_2_0", manifest.get("license", {}).get("expression") == "Apache-2.0", manifest.get("license"))
+check("wrapper_license_exists", wrapper_license.exists(), str(wrapper_license))
+check("wrapper_notice_exists", wrapper_notice.exists(), str(wrapper_notice))
 check("totalsegmentator_license_exists", totalsegmentator_license.exists(), str(totalsegmentator_license))
+check("dentalsegmentator_notice_exists", dentalsegmentator_notice.exists(), str(dentalsegmentator_notice))
+check("toothseg_notice_exists", toothseg_notice.exists(), str(toothseg_notice))
 check("dcm2niix_license_exists", dcm2niix_license.exists(), str(dcm2niix_license))
 check("license_inventory_exists", license_inventory.exists(), str(license_inventory))
 check(
     "license_inventory_unresolved_zero",
     license_inventory_payload.get("unresolved_count") == 0,
     license_inventory_payload.get("unresolved"),
+)
+license_surface_text = "\n".join(
+    path.read_text(encoding="utf-8")
+    for path in (
+        wrapper_license,
+        wrapper_notice,
+        dentalsegmentator_notice,
+        toothseg_notice,
+        manifest_path,
+        license_inventory,
+    )
+    if path.is_file()
+)
+check(
+    "license_surfaces_no_old_first_party_markers",
+    "LicenseRef-Proprietary" not in license_surface_text
+    and "WrapperMac-Proprietary-License" not in license_surface_text,
 )
 check("sample1_input_exists", sample1_input.exists(), str(sample1_input))
 check("sample1_surface_preview_exists", sample1_viewer.exists(), str(sample1_viewer))
