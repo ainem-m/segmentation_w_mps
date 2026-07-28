@@ -97,7 +97,7 @@
     },
     {
       "package": "totalsegmentator-wrapper-mac",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "license": "LicenseRef-Proprietary",
       "source_url": "local pyproject.toml",
       "reviewed_at": "2026-07-08",

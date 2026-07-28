@@ -3761,7 +3761,7 @@ final class AppState: ObservableObject {
             updateMessage = "更新確認URLは設定されていません。"
             return
         }
-        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.0"
+        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.1"
         let allowedHosts = (manifest["update_allowed_hosts"] as? [String]) ?? []
         let updateJSON = paths.logs.appendingPathComponent("update_check.json")
         updateCheckRunning = true

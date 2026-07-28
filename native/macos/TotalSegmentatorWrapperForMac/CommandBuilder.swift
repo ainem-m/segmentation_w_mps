@@ -874,7 +874,7 @@ func formatElapsed(_ seconds: TimeInterval) -> String {
 func currentAppVersion() -> String {
     let paths = AppPaths.current()
     let manifest = readJSON(paths.manifest) ?? [:]
-    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.0"
+    return (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.2.1"
 }
 
 func setupReasonToJapanese(_ reason: String?) -> String {
