@@ -1939,6 +1939,7 @@ function initWebGl() {
     opacity: gl.getUniformLocation(program, 'uOpacity'),
     specular: gl.getUniformLocation(program, 'uSpecular'),
     broadSpecular: gl.getUniformLocation(program, 'uBroadSpecular'),
+    glazeStrength: gl.getUniformLocation(program, 'uGlazeStrength'),
     shininess: gl.getUniformLocation(program, 'uShininess'),
     ambient: gl.getUniformLocation(program, 'uAmbient'),
     diffuseBoost: gl.getUniformLocation(program, 'uDiffuseBoost'),
@@ -2268,6 +2269,7 @@ function drawMeshWebGl(mesh, renderMode, wireframe = false) {
   gl.uniform1f(uniforms.opacity, mesh.material.opacity);
   gl.uniform1f(uniforms.specular, mesh.material.specular);
   gl.uniform1f(uniforms.broadSpecular, mesh.material.broadSpecular);
+  gl.uniform1f(uniforms.glazeStrength, mesh.material.glazeStrength);
   gl.uniform1f(uniforms.shininess, mesh.material.shininess);
   gl.uniform1f(uniforms.ambient, mesh.material.ambient);
   gl.uniform1f(uniforms.diffuseBoost, mesh.material.diffuseBoost);
@@ -2474,6 +2476,28 @@ function drawFallback2d() {
       Math.max(dot3(viewNormal, normalize3([fillLight[0], fillLight[1], fillLight[2] + 1])), 0),
       Math.max(t.material.shininess * 0.06, 2)
     ) * (t.material.broadSpecular || 0);
+    const viewDot = clamp(viewNormal[2], 0, 1);
+    const reflection = normalize3([
+      2 * viewDot * viewNormal[0],
+      2 * viewDot * viewNormal[1],
+      2 * viewDot * viewNormal[2] - 1
+    ]);
+    const leftStudioBand = Math.pow(
+      clamp(1 - Math.abs(reflection[0] + 0.48) / 0.26, 0, 1),
+      3
+    ) * clamp(1 - Math.abs(reflection[1] - 0.18) / 0.72, 0, 1);
+    const rightStudioBand = Math.pow(
+      clamp(1 - Math.abs(reflection[0] - 0.55) / 0.18, 0, 1),
+      3
+    ) * clamp(1 - Math.abs(reflection[1] - 0.02) / 0.54, 0, 1);
+    const ceilingReflection = Math.pow(clamp((reflection[1] - 0.48) / 0.52, 0, 1), 2) * 0.18;
+    const floorShadow = 1 - Math.pow(clamp((-reflection[1] - 0.18) / 0.82, 0, 1), 2) * 0.62;
+    const glazeFresnel = 0.10 + 0.90 * Math.pow(1 - viewDot, 3);
+    const studioReflection = (
+      leftStudioBand * 0.90
+      + rightStudioBand * 0.58
+      + ceilingReflection
+    ) * floorShadow * (t.material.glazeStrength || 0) * glazeFresnel;
     const porcelainRim = Math.pow(clamp(1 - t.facing, 0, 1), 1.55)
       * ((t.material.rimStrength || 0) + (t.material.subsurface || 0));
     const materialLift = (t.material.emission || 0) * 1.2 + porcelainRim;
@@ -2486,6 +2510,7 @@ function drawFallback2d() {
           + fillDiffuse * 0.24
           + sharpHighlight
           + broadHighlight
+          + studioReflection
           + materialLift
       )
     );
@@ -2603,6 +2628,7 @@ uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uSpecular;
 uniform float uBroadSpecular;
+uniform float uGlazeStrength;
 uniform float uShininess;
 uniform float uAmbient;
 uniform float uDiffuseBoost;
@@ -2615,6 +2641,32 @@ uniform float uSubsurface;
 uniform int uRenderMode;
 varying vec3 vNormal;
 varying vec3 vView;
+float studioSoftBox(vec2 direction, vec2 center, vec2 halfSize, float feather) {
+  vec2 outside = max(abs(direction - center) - halfSize, vec2(0.0));
+  return 1.0 - smoothstep(0.0, feather, length(outside));
+}
+vec3 proceduralStudio(vec3 reflectionDirection) {
+  vec3 studio = vec3(0.050, 0.056, 0.064);
+  float leftSoftBox = studioSoftBox(
+    reflectionDirection.xy,
+    vec2(-0.48, 0.18),
+    vec2(0.13, 0.50),
+    0.13
+  );
+  float rightSoftBox = studioSoftBox(
+    reflectionDirection.xy,
+    vec2(0.55, 0.02),
+    vec2(0.085, 0.36),
+    0.10
+  );
+  float ceiling = smoothstep(0.48, 0.96, reflectionDirection.y);
+  float floorMask = 1.0 - smoothstep(-0.82, -0.18, reflectionDirection.y);
+  studio += vec3(1.00, 0.965, 0.90) * leftSoftBox * 0.92;
+  studio += vec3(0.88, 0.94, 1.00) * rightSoftBox * 0.58;
+  studio += vec3(0.72, 0.79, 0.88) * ceiling * 0.16;
+  studio *= mix(1.0, 0.38, floorMask);
+  return studio;
+}
 void main() {
   if (uRenderMode == 1) {
     float facing = abs(normalize(vNormal).z);
@@ -2651,9 +2703,16 @@ void main() {
   float broadSpec = pow(broadSpecBase, max(uShininess * 0.12, 2.0)) * uBroadSpecular;
   float rim = pow(1.0 - viewFacing, uRimPower) * uRimStrength;
   float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
+  vec3 reflectionDirection = normalize(reflect(-viewDir, normal));
+  float glazeFresnel = 0.10 + 0.90 * pow(1.0 - viewFacing, 3.0);
+  vec3 studioReflection = proceduralStudio(reflectionDirection)
+    * uGlazeStrength
+    * glazeFresnel;
   vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
   vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
-  vec3 highlight = vec3(sharpSpec) + vec3(1.0, 0.96, 0.88) * broadSpec;
+  vec3 highlight = vec3(sharpSpec)
+    + vec3(1.0, 0.96, 0.88) * broadSpec
+    + studioReflection;
   vec3 glow = warmColor * rim + vec3(1.0, 0.91, 0.78) * subsurface + warmColor * uEmission;
   vec3 color = warmColor * diffuse + highlight + glow + coolFill;
   color = color / (color + vec3(0.48));
@@ -2708,6 +2767,7 @@ function materialFor(name, rgb, opacity, mode) {
   let color = rgb.map(v => v / 255);
   let specular = 0.22;
   let broadSpecular = 0.035;
+  let glazeStrength = 0.0;
   let shininess = 32;
   let ambient = 0.24;
   let diffuseBoost = 1.0;
@@ -2733,6 +2793,7 @@ function materialFor(name, rgb, opacity, mode) {
       color = [0.965, 0.945, 0.88];
       specular = 0.78;
       broadSpecular = 0.24;
+      glazeStrength = 0.30;
       shininess = 176;
       ambient = 0.22;
       diffuseBoost = 0.90;
@@ -2843,7 +2904,7 @@ function materialFor(name, rgb, opacity, mode) {
     if (name === 'pulp') { color = [1.00, 0.16, 0.22]; emission = 0.10; }
     if (name === 'all_nonzero') color = [0.46, 0.80, 1.00];
   }
-  return { color, opacity, specular, broadSpecular, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
+  return { color, opacity, specular, broadSpecular, glazeStrength, shininess, ambient, diffuseBoost, rimStrength, rimPower, warmth, wrapDiffuse, emission, subsurface };
 }
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);

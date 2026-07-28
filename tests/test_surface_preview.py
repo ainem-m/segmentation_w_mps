@@ -695,6 +695,7 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertIn("function drawDepthAwareGrid", html)
             self.assertIn("function drawSelectionAndGizmoOverlay", html)
             self.assertIn("uniform float uBroadSpecular;", html)
+            self.assertIn("uniform float uGlazeStrength;", html)
             self.assertIn("vec3 fillLight = normalize(vec3(-0.58, 0.14, 0.80));", html)
             self.assertNotIn("vec3 backLight", html)
             self.assertIn("float sharpSpec = pow(sharpSpecBase, uShininess) * uSpecular;", html)
@@ -704,8 +705,24 @@ class SurfacePreviewTests(unittest.TestCase):
             )
             self.assertIn("color = [0.965, 0.945, 0.88];", html)
             self.assertIn("broadSpecular = 0.24;", html)
+            self.assertIn("glazeStrength = 0.30;", html)
             self.assertIn("subsurface = 0.052;", html)
             self.assertIn("const porcelainRim =", html)
+            self.assertIn("float studioSoftBox(", html)
+            self.assertIn("vec3 proceduralStudio(vec3 reflectionDirection)", html)
+            self.assertIn(
+                "vec3 reflectionDirection = normalize(reflect(-viewDir, normal));",
+                html,
+            )
+            self.assertIn(
+                "float glazeFresnel = 0.10 + 0.90 * pow(1.0 - viewFacing, 3.0);",
+                html,
+            )
+            self.assertIn("leftSoftBox * 0.92", html)
+            self.assertIn("rightSoftBox * 0.58", html)
+            self.assertIn("studio *= mix(1.0, 0.38, floorMask);", html)
+            self.assertIn("const leftStudioBand =", html)
+            self.assertIn("+ studioReflection", html)
             draw_body = html[
                 html.index("function drawWebGl()") : html.index(
                     "function applySceneUniforms"
