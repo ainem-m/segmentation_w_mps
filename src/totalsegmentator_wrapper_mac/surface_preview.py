@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import resource
@@ -997,6 +998,8 @@ def _externalize_viewer_script(
         raise ValueError("Viewer document does not contain the expected inline script")
     body_start = script_start + len(script_open)
     bundle_js = document[body_start:script_end] + "\n"
+    bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+    bundle_url = f"{bundle_filename}?sha256={bundle_digest}"
     loader_script = """<script>
 (function () {
   requestAnimationFrame(function () {
@@ -1008,7 +1011,7 @@ def _externalize_viewer_script(
     document.head.appendChild(bundle);
   });
 })();
-</script>""".replace("__BUNDLE_FILENAME__", bundle_filename)
+</script>""".replace("__BUNDLE_FILENAME__", bundle_url)
     index_html = (
         document[:script_start]
         + loader_script
@@ -2483,25 +2486,31 @@ function drawFallback2d() {
       2 * viewDot * viewNormal[2] - 1
     ]);
     const leftStudioBand = Math.pow(
-      clamp(1 - Math.abs(reflection[0] + 0.48) / 0.26, 0, 1),
+      clamp(1 - Math.abs(reflection[0] + 0.38) / 0.38, 0, 1),
       3
-    ) * clamp(1 - Math.abs(reflection[1] - 0.18) / 0.72, 0, 1);
+    ) * clamp(1 - Math.abs(reflection[1] - 0.16) / 0.78, 0, 1);
     const rightStudioBand = Math.pow(
-      clamp(1 - Math.abs(reflection[0] - 0.55) / 0.18, 0, 1),
+      clamp(1 - Math.abs(reflection[0] - 0.46) / 0.28, 0, 1),
       3
-    ) * clamp(1 - Math.abs(reflection[1] - 0.02) / 0.54, 0, 1);
+    ) * clamp(1 - Math.abs(reflection[1] - 0.02) / 0.62, 0, 1);
     const ceilingReflection = Math.pow(clamp((reflection[1] - 0.48) / 0.52, 0, 1), 2) * 0.18;
     const floorShadow = 1 - Math.pow(clamp((-reflection[1] - 0.18) / 0.82, 0, 1), 2) * 0.62;
-    const glazeFresnel = 0.10 + 0.90 * Math.pow(1 - viewDot, 3);
-    const studioReflection = (
-      leftStudioBand * 0.90
+    const glazeFresnel = 0.18 + 0.82 * Math.pow(1 - viewDot, 2.5);
+    const studioLevel = (
+      0.055
+      + leftStudioBand * 0.90
       + rightStudioBand * 0.58
       + ceilingReflection
-    ) * floorShadow * (t.material.glazeStrength || 0) * glazeFresnel;
+    ) * floorShadow;
+    const glazeMix = clamp(
+      (t.material.glazeStrength || 0) * glazeFresnel,
+      0,
+      0.42
+    );
     const porcelainRim = Math.pow(clamp(1 - t.facing, 0, 1), 1.55)
       * ((t.material.rimStrength || 0) + (t.material.subsurface || 0));
     const materialLift = (t.material.emission || 0) * 1.2 + porcelainRim;
-    const shade = Math.max(
+    const baseShade = Math.max(
       0.40,
       Math.min(
         1.22,
@@ -2510,9 +2519,13 @@ function drawFallback2d() {
           + fillDiffuse * 0.24
           + sharpHighlight
           + broadHighlight
-          + studioReflection
           + materialLift
       )
+    );
+    const shade = clamp(
+      baseShade * (1 - glazeMix) + studioLevel * 1.18 * glazeMix,
+      0.32,
+      1.18
     );
     const rgb = t.material.color.map(v => Math.round(v * 255 * shade));
     ctx2d.beginPath();
@@ -2649,15 +2662,15 @@ vec3 proceduralStudio(vec3 reflectionDirection) {
   vec3 studio = vec3(0.050, 0.056, 0.064);
   float leftSoftBox = studioSoftBox(
     reflectionDirection.xy,
-    vec2(-0.48, 0.18),
-    vec2(0.13, 0.50),
-    0.13
+    vec2(-0.38, 0.16),
+    vec2(0.19, 0.54),
+    0.18
   );
   float rightSoftBox = studioSoftBox(
     reflectionDirection.xy,
-    vec2(0.55, 0.02),
-    vec2(0.085, 0.36),
-    0.10
+    vec2(0.46, 0.02),
+    vec2(0.12, 0.40),
+    0.14
   );
   float ceiling = smoothstep(0.48, 0.96, reflectionDirection.y);
   float floorMask = 1.0 - smoothstep(-0.82, -0.18, reflectionDirection.y);
@@ -2704,19 +2717,19 @@ void main() {
   float rim = pow(1.0 - viewFacing, uRimPower) * uRimStrength;
   float subsurface = pow(1.0 - viewFacing, 1.55) * uSubsurface;
   vec3 reflectionDirection = normalize(reflect(-viewDir, normal));
-  float glazeFresnel = 0.10 + 0.90 * pow(1.0 - viewFacing, 3.0);
-  vec3 studioReflection = proceduralStudio(reflectionDirection)
-    * uGlazeStrength
-    * glazeFresnel;
+  float glazeFresnel = 0.18 + 0.82 * pow(1.0 - viewFacing, 2.5);
+  float glazeMix = clamp(uGlazeStrength * glazeFresnel, 0.0, 0.42);
+  vec3 studioSample = proceduralStudio(reflectionDirection);
   vec3 warmColor = mix(uColor, vec3(1.0, 0.92, 0.78), clamp(uWarmth, 0.0, 1.0) * 0.24);
   vec3 coolFill = vec3(0.55, 0.68, 0.95) * fillDiffuse * 0.035;
   vec3 highlight = vec3(sharpSpec)
-    + vec3(1.0, 0.96, 0.88) * broadSpec
-    + studioReflection;
+    + vec3(1.0, 0.96, 0.88) * broadSpec;
   vec3 glow = warmColor * rim + vec3(1.0, 0.91, 0.78) * subsurface + warmColor * uEmission;
   vec3 color = warmColor * diffuse + highlight + glow + coolFill;
   color = color / (color + vec3(0.48));
   color = min(color * 1.28, vec3(1.0));
+  vec3 studioDisplay = min(studioSample * vec3(1.05, 1.03, 1.0), vec3(1.0));
+  color = mix(color, studioDisplay, glazeMix);
   gl_FragColor = vec4(color, uOpacity);
 }`;
 }
@@ -2793,7 +2806,7 @@ function materialFor(name, rgb, opacity, mode) {
       color = [0.965, 0.945, 0.88];
       specular = 0.78;
       broadSpecular = 0.24;
-      glazeStrength = 0.30;
+      glazeStrength = 0.48;
       shininess = 176;
       ambient = 0.22;
       diffuseBoost = 0.90;

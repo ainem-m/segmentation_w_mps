@@ -339,7 +339,11 @@ class SurfacePreviewTests(unittest.TestCase):
             self.assertNotIn("https://", html)
             self.assertNotIn("cdn", html.lower())
             self.assertNotIn("<script src=", html.lower())
-            self.assertIn("viewer_bundle.js", index_html)
+            bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+            self.assertIn(
+                f"viewer_bundle.js?sha256={bundle_digest}",
+                index_html,
+            )
             self.assertIn(
                 '<script id="viewerData" type="application/json">',
                 index_html,
@@ -545,6 +549,11 @@ class SurfacePreviewTests(unittest.TestCase):
                 inline_document,
                 bundle_filename="viewer_bundle.js",
             )
+            bundle_digest = hashlib.sha256(bundle_js.encode("utf-8")).hexdigest()[:16]
+            self.assertIn(
+                f"viewer_bundle.js?sha256={bundle_digest}",
+                index_html,
+            )
             external_path = root / "index.html"
             external_path.write_text(index_html, encoding="utf-8")
             (root / "viewer_bundle.js").write_text(bundle_js, encoding="utf-8")
@@ -705,7 +714,7 @@ class SurfacePreviewTests(unittest.TestCase):
             )
             self.assertIn("color = [0.965, 0.945, 0.88];", html)
             self.assertIn("broadSpecular = 0.24;", html)
-            self.assertIn("glazeStrength = 0.30;", html)
+            self.assertIn("glazeStrength = 0.48;", html)
             self.assertIn("subsurface = 0.052;", html)
             self.assertIn("const porcelainRim =", html)
             self.assertIn("float studioSoftBox(", html)
@@ -715,14 +724,17 @@ class SurfacePreviewTests(unittest.TestCase):
                 html,
             )
             self.assertIn(
-                "float glazeFresnel = 0.10 + 0.90 * pow(1.0 - viewFacing, 3.0);",
+                "float glazeFresnel = 0.18 + 0.82 * pow(1.0 - viewFacing, 2.5);",
                 html,
             )
             self.assertIn("leftSoftBox * 0.92", html)
             self.assertIn("rightSoftBox * 0.58", html)
             self.assertIn("studio *= mix(1.0, 0.38, floorMask);", html)
             self.assertIn("const leftStudioBand =", html)
-            self.assertIn("+ studioReflection", html)
+            self.assertIn("vec3 studioDisplay =", html)
+            self.assertIn("color = mix(color, studioDisplay, glazeMix);", html)
+            self.assertIn("const studioLevel =", html)
+            self.assertIn("baseShade * (1 - glazeMix)", html)
             draw_body = html[
                 html.index("function drawWebGl()") : html.index(
                     "function applySceneUniforms"
