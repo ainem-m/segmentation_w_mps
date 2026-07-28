@@ -5,7 +5,7 @@
 <!--
 Manual maintenance metadata
 - reviewed_at: 2026-07-27
-- reviewed_app_version: 0.2.0
+- reviewed_app_version: 0.2.1
 - ui_sources:
   - native/macos/TotalSegmentatorWrapperForMac/Views.swift
   - native/macos/TotalSegmentatorWrapperForMac/AppState.swift

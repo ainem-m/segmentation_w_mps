@@ -15,8 +15,8 @@ SCRIPT = ROOT / "scripts" / "prepare_cloudflare_release.py"
 PAGES_ROOT = ROOT / "cloudflare" / "pages"
 APP_HUB_ROOT = ROOT / "cloudflare" / "app-hub"
 R2_ROOT = ROOT / "cloudflare" / "r2"
-TARGET_VERSION = "0.2.0"
-TARGET_DMG_NAME = "TotalSegmentator Wrapper for Mac-0.2.0-20260722-gdcm-toothseg-arm64.dmg"
+TARGET_VERSION = "0.2.1"
+TARGET_DMG_NAME = "TotalSegmentator Wrapper for Mac-0.2.1-20260728-surface-preview-arm64.dmg"
 
 
 def stable_update_manifest() -> dict:
