@@ -274,8 +274,8 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_notarization_script_submits_staples_and_validates_dmg(self) -> None:
         text = NOTARIZE_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.1}"', text)
-        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-surface-preview}"', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.3.0}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-oss1}"', text)
         self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE", text)
@@ -306,8 +306,8 @@ class MacAppPackagingTests(unittest.TestCase):
     def test_dmg_build_script_uses_configured_app_version_for_filename(self) -> None:
         text = DMG_BUILD_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.2.1}"', text)
-        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-surface-preview}"', text)
+        self.assertIn('APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.3.0}"', text)
+        self.assertIn('DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-oss1}"', text)
         self.assertIn('${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg', text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", text)
         self.assertNotIn('${APP_NAME}-0.1.0-arm64.dmg"', text)
@@ -729,8 +729,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_SHARED_EVIDENCE_DIR", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH", verify_text)
         self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_APP_VERSION", verify_text)
-        self.assertIn("0.2.1", verify_text)
-        self.assertIn("0.2.1-20260728-surface-preview-arm64.dmg", verify_text)
+        self.assertIn("0.3.0", verify_text)
+        self.assertIn("0.3.0-20260728-oss1-arm64.dmg", verify_text)
         self.assertIn("SharedEvidence/test_account_install_evidence.json", verify_text)
         self.assertNotIn("sudo", build_text + verify_text)
         self.assertNotIn("brew install", build_text + verify_text)

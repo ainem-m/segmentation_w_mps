@@ -149,7 +149,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare Cloudflare R2 release metadata.")
-    parser.add_argument("--version", default="0.2.1")
+    parser.add_argument("--version", default="0.3.0")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--minimum-supported-version", default=None)
     parser.add_argument("--dmg", type=Path, default=None)
