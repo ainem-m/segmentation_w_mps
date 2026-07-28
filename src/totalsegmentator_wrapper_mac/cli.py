@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -333,6 +334,13 @@ def build_parser() -> argparse.ArgumentParser:
     surface.add_argument("--smooth-iterations", type=int, default=None)
     surface.add_argument("--smooth-lambda", dest="smooth_lambda", type=float, default=None)
     surface.add_argument("--smooth-mu", type=float, default=None)
+    surface_mode = surface.add_mutually_exclusive_group()
+    surface_mode.add_argument(
+        "--defer-stl",
+        action="store_true",
+        help="Return after the browser preview is ready and finish detailed STL files in the background.",
+    )
+    surface_mode.add_argument("--stl-only", action="store_true", help=argparse.SUPPRESS)
 
     slicer_export = subparsers.add_parser(
         "slicer-export",
@@ -829,7 +837,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "surface-preview":
         from totalsegmentator_wrapper_mac.surface_preview import (
+            STL_GENERATION_LOG_FILENAME,
+            mark_surface_preview_stl_status,
             run_surface_preview,
+            run_surface_preview_stl_only,
             smoothing_config_from_options,
         )
 
@@ -839,14 +850,82 @@ def main(argv: list[str] | None = None) -> int:
             lambda_value=args.smooth_lambda,
             mu=args.smooth_mu,
         )
-        result = run_surface_preview(
-            case_dir=args.case,
-            input_path=args.input,
-            output_dir=args.output,
-            min_voxels=args.min_voxels,
-            preview_step_size=args.preview_step_size,
-            smoothing=smoothing,
-        )
+        if args.stl_only:
+            try:
+                result = run_surface_preview_stl_only(
+                    case_dir=args.case,
+                    input_path=args.input,
+                    output_dir=args.output,
+                    min_voxels=args.min_voxels,
+                    smoothing=smoothing,
+                )
+            except Exception as exc:
+                output_dir = args.output or args.case / "surface_preview"
+                if (output_dir / "preview_summary.json").exists():
+                    mark_surface_preview_stl_status(
+                        output_dir=output_dir,
+                        status="failed",
+                        error_type=type(exc).__name__,
+                    )
+                raise
+        else:
+            result = run_surface_preview(
+                case_dir=args.case,
+                input_path=args.input,
+                output_dir=args.output,
+                min_voxels=args.min_voxels,
+                preview_step_size=args.preview_step_size,
+                smoothing=smoothing,
+                detailed_stl=not args.defer_stl,
+            )
+            if args.defer_stl:
+                output_dir = Path(result["output_dir"])
+                worker_command = [
+                    sys.executable,
+                    "-m",
+                    "totalsegmentator_wrapper_mac",
+                    "surface-preview",
+                    "--case",
+                    str(args.case),
+                    "--output",
+                    str(output_dir),
+                    "--min-voxels",
+                    str(args.min_voxels),
+                    "--smooth-preset",
+                    smoothing.preset,
+                    "--smooth-iterations",
+                    str(smoothing.iterations),
+                    "--smooth-lambda",
+                    str(smoothing.lambda_value),
+                    "--smooth-mu",
+                    str(smoothing.mu),
+                    "--stl-only",
+                ]
+                if args.input is not None:
+                    worker_command.extend(["--input", str(args.input)])
+                log_path = output_dir / STL_GENERATION_LOG_FILENAME
+                mark_surface_preview_stl_status(
+                    output_dir=output_dir,
+                    status="running",
+                )
+                try:
+                    with log_path.open("ab", buffering=0) as log_file:
+                        subprocess.Popen(
+                            worker_command,
+                            stdin=subprocess.DEVNULL,
+                            stdout=log_file,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True,
+                            close_fds=True,
+                        )
+                except Exception as exc:
+                    mark_surface_preview_stl_status(
+                        output_dir=output_dir,
+                        status="failed",
+                        error_type=type(exc).__name__,
+                    )
+                    raise
+                result["stl_generation"] = {"status": "running"}
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
 

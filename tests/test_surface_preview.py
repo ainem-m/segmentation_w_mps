@@ -20,6 +20,7 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     is_dental_hard_tissue,
     mask_to_mesh,
     run_surface_preview,
+    run_surface_preview_stl_only,
     smoothing_config_from_options,
     write_binary_stl,
     _externalize_viewer_script,
@@ -284,6 +285,7 @@ class SurfacePreviewTests(unittest.TestCase):
                 "jaw_depth_prepass_front_shell",
             )
             self.assertTrue(saved_summary["viewer"]["runtime_smoothing"])
+
             self.assertEqual(
                 saved_summary["viewer"]["runtime_smoothing_presets"],
                 ["none", "slicer_like", "medium", "strong"],
@@ -430,6 +432,63 @@ class SurfacePreviewTests(unittest.TestCase):
             defined_ids = set(re.findall(r'id="([^"]+)"', html))
             referenced_static_ids = set(re.findall(r"getElementById\('([^']+)'\)", html))
             self.assertLessEqual(referenced_static_ids, defined_ids)
+
+    def test_deferred_stl_keeps_browser_preview_ready_and_finishes_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case_dir = root / "case"
+            labelmap = (
+                case_dir
+                / "segmentations"
+                / "teeth_experimental"
+                / "teeth_multilabel_fullspace.nii.gz"
+            )
+            _write_synthetic_labelmap(labelmap)
+            output_dir = case_dir / "surface_preview"
+
+            with mock.patch(
+                "totalsegmentator_wrapper_mac.surface_preview.label_name_map",
+                return_value=SYNTHETIC_LABELS,
+            ):
+                preview = run_surface_preview(
+                    case_dir=case_dir,
+                    smoothing=smoothing_config_from_options(preset="none"),
+                    detailed_stl=False,
+                )
+
+                self.assertEqual(preview["stl_generation"]["status"], "pending")
+                self.assertTrue((output_dir / "index.html").exists())
+                self.assertTrue((output_dir / "viewer_bundle.js").exists())
+                self.assertFalse((output_dir / "labels").exists())
+                html_hash = hashlib.sha256(
+                    (output_dir / "index.html").read_bytes()
+                ).hexdigest()
+                bundle_hash = hashlib.sha256(
+                    (output_dir / "viewer_bundle.js").read_bytes()
+                ).hexdigest()
+
+                finished = run_surface_preview_stl_only(
+                    case_dir=case_dir,
+                    input_path=labelmap,
+                    output_dir=output_dir,
+                    smoothing=smoothing_config_from_options(preset="none"),
+                )
+
+            self.assertEqual(finished["stl_generation"]["status"], "complete")
+            self.assertEqual(
+                hashlib.sha256((output_dir / "index.html").read_bytes()).hexdigest(),
+                html_hash,
+            )
+            self.assertEqual(
+                hashlib.sha256((output_dir / "viewer_bundle.js").read_bytes()).hexdigest(),
+                bundle_hash,
+            )
+            self.assertTrue((output_dir / "labels").is_dir())
+            self.assertTrue((output_dir / "combined").is_dir())
+            for entry in finished["labels"] + finished["groups"]:
+                self.assertGreater(entry["vertices"], 0)
+                self.assertGreater(entry["triangles"], 0)
+                self.assertTrue(np.all(np.isfinite(np.asarray(entry["bounds_mm"]))))
 
     def test_comparison_payload_reader_supports_inline_and_external_viewers(self) -> None:
         payload = {
