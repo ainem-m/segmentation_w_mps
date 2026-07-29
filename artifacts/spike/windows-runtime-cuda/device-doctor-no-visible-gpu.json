@@ -1,0 +1,12 @@
+{
+  "schema": "totalsegmentator_wrapper.device_doctor.v1",
+  "status": "unverified",
+  "reason": "binary_only_dependency_closure_failed_before_negative_test",
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": null,
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "gpu_hidden": false,
+  "backend_started": false
+}

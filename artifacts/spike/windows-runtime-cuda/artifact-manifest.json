@@ -1,0 +1,25 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_spike_evidence.v1",
+  "operation_id": "21832c70-cd74-4c65-8164-6af68e33decc",
+  "status": "blocked",
+  "run_artifacts_verified": false,
+  "reason": "real inference was not started after binary-only closure failed",
+  "evidence": [
+    "baseline.txt",
+    "toolchain.txt",
+    "dependency-resolution.txt",
+    "wheelhouse-sha256.txt",
+    "runtime-manifest.json",
+    "device-doctor-cuda.json",
+    "device-doctor-no-visible-gpu.json",
+    "run-manifest.json",
+    "events.jsonl",
+    "stderr-redacted.log",
+    "verification-report.md",
+    "completion-audit.md",
+    "evidence-sha256.txt"
+  ],
+  "generated_case_artifacts": [],
+  "offline_preview_verified": false,
+  "nonempty_nifti_mask_verified": false
+}

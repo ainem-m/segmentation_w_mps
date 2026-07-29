@@ -1,0 +1,1 @@
+{"event":"operation_failed","operation_id":"21832c70-cd74-4c65-8164-6af68e33decc","protocol_version":1,"sequence":1,"status":"failed","error_code":"binary_dependency_wheel_unavailable","safe_reason":"The Windows binary-only dependency closure could not be established."}

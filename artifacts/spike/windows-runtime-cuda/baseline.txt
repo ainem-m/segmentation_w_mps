@@ -1,0 +1,25 @@
+Windows runtime/CUDA spike baseline
+captured_at: 2026-07-30 Asia/Tokyo
+repository: ainem-m/segmentation_w_mps
+starting_remote_branch: agent/windows-port-spike
+starting_commit_expected: 899811c0ea1569ffbcaa9e27dc07edb768a531cb
+starting_commit_observed: 899811c0ea1569ffbcaa9e27dc07edb768a531cb
+working_branch: agent/windows-runtime-cuda-spike
+working_tree_initial_status: clean
+host_requirement: Windows 11 x64
+host_observed: Windows 10 IoT Enterprise 22H2
+host_build: 19045.6456
+host_architecture: x64
+host_requirement_met: false
+patient_data_used: false
+sample_selected: resources/sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz
+sample_inference_started: false
+stop_reason: binary-only dependency closure failed
+repository_AGENTS_md: not present
+instructions_read_completely:
+  - user-provided AGENTS.md instructions
+  - docs/windows/README.md
+  - docs/windows/00_WINDOWS_PORT_ADR.md
+  - docs/windows/01_WINDOWS_TECHNICAL_SPIKE.md
+  - docs/windows/02_WINDOWS_VERIFICATION_MATRIX.md
+  - docs/windows/04_COORDINATOR_PROTOCOL_V1.md

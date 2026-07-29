@@ -1,0 +1,72 @@
+Windows x64 binary-only dependency resolution
+
+status: FAIL
+python: 3.12.10 x64
+resolver: pip 25.0.1
+binary_policy: --only-binary=:all:
+indexes_used_for_spike_investigation:
+  - https://pypi.org/simple
+  - https://download.pytorch.org/whl/cu126
+
+requested candidate roots:
+  - torch==2.11.0+cu126
+  - TotalSegmentator==2.14.0
+  - nibabel>=5.2,<6
+  - numpy>=1.26,<3
+  - scikit-image>=0.22,<1
+
+reproduction_command:
+  <private-python> -m pip download --only-binary=:all:
+    --dest <empty-wheelhouse>
+    --extra-index-url https://download.pytorch.org/whl/cu126
+    torch==2.11.0+cu126
+    TotalSegmentator==2.14.0
+    nibabel>=5.2,<6
+    numpy>=1.26,<3
+    scikit-image>=0.22,<1
+
+resolution chain:
+  TotalSegmentator==2.14.0
+    -> nnunetv2>=2.3.1
+    -> acvl-utils>=0.2.6,<0.3
+
+blocking artifact:
+  package: acvl-utils
+  version: 0.2.6
+  public artifacts:
+    - filename: acvl_utils-0.2.6.tar.gz
+      type: sdist
+      sha256: d6bd68a916fb2451ab3dd640b2494e545edc204c839ae1d4dd49f88f89999b74
+  wheel_available: false
+
+original resolver summary:
+  nnunetv2 2.8.1 depends on acvl-utils<0.3 and >=0.2.6
+  nnunetv2 2.8.0 depends on acvl-utils<0.3 and >=0.2.6
+  ERROR: ResolutionImpossible
+
+conclusion:
+  A source-build-free wheel closure cannot be produced from the investigated
+  public binary artifacts. No sdist was built and no source-built package was
+  installed. A private, reviewed wheel build or an upstream wheel publication
+  requires an explicit architecture and distribution decision.
+
+wheelhouse_result:
+  completed_wheels: 0
+  partial_wheels_retained: 0
+  metadata_cache: pip-managed and outside source control
+
+existing_repository_command_surface:
+  coordinator_entrypoint: totalsegmentator-wrapper-coordinator
+  mac_cli_entrypoint: totalsegmentator-wrapper-mac
+  coordinator_transport: one JSON request on stdin; JSONL events on stdout
+  mac_cli_contract: one final JSON document on stdout
+  production_runner: totalsegmentator_wrapper_mac.runner_totalseg.run_totalsegmentator
+  child_command_shape:
+    TotalSegmentator -i <input-basename> -o <output> -ta
+    craniofacial_structures --device <resolved-device>
+  existing_device_resolution:
+    cpu and mps are implemented in device.py; auto can fall back to CPU
+  existing_cuda_behavior:
+    coordinator returns typed cuda_unverified before starting the runner
+  selected_sample:
+    resources/sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz
