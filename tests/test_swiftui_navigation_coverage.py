@@ -508,6 +508,25 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("複数の撮影データがあります。", preview)
         self.assertIn("Set(state.dicomViewerExportCandidates.map(\\.seriesKey)).count", preview)
         self.assertNotIn("詳細ログを表示", preview)
+
+    def test_dicom_series_selection_is_draft_until_confirmed(self):
+        sheet = body(VIEWS, "struct DicomSeriesSelectionSheet")
+        self.assertIn("state.pendingDicomSeriesID", sheet)
+        self.assertIn("state.cancelDicomSeriesSelection()", sheet)
+        self.assertNotIn("showDicomSeriesSelection = false", sheet)
+
+        select = body(STATE, "func selectDicomSeries")
+        self.assertIn("pendingDicomSeriesID = candidate.id", select)
+        self.assertNotIn("selectedDicomSeriesID = candidate.id", select)
+
+        use = body(STATE, "func useSelectedDicomSeries")
+        self.assertIn("let pendingDicomSeriesID", use)
+        self.assertIn("selectedDicomSeriesID = candidate.id", use)
+        self.assertIn("clearInputCTPreview()", use)
+
+        cancel = body(STATE, "func cancelDicomSeriesSelection")
+        self.assertIn("pendingDicomSeriesID = nil", cancel)
+        self.assertIn("showDicomSeriesSelection = false", cancel)
         provenance = body(STATE, "private func inputProvenancePayload")
         self.assertIn('"first_geometry_ok"', provenance)
         self.assertIn('"user_selected"', provenance)
@@ -699,6 +718,9 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn('case .craniofacial:', preview_output)
         self.assertIn('case .toothSeg:', preview_output)
         self.assertIn('"surface_preview/toothseg"', preview_output)
+
+        set_flavor = body(STATE, "private func setResultFlavor")
+        self.assertIn("startSTLStatusMonitoring()", set_flavor)
 
     def test_stop_and_setup_runtime_contracts_are_preserved(self):
         stop = body(STATE, "func stopRun")

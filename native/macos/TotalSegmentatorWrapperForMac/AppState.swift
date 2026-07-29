@@ -515,6 +515,7 @@ final class AppState: ObservableObject {
     @Published var dicomSummaryText = ""
     @Published var dicomCleanCandidates: [CleanDicomSeriesCandidate] = []
     @Published var selectedDicomSeriesID: String?
+    @Published var pendingDicomSeriesID: String?
     @Published var dicomSelectionWasChanged = false
     @Published var dicomViewerExportCandidates: [ViewerExportCandidate] = []
     @Published var selectedViewerExportCandidateID: String?
@@ -1050,7 +1051,8 @@ final class AppState: ObservableObject {
     }
 
     var canUseSelectedDicomSeries: Bool {
-        !isRunning && resultKind == .dicomAudit && lastDicomDirURL != nil && selectedDicomSeriesID != nil
+        !isRunning && resultKind == .dicomAudit && lastDicomDirURL != nil
+            && pendingDicomSeriesID != nil
     }
 
     var selectedDicomSeries: CleanDicomSeriesCandidate? {
@@ -1489,6 +1491,7 @@ final class AppState: ObservableObject {
         resultOutcome = .none
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
+        pendingDicomSeriesID = nil
         dicomSelectionWasChanged = false
         screen = .inputAndCreation
         selectedStep = 1
@@ -1558,6 +1561,7 @@ final class AppState: ObservableObject {
         resultOutcome = .none
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
+        pendingDicomSeriesID = nil
         dicomSelectionWasChanged = false
         screen = .inputAndCreation
         selectedStep = 1
@@ -1768,6 +1772,7 @@ final class AppState: ObservableObject {
         lastDicomDirURL = dicomDir
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
+        pendingDicomSeriesID = nil
         dicomSelectionWasChanged = false
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
@@ -1819,6 +1824,7 @@ final class AppState: ObservableObject {
                 self?.dicomSummaryText = summary
                 self?.dicomCleanCandidates = cleanCandidates
                 self?.selectedDicomSeriesID = cleanCandidates.first?.id
+                self?.pendingDicomSeriesID = nil
                 self?.dicomSelectionWasChanged = false
                 self?.dicomViewerExportCandidates = viewerExportCandidates
                 self?.selectedViewerExportCandidateID = viewerExportCandidates.first?.id
@@ -1863,18 +1869,31 @@ final class AppState: ObservableObject {
 
     func useSelectedDicomSeries() {
         guard let dicomDir = lastDicomDirURL,
-              let selectedDicomSeriesID,
-              let candidate = dicomCleanCandidates.first(where: { $0.id == selectedDicomSeriesID }) else {
+              let pendingDicomSeriesID,
+              let candidate = dicomCleanCandidates.first(where: { $0.id == pendingDicomSeriesID }) else {
             resultMessage = "取り込める通常CT候補が見つかりません。CT確認結果を確認してください。"
             return
         }
+        selectedDicomSeriesID = candidate.id
+        dicomSelectionWasChanged = candidate.id != dicomCleanCandidates.first?.id
+        self.pendingDicomSeriesID = nil
         showDicomSeriesSelection = false
+        clearInputCTPreview()
         startDicomCleanConversion(dicomDir: dicomDir, candidate: candidate)
     }
 
+    func beginDicomSeriesSelection() {
+        pendingDicomSeriesID = selectedDicomSeriesID
+        showDicomSeriesSelection = true
+    }
+
+    func cancelDicomSeriesSelection() {
+        pendingDicomSeriesID = nil
+        showDicomSeriesSelection = false
+    }
+
     func selectDicomSeries(_ candidate: CleanDicomSeriesCandidate) {
-        selectedDicomSeriesID = candidate.id
-        dicomSelectionWasChanged = candidate.id != dicomCleanCandidates.first?.id
+        pendingDicomSeriesID = candidate.id
     }
 
     func useSelectedViewerExportCandidate() {
@@ -3508,7 +3527,7 @@ final class AppState: ObservableObject {
     private func setResultFlavor(_ flavor: ResultOutputFlavor) {
         guard availableResultFlavors.contains(flavor) else { return }
         activeResultFlavor = flavor
-        refreshSTLGenerationStatus()
+        startSTLStatusMonitoring()
     }
 
     func setActiveResultFlavor(_ flavor: ResultOutputFlavor) {
@@ -3634,6 +3653,7 @@ final class AppState: ObservableObject {
         resultOutcome = .none
         dicomCleanCandidates = []
         selectedDicomSeriesID = nil
+        pendingDicomSeriesID = nil
         dicomViewerExportCandidates = []
         selectedViewerExportCandidateID = nil
         resetSecondaryCaptureRescue()

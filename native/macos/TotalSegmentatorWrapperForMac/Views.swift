@@ -335,7 +335,7 @@ struct InputAndCreationView: View {
                     HStack {
                         Text("使用する撮影: \(candidate.displayTitle)")
                             .font(.callout)
-                        Button("変更") { state.showDicomSeriesSelection = true }
+                        Button("変更") { state.beginDicomSeriesSelection() }
                             .buttonStyle(.bordered)
                     }
                 }
@@ -837,7 +837,7 @@ struct DicomSeriesSelectionSheet: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: state.selectedDicomSeriesID == candidate.id ? "checkmark.circle.fill" : "circle")
+                                Image(systemName: state.pendingDicomSeriesID == candidate.id ? "checkmark.circle.fill" : "circle")
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -853,7 +853,7 @@ struct DicomSeriesSelectionSheet: View {
                 state.useSelectedDicomSeries()
             }
             HStack {
-                Button("閉じる") { state.showDicomSeriesSelection = false }
+                Button("閉じる") { state.cancelDicomSeriesSelection() }
                     .buttonStyle(.bordered)
                 Spacer()
             }
@@ -1952,7 +1952,7 @@ struct ResultView: View {
             }
             if state.dicomCleanCandidates.count > 1 {
                 Button {
-                    state.showDicomSeriesSelection = true
+                    state.beginDicomSeriesSelection()
                 } label: {
                     Label("別の撮影で作り直す", systemImage: "square.stack.3d.up")
                 }
