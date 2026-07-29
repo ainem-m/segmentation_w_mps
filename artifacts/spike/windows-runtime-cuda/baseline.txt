@@ -13,8 +13,11 @@ host_architecture: x64
 host_requirement_met: false
 patient_data_used: false
 sample_selected: resources/sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz
-sample_inference_started: false
-stop_reason: binary-only dependency closure failed
+sample_inference_started: true
+sample_inference_completed: true
+runtime_cuda_vertical_slice: pass
+formal_windows_11_host_gate: fail
+stop_reason: requested Windows 11 x64 host is unavailable; observed host is Windows 10
 repository_AGENTS_md: not present
 instructions_read_completely:
   - user-provided AGENTS.md instructions

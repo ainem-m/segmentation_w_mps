@@ -21,6 +21,7 @@ from totalsegmentator_wrapper_mac.coordinator_protocol import (
 
 SegmentationRunner = Callable[..., Any]
 PreviewRunner = Callable[..., dict[str, Any]]
+CudaDeviceChecker = Callable[[int], Any]
 
 
 class ArtifactVerificationError(RuntimeError):
@@ -33,6 +34,7 @@ def run_coordinator_request(
     *,
     segmentation_runner: SegmentationRunner | None = None,
     preview_runner: PreviewRunner | None = None,
+    cuda_device_checker: CudaDeviceChecker | None = None,
 ) -> int:
     writer.emit("operation_started", operation=request.operation)
     if request.operation == CAPABILITIES_OPERATION:
@@ -42,8 +44,8 @@ def run_coordinator_request(
             device_policies={
                 "cpu_required": {"implementation": "available"},
                 "cuda_required": {
-                    "implementation": "windows_spike_required",
-                    "verified": False,
+                    "implementation": "available",
+                    "verification": "strict_per_operation",
                 },
             },
             cancellation={
@@ -61,13 +63,7 @@ def run_coordinator_request(
             code="operation_unsupported",
             safe_reason="The coordinator operation is not supported.",
         )
-    if request.device_policy == "cuda_required":
-        return _emit_failure(
-            writer,
-            code="cuda_unverified",
-            safe_reason="CUDA execution is not available in this coordinator build.",
-        )
-    if request.device_policy != "cpu_required":
+    if request.device_policy not in {"cpu_required", "cuda_required"}:
         return _emit_failure(
             writer,
             code="device_policy_unsupported",
@@ -99,6 +95,46 @@ def run_coordinator_request(
             code="staging_already_exists",
             safe_reason="An interrupted staging operation already exists.",
         )
+
+    expected_device = "cpu"
+    prevalidated_device_check = None
+    device_event_emitted = False
+    if request.device_policy == "cuda_required":
+        assert request.device_index is not None
+        if cuda_device_checker is None:
+            from totalsegmentator_wrapper_mac.device import smoke_test_cuda
+
+            cuda_device_checker = smoke_test_cuda
+        prevalidated_device_check = cuda_device_checker(request.device_index)
+        expected_device = f"cuda:{request.device_index}"
+        if (
+            getattr(prevalidated_device_check, "status", None) != "pass"
+            or getattr(prevalidated_device_check, "actual_device", None)
+            != expected_device
+        ):
+            writer.emit(
+                "device_resolved",
+                requested_policy=request.device_policy,
+                requested_device_index=request.device_index,
+                resolved_device=None,
+                fallback_allowed=False,
+                fallback_occurred=False,
+            )
+            return _emit_failure(
+                writer,
+                code=getattr(prevalidated_device_check, "error_code", None)
+                or "cuda_validation_failed",
+                safe_reason="The required CUDA device did not pass strict validation.",
+            )
+        writer.emit(
+            "device_resolved",
+            requested_policy=request.device_policy,
+            requested_device_index=request.device_index,
+            resolved_device=expected_device,
+            fallback_allowed=False,
+            fallback_occurred=False,
+        )
+        device_event_emitted = True
 
     if segmentation_runner is None:
         from totalsegmentator_wrapper_mac.runner_totalseg import run_totalsegmentator
@@ -138,26 +174,34 @@ def run_coordinator_request(
             writer.emit("progress", **safe_progress)
 
     try:
+        runner_kwargs: dict[str, Any] = {
+            "input_path": request.input_path,
+            "output_root": staging_directory,
+            "task": "craniofacial_structures",
+            "requested_device": expected_device,
+            "backend": "totalsegmentator",
+            "copy_input": False,
+            "robust_crop": request.robust_crop,
+            "higher_order_resampling": request.higher_order_resampling,
+            "event_sink": on_runner_event,
+        }
+        if prevalidated_device_check is not None:
+            runner_kwargs["prevalidated_device_check"] = prevalidated_device_check
         result = segmentation_runner(
-            input_path=request.input_path,
-            output_root=staging_directory,
-            task="craniofacial_structures",
-            requested_device="cpu",
-            backend="totalsegmentator",
-            copy_input=False,
-            robust_crop=request.robust_crop,
-            higher_order_resampling=request.higher_order_resampling,
-            event_sink=on_runner_event,
+            **runner_kwargs,
         )
         actual_device = str(getattr(result, "actual_device", "unknown"))
         fallback_reason = getattr(result, "fallback_reason", None)
-        writer.emit(
-            "device_resolved",
-            requested_policy=request.device_policy,
-            resolved_device=actual_device,
-            fallback_occurred=fallback_reason is not None,
-        )
-        if actual_device != "cpu" or fallback_reason is not None:
+        if not device_event_emitted:
+            writer.emit(
+                "device_resolved",
+                requested_policy=request.device_policy,
+                requested_device_index=request.device_index,
+                resolved_device=actual_device,
+                fallback_allowed=False,
+                fallback_occurred=fallback_reason is not None,
+            )
+        if actual_device != expected_device or fallback_reason is not None:
             return _emit_failure(
                 writer,
                 code="unexpected_device_fallback",
@@ -201,6 +245,9 @@ def run_coordinator_request(
             artifacts = _verify_and_manifest_case(
                 case_directory,
                 operation_id=request.operation_id,
+                expected_device=expected_device,
+                requested_policy=request.device_policy,
+                requested_device_index=request.device_index,
             )
         except ArtifactVerificationError:
             return _emit_failure(
@@ -221,7 +268,9 @@ def run_coordinator_request(
             "operation_completed",
             status="success",
             requested_policy=request.device_policy,
+            requested_device_index=request.device_index,
             resolved_device=actual_device,
+            fallback_allowed=False,
             fallback_occurred=False,
             elapsed_seconds=float(getattr(result, "elapsed_seconds", 0.0)),
             artifacts=artifacts,
@@ -304,6 +353,9 @@ def _verify_and_manifest_case(
     case_directory: Path,
     *,
     operation_id: str,
+    expected_device: str,
+    requested_policy: str,
+    requested_device_index: int | None,
 ) -> list[dict[str, Any]]:
     try:
         required_files = {
@@ -327,12 +379,62 @@ def _verify_and_manifest_case(
             or run.get("status") != "success"
             or run.get("backend") != "totalsegmentator"
             or run.get("task") != "craniofacial_structures"
-            or run.get("requested_device") != "cpu"
-            or run.get("actual_device") != "cpu"
+            or run.get("requested_device") != expected_device
+            or run.get("actual_device") != expected_device
             or run.get("fallback_reason") is not None
         ):
             raise ArtifactVerificationError
         _read_json_object(required_files["environment"])
+        environment = benchmark.get("environment")
+        if not isinstance(environment, dict):
+            environment = {}
+        device_check = benchmark.get("device_check")
+        if not isinstance(device_check, dict):
+            device_check = {}
+        run_manifest_path = case_directory / "run-manifest.json"
+        run_manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema": "totalsegmentator_wrapper.run_manifest.v1",
+                    "protocol_version": PROTOCOL_VERSION,
+                    "operation_id": operation_id,
+                    "requested_policy": requested_policy,
+                    "requested_device_index": requested_device_index,
+                    "requested_device": expected_device,
+                    "resolved_device": expected_device,
+                    "fallback_allowed": False,
+                    "fallback_occurred": False,
+                    "runtime": {
+                        "python_version": (
+                            environment.get("python", {}).get("version")
+                            if isinstance(environment.get("python"), dict)
+                            else None
+                        ),
+                        "torch_version": device_check.get("torch_version"),
+                        "cuda_build": device_check.get("cuda_build"),
+                        "cuda_available": device_check.get("cuda_available"),
+                        "cuda_device_count": device_check.get(
+                            "cuda_device_count"
+                        ),
+                        "device_name": device_check.get("device_name"),
+                        "device_index": device_check.get("device_index"),
+                        "compute_capability": device_check.get(
+                            "compute_capability"
+                        ),
+                        "total_memory_bytes": device_check.get(
+                            "total_memory_bytes"
+                        ),
+                        "driver_version": device_check.get("driver_version"),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        required_files["run_manifest"] = run_manifest_path
 
         mask_stats = _read_json_object(required_files["mask_stats"])
         masks = mask_stats.get("masks")
@@ -424,6 +526,7 @@ def _verify_and_manifest_case(
             "kind": "offline_preview",
             "relative_path": "surface_preview/index.html",
         },
+        {"kind": "run_manifest", "relative_path": "run-manifest.json"},
         {"kind": "artifact_manifest", "relative_path": "artifact-manifest.json"},
     ]
 

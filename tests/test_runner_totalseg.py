@@ -21,15 +21,36 @@ from totalsegmentator_wrapper_mac.runner_totalseg import (
     _emit_run_stage,
     _run_command_streamed,
     _teeth_detected_from_mask_stats,
+    executable_command,
     parse_tqdm_progress,
     resolve_totalseg_executable,
     run_toothseg_refine,
     run_totalsegmentator,
     sanitized_command,
+    totalseg_device_argument,
 )
 
 
 class RunnerTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows-only script launch behavior")
+    def test_python_runner_uses_current_interpreter_on_windows(self) -> None:
+        command = executable_command(r"C:\runtime\fake_totalseg.py")
+        self.assertEqual(command, [sys.executable, r"C:\runtime\fake_totalseg.py"])
+        self.assertEqual(
+            sanitized_command(
+                [*command, "-i", r"C:\private\input.nii.gz"],
+                Path(r"C:\private\input.nii.gz"),
+                Path(r"C:\private\output"),
+            ),
+            [Path(sys.executable).name, "fake_totalseg.py", "-i", "input.nii.gz"],
+        )
+
+    def test_totalseg_cuda_device_uses_upstream_gpu_index_syntax(self) -> None:
+        self.assertEqual(totalseg_device_argument("cuda:0"), "gpu:0")
+        self.assertEqual(totalseg_device_argument("cuda:7"), "gpu:7")
+        self.assertEqual(totalseg_device_argument("cpu"), "cpu")
+        self.assertEqual(totalseg_device_argument("mps"), "mps")
+
     def test_teeth_detection_uses_nonempty_label_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stats_path = Path(tmp) / "mask_stats.json"

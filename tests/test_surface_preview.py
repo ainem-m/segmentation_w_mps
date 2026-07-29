@@ -6,6 +6,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,7 @@ from totalsegmentator_wrapper_mac.surface_preview import (
     _write_geometry_chunk,
     _write_offline_viewer,
     read_geometry_chunk,
+    _max_rss_bytes,
 )
 from scripts.build_model_comparison_viewer import (
     build_comparison_viewer,
@@ -46,6 +48,10 @@ SYNTHETIC_LABELS = {
 
 
 class SurfacePreviewTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "Windows-only RSS implementation")
+    def test_max_rss_bytes_is_available_on_windows(self) -> None:
+        self.assertGreater(_max_rss_bytes(), 0)
+
     def test_binary_geometry_chunk_round_trips_current_preview_precision(self) -> None:
         vertices = np.array(
             [

@@ -1,18 +1,28 @@
 {
   "schema": "totalsegmentator_wrapper.device_doctor.v1",
-  "status": "unverified",
-  "reason": "binary_only_dependency_closure_failed",
+  "status": "pass",
   "requested_policy": "cuda_required",
   "requested_device_index": 0,
-  "resolved_device": null,
+  "resolved_device": "cuda:0",
   "fallback_allowed": false,
   "fallback_occurred": false,
-  "tensor_smoke_started": false,
-  "host_preflight": {
-    "gpu_name": "NVIDIA GeForce RTX 2060",
-    "vram_mib": 6144,
-    "compute_capability": "7.5",
-    "driver_version": "572.83",
-    "nvidia_smi_cuda_version": "12.8"
+  "python_version": "3.12.10",
+  "torch_version": "2.11.0+cu126",
+  "cuda_build": "12.6",
+  "cuda_available": true,
+  "cuda_device_count": 1,
+  "device_name": "NVIDIA GeForce RTX 2060",
+  "compute_capability": "7.5",
+  "total_memory_bytes": 6442123264,
+  "driver_version": "572.83",
+  "peak_allocated_bytes": 760320,
+  "tensor_smoke": {
+    "tensor_creation": "pass",
+    "conv3d": "pass",
+    "normalization": "pass",
+    "activation": "pass",
+    "convtranspose3d": "pass",
+    "synchronize": "pass",
+    "finite_output": "pass"
   }
 }

@@ -1,0 +1,34 @@
+Authorized internal acvl-utils wheel build
+
+authorization:
+  User selected the internal-wheel route after the public-wheel stop report.
+
+reviewed source:
+  filename: acvl_utils-0.2.6.tar.gz
+  type: pure Python sdist
+  license: Apache-2.0
+  sha256: d6bd68a916fb2451ab3dd640b2494e545edc204c839ae1d4dd49f88f89999b74
+
+isolated builder:
+  setuptools: 81.0.0
+  wheel: 0.47.0
+  packaging: 26.2
+  SOURCE_DATE_EPOCH: 315532800
+
+recipe:
+  scripts/build_internal_acvl_utils_wheel.ps1
+  pip wheel --no-deps --no-build-isolation
+
+independent build A:
+  filename: acvl_utils-0.2.6-py3-none-any.whl
+  size_bytes: 32258
+  sha256: 1beb5cc4907d3577d891faf4b11661423a3afbc71f4c3f95de9a5af41d6a0993
+
+independent build B:
+  filename: acvl_utils-0.2.6-py3-none-any.whl
+  size_bytes: 32258
+  sha256: 1beb5cc4907d3577d891faf4b11661423a3afbc71f4c3f95de9a5af41d6a0993
+
+result:
+  byte_for_byte_reproducible: PASS
+  final wheel hash matches wheelhouse: PASS

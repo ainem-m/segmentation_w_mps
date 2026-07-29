@@ -43,6 +43,9 @@ def environment_metadata() -> dict[str, Any]:
             "version": None,
             "mps_built": None,
             "mps_available": None,
+            "cuda_build": None,
+            "cuda_available": None,
+            "cuda_device_count": None,
         },
         "totalsegmentator": {
             "version": None,
@@ -55,6 +58,9 @@ def environment_metadata() -> dict[str, Any]:
             "version": torch.__version__,
             "mps_built": bool(torch.backends.mps.is_built()),
             "mps_available": bool(torch.backends.mps.is_available()),
+            "cuda_build": torch.version.cuda,
+            "cuda_available": bool(torch.cuda.is_available()),
+            "cuda_device_count": int(torch.cuda.device_count()),
         }
     except Exception as exc:  # noqa: BLE001
         env["torch"]["error"] = repr(exc)

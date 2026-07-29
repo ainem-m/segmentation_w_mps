@@ -1,25 +1,77 @@
 {
-  "schema": "totalsegmentator_wrapper.windows_spike_evidence.v1",
-  "operation_id": "21832c70-cd74-4c65-8164-6af68e33decc",
-  "status": "blocked",
-  "run_artifacts_verified": false,
-  "reason": "real inference was not started after binary-only closure failed",
-  "evidence": [
-    "baseline.txt",
-    "toolchain.txt",
-    "dependency-resolution.txt",
-    "wheelhouse-sha256.txt",
-    "runtime-manifest.json",
-    "device-doctor-cuda.json",
-    "device-doctor-no-visible-gpu.json",
-    "run-manifest.json",
-    "events.jsonl",
-    "stderr-redacted.log",
-    "verification-report.md",
-    "completion-audit.md",
-    "evidence-sha256.txt"
+  "artifacts": [
+    {
+      "relative_path": "README_OUTPUT.md",
+      "sha256": "3a2a84ea4b513a247238b8be72c0049308a5b4f5fe8053d72ed69ef4435b9615",
+      "size_bytes": 1605
+    },
+    {
+      "relative_path": "logs/run.log",
+      "sha256": "400cb847febd548f6031e59b28ab549444e4512ae3f15ccf287b134b92305b51",
+      "size_bytes": 4282
+    },
+    {
+      "relative_path": "logs/benchmark.json",
+      "sha256": "c16768b27377d923a0cf2440fa5dd01798fb4e1a8388ddebe321a1f036157aa5",
+      "size_bytes": 2583
+    },
+    {
+      "relative_path": "logs/environment.json",
+      "sha256": "a78a7af143354a697ef59f98279c38a20037d09eb57424c00ba6040eeab16692",
+      "size_bytes": 607
+    },
+    {
+      "relative_path": "logs/mask_stats.json",
+      "sha256": "f2e5d4932d7e49f9ffa246687f27f1a554fda992b89baf9bb56c266aaf451dad",
+      "size_bytes": 2637
+    },
+    {
+      "relative_path": "surface_preview/index.html",
+      "sha256": "72d4726434c46869010e0659e81033b2563357d8a67ba5d371fc704a049daf76",
+      "size_bytes": 10208
+    },
+    {
+      "relative_path": "run-manifest.json",
+      "sha256": "1cf31fef87cd4c04a60372616c322104d658dd54f2afdbb84582f07853113eb7",
+      "size_bytes": 775
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/head.nii.gz",
+      "sha256": "17acc2633ffa518e927cde5df033845507440efe025b0fc0295c54f43d32aaef",
+      "size_bytes": 265533
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/mandible.nii.gz",
+      "sha256": "6fee43cb3c7f84bc4f803179abf90ddb8f9a548dd72da9b6ef137687d66c6782",
+      "size_bytes": 99660
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/sinus_frontal.nii.gz",
+      "sha256": "2039645ce31de33a804f992062a1e4b3ce17342b4b186c3be3814cd992c827b8",
+      "size_bytes": 30818
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/sinus_maxillary.nii.gz",
+      "sha256": "c91dbba7e08c16de470d4bdc9b86cdc7bd5b4c0373f873643e1211ceb5017d88",
+      "size_bytes": 58923
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/skull.nii.gz",
+      "sha256": "de1c0ce49708b9c0413062eaaac6c94aaf8ac969fcb287d2510b6f7d0286cc98",
+      "size_bytes": 107095
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/teeth_lower.nii.gz",
+      "sha256": "d321c6db6ae0c1ad4d9a0bc2220e5d50b7591b0d4666201680c415d051dd1a19",
+      "size_bytes": 63798
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/teeth_upper.nii.gz",
+      "sha256": "7158e9c852e723b72fa5911018e8ebebf2a2840ce39deafae321c32505c0d3a1",
+      "size_bytes": 67049
+    }
   ],
-  "generated_case_artifacts": [],
-  "offline_preview_verified": false,
-  "nonempty_nifti_mask_verified": false
+  "operation_id": "c841ecf0-2beb-4dda-a47d-83554b790cc7",
+  "protocol_version": 1,
+  "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1"
 }

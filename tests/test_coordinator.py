@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -46,7 +47,7 @@ def _events(stream: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
-def _write_fake_success_case(case_directory: Path) -> None:
+def _write_fake_success_case(case_directory: Path, *, device: str = "cpu") -> None:
     raw = case_directory / "segmentations" / "raw_totalseg"
     logs = case_directory / "logs"
     raw.mkdir(parents=True, exist_ok=True)
@@ -65,8 +66,8 @@ def _write_fake_success_case(case_directory: Path) -> None:
                     "status": "success",
                     "backend": "totalsegmentator",
                     "task": "craniofacial_structures",
-                    "requested_device": "cpu",
-                    "actual_device": "cpu",
+                    "requested_device": device,
+                    "actual_device": device,
                     "fallback_reason": None,
                 }
             }
@@ -191,7 +192,7 @@ class CoordinatorProtocolTests(unittest.TestCase):
 
 
 class CoordinatorExecutionTests(unittest.TestCase):
-    def test_capabilities_are_jsonl_and_keep_windows_claims_unverified(self) -> None:
+    def test_capabilities_advertise_strict_per_operation_cuda(self) -> None:
         request = parse_coordinator_request(
             {
                 "protocol_version": 1,
@@ -210,7 +211,13 @@ class CoordinatorExecutionTests(unittest.TestCase):
         self.assertEqual(events[0]["event"], "operation_started")
         self.assertEqual(events[-1]["event"], "operation_completed")
         capabilities = next(event for event in events if event["event"] == "capabilities")
-        self.assertFalse(capabilities["device_policies"]["cuda_required"]["verified"])
+        self.assertEqual(
+            capabilities["device_policies"]["cuda_required"],
+            {
+                "implementation": "available",
+                "verification": "strict_per_operation",
+            },
+        )
         self.assertEqual(
             capabilities["cancellation"]["authoritative_windows_job"],
             "unverified",
@@ -219,6 +226,10 @@ class CoordinatorExecutionTests(unittest.TestCase):
     def test_cuda_required_fails_without_running_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
             payload = _run_request_payload(root)
             payload["device_policy"] = {"mode": "cuda_required"}
             request = parse_coordinator_request(payload)
@@ -234,13 +245,81 @@ class CoordinatorExecutionTests(unittest.TestCase):
                 request,
                 JsonlEventWriter(stream, operation_id=request.operation_id),
                 segmentation_runner=unexpected_runner,
+                cuda_device_checker=lambda _index: SimpleNamespace(
+                    status="fail",
+                    actual_device=None,
+                    error_code="cuda_unavailable",
+                ),
             )
 
         self.assertEqual(rc, 2)
         self.assertFalse(called)
         events = _events(stream)
         self.assertEqual(events[-1]["event"], "operation_failed")
-        self.assertEqual(events[-1]["error_code"], "cuda_unverified")
+        self.assertEqual(events[-1]["error_code"], "cuda_unavailable")
+        resolved = next(event for event in events if event["event"] == "device_resolved")
+        self.assertIsNone(resolved["resolved_device"])
+        self.assertFalse(resolved["fallback_allowed"])
+        self.assertFalse(resolved["fallback_occurred"])
+
+    def test_cuda_required_passes_prevalidated_device_without_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "private-input.nii.gz"
+            input_path.write_text("not a real nifti", encoding="utf-8")
+            payload = _run_request_payload(root)
+            payload["device_policy"] = {"mode": "cuda_required", "index": 2}
+            request = parse_coordinator_request(payload)
+            stream = io.StringIO()
+            device_check = SimpleNamespace(
+                status="pass",
+                actual_device="cuda:2",
+                fallback_reason=None,
+                error_code=None,
+            )
+            runner_kwargs: dict[str, object] = {}
+
+            def fake_runner(**kwargs: object) -> TotalSegRunResult:
+                runner_kwargs.update(kwargs)
+                case_directory = Path(kwargs["output_root"])
+                _write_fake_success_case(case_directory, device="cuda:2")
+                return TotalSegRunResult(
+                    status="success",
+                    returncode=0,
+                    elapsed_seconds=1.0,
+                    requested_device="cuda:2",
+                    actual_device="cuda:2",
+                    fallback_reason=None,
+                    task="craniofacial_structures",
+                    output_dir=str(case_directory),
+                    stdout_tail="",
+                    stderr_tail="",
+                )
+
+            def fake_preview(**kwargs: object) -> dict[str, object]:
+                preview = Path(kwargs["case_dir"]) / "surface_preview"
+                preview.mkdir(parents=True)
+                (preview / "index.html").write_text("offline", encoding="utf-8")
+                return {"output_dir": str(preview)}
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(stream, operation_id=request.operation_id),
+                segmentation_runner=fake_runner,
+                preview_runner=fake_preview,
+                cuda_device_checker=lambda index: device_check,
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(runner_kwargs["requested_device"], "cuda:2")
+        self.assertIs(runner_kwargs["prevalidated_device_check"], device_check)
+        events = _events(stream)
+        resolved = next(event for event in events if event["event"] == "device_resolved")
+        self.assertEqual(resolved["requested_device_index"], 2)
+        self.assertEqual(resolved["resolved_device"], "cuda:2")
+        self.assertFalse(resolved["fallback_allowed"])
+        self.assertFalse(resolved["fallback_occurred"])
+        self.assertEqual(events[-1]["event"], "operation_completed")
 
     def test_fake_cpu_run_emits_safe_events_and_synchronous_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -360,9 +439,22 @@ class CoordinatorExecutionTests(unittest.TestCase):
                     "README_OUTPUT.md",
                     "segmentations/raw_totalseg",
                     "surface_preview/index.html",
+                    "run-manifest.json",
                     "artifact-manifest.json",
                 ],
             )
+            run_manifest = json.loads(
+                (output / "run-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                run_manifest["schema"],
+                "totalsegmentator_wrapper.run_manifest.v1",
+            )
+            self.assertEqual(run_manifest["requested_policy"], "cpu_required")
+            self.assertIsNone(run_manifest["requested_device_index"])
+            self.assertEqual(run_manifest["resolved_device"], "cpu")
+            self.assertFalse(run_manifest["fallback_allowed"])
+            self.assertFalse(run_manifest["fallback_occurred"])
             manifest = json.loads(
                 (output / "artifact-manifest.json").read_text(encoding="utf-8")
             )

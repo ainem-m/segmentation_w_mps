@@ -197,6 +197,12 @@ def sanitized_command(command: list[str], input_path: Path, output_dir: Path) ->
             continue
         if index == 0:
             result.append(Path(part).name)
+        elif (
+            index == 1
+            and result[0].lower().startswith("python")
+            and part.lower().endswith(".py")
+        ):
+            result.append(Path(part).name)
         elif part in {"-i", "--input"} and index + 1 < len(command):
             result.extend([part, input_path.name])
             skip_next = index + 1
@@ -216,6 +222,21 @@ def resolve_totalseg_executable(totalseg_bin: str) -> str:
         return str(executable_candidate)
     found = shutil.which(totalseg_bin)
     return found or totalseg_bin
+
+
+def totalseg_device_argument(actual_device: str) -> str:
+    if actual_device.startswith("cuda:"):
+        index = actual_device.removeprefix("cuda:")
+        if not index.isdigit():
+            raise ValueError(f"Invalid resolved CUDA device: {actual_device!r}")
+        return f"gpu:{index}"
+    return actual_device
+
+
+def executable_command(executable: str) -> list[str]:
+    if os.name == "nt" and Path(executable).suffix.lower() == ".py":
+        return [sys.executable, executable]
+    return [executable]
 
 
 def _is_strict_mps_profile(execution_profile: str | None, require_mps: bool) -> bool:
@@ -384,6 +405,7 @@ def run_totalsegmentator(
     require_mps: bool = False,
     emit_run_stages: bool = True,
     event_sink: RunEventSink | None = None,
+    prevalidated_device_check: DeviceCheck | None = None,
 ) -> TotalSegRunResult:
     input_path = input_path.resolve()
     if not input_path.exists():
@@ -472,7 +494,7 @@ def run_totalsegmentator(
                 mps_state="required",
             )
 
-    device_check: DeviceCheck | None = None
+    device_check: DeviceCheck | None = prevalidated_device_check
     if strict_mps:
         device_check = resolve_device("mps", skip_device_check=False)
         if device_check.status != "pass" or device_check.actual_device != "mps":
@@ -515,7 +537,8 @@ def run_totalsegmentator(
             higher_order_resampling=higher_order_resampling,
         )
         raise RuntimeError(
-            f"MPS smoke test failed for requested device {requested_device}: {device_check.error}"
+            f"Device validation failed for requested device {requested_device}: "
+            f"{device_check.error}"
         )
 
     if backend == "dentalsegmentator":
@@ -630,7 +653,7 @@ def run_totalsegmentator(
 
     resolved_totalseg_bin = resolve_totalseg_executable(totalseg_bin)
     command = [
-        resolved_totalseg_bin,
+        *executable_command(resolved_totalseg_bin),
         "-i",
         str(input_path),
         "-o",
@@ -638,7 +661,7 @@ def run_totalsegmentator(
         "-ta",
         task,
         "--device",
-        device_check.actual_device,
+        totalseg_device_argument(device_check.actual_device),
     ]
     if robust_crop:
         command.append("--robust_crop")

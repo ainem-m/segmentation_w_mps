@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import re
-import resource
 import struct
 import sys
 import time
@@ -16,6 +15,11 @@ from typing import Any, Iterator
 import nibabel as nib
 import numpy as np
 from skimage import measure
+
+try:
+    import resource
+except ImportError:  # Windows
+    resource = None  # type: ignore[assignment]
 
 
 SMOOTH_PRESETS: dict[str, dict[str, float | int]] = {
@@ -768,8 +772,50 @@ def write_binary_stl(path: Path, vertices: np.ndarray, faces: np.ndarray, *, sol
 
 
 def _max_rss_bytes() -> int:
+    if resource is None:
+        return _windows_peak_working_set_bytes()
     max_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return max_rss if sys.platform == "darwin" else max_rss * 1024
+
+
+def _windows_peak_working_set_bytes() -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    counters = ProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(counters)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessMemoryCounters),
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    process = kernel32.GetCurrentProcess()
+    succeeded = psapi.GetProcessMemoryInfo(
+        process,
+        ctypes.byref(counters),
+        counters.cb,
+    )
+    if not succeeded:
+        raise ctypes.WinError()
+    return int(counters.PeakWorkingSetSize)
 
 
 def group_specs(label_entries: list[dict[str, Any]]) -> dict[str, list[int]]:

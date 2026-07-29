@@ -130,9 +130,10 @@ paths, and stdout/stderr tails are not copied into JSONL events.
 `cpu_required` must resolve to CPU without a fallback reason.
 
 `cuda_required` includes an optional zero-based `index`, defaulting to `0`.
-The Windows implementation must later prove that the selected CUDA device was
-used. Any unavailable, mismatched, or fallback device must produce a typed
-failure rather than starting a CPU run.
+The coordinator performs a strict CUDA tensor doctor before starting the
+backend and passes the validated device check into the production runner. An
+unavailable index, hidden GPU, mismatched runtime device, or fallback produces
+a typed failure without starting a CPU run.
 
 ## Staging and commit
 
@@ -147,12 +148,14 @@ renaming the staging directory to the requested final directory. A failed
 operation leaves staging available for later cleanup or diagnosis and never
 emits a successful terminal event.
 
-The current Mac harness requires a nonempty report, run log, benchmark,
+The coordinator requires a nonempty report, run log, benchmark,
 environment record, mask-statistics record, offline preview, and at least one
 nonempty raw NIfTI mask. It writes `artifact-manifest.json` with relative
-paths, sizes, and SHA-256 hashes before promotion. The harness uses the real
-coordinator, runner, and preview generator with a fake TotalSegmentator
-executable; real TotalSegmentator CPU inference remains unverified.
+paths, sizes, and SHA-256 hashes before promotion. It also writes
+`run-manifest.json`, keeping requested policy/index, resolved device, fallback
+state, and CUDA runtime/device facts separate. Unit tests may use a fake
+executable, but primary-path spike evidence must use the real installed
+TotalSegmentator.
 
 The current implementation rejects an existing final or staging directory.
 Cross-process locking, Windows power-loss testing, disk-full testing, and

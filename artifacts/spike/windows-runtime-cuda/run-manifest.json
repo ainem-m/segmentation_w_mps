@@ -1,23 +1,23 @@
 {
-  "schema": "totalsegmentator_wrapper.windows_cuda_run.v1",
-  "operation_id": "21832c70-cd74-4c65-8164-6af68e33decc",
-  "status": "not_started",
-  "reason": "binary_only_dependency_closure_failed",
-  "input": {
-    "kind": "nifti",
-    "sample": "resources/sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz"
-  },
-  "backend": "TotalSegmentator",
-  "task": "craniofacial_structures",
-  "requested_policy": "cuda_required",
-  "requested_device_index": 0,
-  "resolved_device": null,
   "fallback_allowed": false,
   "fallback_occurred": false,
-  "pytorch": null,
-  "torch_cuda_build": null,
-  "device": {
-    "name": "NVIDIA GeForce RTX 2060",
-    "driver_version": "572.83"
-  }
+  "operation_id": "c841ecf0-2beb-4dda-a47d-83554b790cc7",
+  "protocol_version": 1,
+  "requested_device": "cuda:0",
+  "requested_device_index": 0,
+  "requested_policy": "cuda_required",
+  "resolved_device": "cuda:0",
+  "runtime": {
+    "compute_capability": "7.5",
+    "cuda_available": true,
+    "cuda_build": "12.6",
+    "cuda_device_count": 1,
+    "device_index": 0,
+    "device_name": "NVIDIA GeForce RTX 2060",
+    "driver_version": "572.83",
+    "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "torch_version": "2.11.0+cu126",
+    "total_memory_bytes": 6442123264
+  },
+  "schema": "totalsegmentator_wrapper.run_manifest.v1"
 }

@@ -1,30 +1,41 @@
 {
-  "schema": "totalsegmentator_wrapper.windows_runtime_spike.v1",
-  "status": "blocked",
-  "host": {
-    "architecture": "x64",
-    "build": "19045.6456",
-    "required_os": "Windows 11",
-    "requirement_met": false,
-    "system": "Windows 10 IoT Enterprise 22H2"
+  "schema": "totalsegmentator_wrapper.windows_runtime.v1",
+  "status": "pass",
+  "platform": "win_amd64",
+  "python": "3.12.10",
+  "pip": "25.0.1",
+  "torch": "2.11.0+cu126",
+  "torch_cuda_build": "12.6",
+  "torchvision": "0.26.0+cu126",
+  "totalsegmentator": "2.14.0",
+  "nnunetv2": "2.8.1",
+  "acvl_utils": "0.2.6",
+  "wrapper": "0.3.0",
+  "wheel_count": 91,
+  "install": {
+    "network_used": false,
+    "index_used": false,
+    "binary_only": true,
+    "hash_locked": true,
+    "pip_check": "pass"
   },
-  "python": {
-    "installer_sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
-    "version": "3.12.10"
-  },
-  "candidate": {
-    "cuda_wheel_channel": "cu126",
-    "torch": "2.11.0+cu126",
-    "totalsegmentator": "2.14.0"
-  },
-  "binary_only_closure": false,
-  "blocking_dependency": {
-    "name": "acvl-utils",
-    "version": "0.2.6",
-    "wheel_available": false,
-    "sdist_sha256": "d6bd68a916fb2451ab3dd640b2494e545edc204c839ae1d4dd49f88f89999b74"
-  },
-  "installed": false,
-  "pip_check": "not_run",
-  "production_import_matrix": "not_run"
+  "production_import_matrix": {
+    "torch": "pass",
+    "torchvision": "pass",
+    "totalsegmentator": "pass",
+    "nnunetv2": "pass",
+    "acvl_utils": "pass",
+    "nibabel": "pass",
+    "numpy": "pass",
+    "scipy": "pass",
+    "skimage": "pass",
+    "SimpleITK": "pass",
+    "blosc2": "pass",
+    "cc3d": "pass",
+    "pydicom": "pass",
+    "gdcm": "pass",
+    "coordinator": "pass",
+    "runner": "pass",
+    "surface_preview": "pass"
+  }
 }

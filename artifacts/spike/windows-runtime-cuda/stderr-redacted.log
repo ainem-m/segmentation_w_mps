@@ -1,20 +1,12 @@
-binary-only resolver diagnostic
+Real TotalSegmentator stderr was captured outside source control.
+The tracked evidence intentionally omits raw third-party output, progress-line
+payloads, absolute paths, and stdout/stderr tails.
 
-Collecting TotalSegmentator==2.14.0
-Collecting nnunetv2>=2.3.1 (from TotalSegmentator==2.14.0)
-
-The conflict is caused by:
-    nnunetv2 2.8.1 depends on acvl-utils<0.3 and >=0.2.6
-    nnunetv2 2.8.0 depends on acvl-utils<0.3 and >=0.2.6
-
-ERROR: Cannot install TotalSegmentator because these package versions have
-conflicting dependencies.
-ERROR: ResolutionImpossible
-
-Artifact metadata confirmation:
-    acvl_utils-0.2.6.tar.gz
-    packagetype: sdist
-    wheel artifacts: none
-
-No absolute paths, usernames, secrets, or third-party stdout/stderr tails are
-included in this redacted record.
+Sanitized outcome:
+- process return code: 0
+- task: craniofacial_structures
+- requested device: cuda:0
+- upstream device argument: gpu:0
+- final status: success
+- coordinator elapsed seconds: 44.805
+- model weights obtained from TotalSegmentator's configured official source
