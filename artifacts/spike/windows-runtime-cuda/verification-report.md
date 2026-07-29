@@ -35,8 +35,8 @@ change, or reduced inference configuration was used for the primary path.
 | Offline preview | PASS | `artifact-manifest.json` |
 | Loadable NIfTI masks | PASS, 7/7 | `artifact-manifest.json` |
 | Nonempty NIfTI masks | PASS, 6/7 | mask-statistics verification |
-| Coordinator/runner/macOS profile regression | PASS, 44 tests | test record below |
-| Full Python suite | **FAIL**, 259 run | test record below |
+| Focused Windows/CUDA/macOS regression | PASS, 94 tests, 1 skipped | test record below |
+| Full Python suite | PASS, 259 run, 3 skipped | test record below |
 | `git diff --check` | PASS | final check |
 
 ## Exact measured runtime
@@ -79,27 +79,25 @@ directory. With requested index 1 while only one GPU was visible, it emitted
 
 ## Test record
 
-Focused coordinator, TotalSegmentator runner, and macOS application-profile
-tests:
+Focused coordinator, TotalSegmentator runner, surface preview, macOS
+application-profile, DentalSegmentator, ToothSeg, and DICOM bridge tests:
 
 ```text
-Ran 44 tests
-OK
+Ran 94 tests
+OK (skipped=1)
 ```
 
-The full Python discovery run did not pass:
+The full Python discovery run passed from a fresh Windows checkout:
 
 ```text
 Ran 259 tests
-FAILED (failures=9, errors=8, skipped=3)
+OK (skipped=3)
 ```
 
-The 17 failures are outside the implemented CUDA vertical slice: Windows
-cannot directly launch POSIX-shebang fake executables used by unported
-DentalSegmentator, ToothSeg, and DICOM-normalizer tests, and six bundled
-text-asset hashes differ after system Git's `core.autocrlf=true` checkout.
-Those failures were not hidden or changed because DICOM/MSVC and the other
-model paths are outside this spike.
+The portability fix is limited to launching test Python scripts through the
+current interpreter on Windows and pinning the ten manifest-hashed text assets
+to LF in `.gitattributes`. Native DICOM binaries, model behavior, and the
+deferred Windows product features were not changed.
 
 ## Deferred and unverified
 
@@ -110,7 +108,6 @@ UNVERIFIED.
 ## Required next decision
 
 Repeat the exact hashed offline install, strict doctor, negative tests, and
-real inference on an actual Windows 11 x64 machine. Separately decide whether
-the next Windows phase should make the entire legacy Python suite portable
-(Windows fake-process launch and line-ending-stable asset hashing) before
-starting WPF or installer work.
+real inference on an actual Windows 11 x64 machine. Do not begin WPF,
+Job Object, DICOM/MSVC, installer, or updater work until that host gate is
+resolved.

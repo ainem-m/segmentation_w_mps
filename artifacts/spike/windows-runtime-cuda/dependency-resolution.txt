@@ -39,7 +39,7 @@ authorized internal wheel:
 first-party wrapper wheel:
   two-build reproducibility: PASS
   filename: totalsegmentator_wrapper_mac-0.3.0-py3-none-any.whl
-  sha256: bbe6f9e8592eaa25eb09c6bc9ed794fa874d268936d0517c0c8201b15fc6cc9c
+  sha256: c9b18d5a13a3167edd082227c8737ba110a9460d367195b2b8d1122eb817702d
 
 closure verification:
   hashed requirements: requirements-win-x64-hashed.txt

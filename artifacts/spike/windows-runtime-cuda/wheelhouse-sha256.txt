@@ -77,7 +77,7 @@ e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5  sympy-1.14.0-p
 888981753e65cbaacfc07494370138b1700a27b1f0af587f4f9b47bc024161d0  timm-1.0.22-py3-none-any.whl
 1b7d728ddcf84b12f64ca10ec5f6ce91dd9edcc5e62ed5f0a7260ca00f029e8b  torch-2.11.0+cu126-cp312-cp312-win_amd64.whl
 10cc643e8c01634728e4f96b725a6096ea8cec423f2b8ba234ad139947b2ae17  torchvision-0.26.0+cu126-cp312-cp312-win_amd64.whl
-bbe6f9e8592eaa25eb09c6bc9ed794fa874d268936d0517c0c8201b15fc6cc9c  totalsegmentator_wrapper_mac-0.3.0-py3-none-any.whl
+c9b18d5a13a3167edd082227c8737ba110a9460d367195b2b8d1122eb817702d  totalsegmentator_wrapper_mac-0.3.0-py3-none-any.whl
 4baea1d33eb209f5393d308d13aa210d5d0b7fae5c699d198f2ba28ba693495c  totalsegmentator-2.14.0-py3-none-any.whl
 7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953  tqdm-4.70.0-py3-none-any.whl
 8253cebec4b19094d67cc5ed5af99bf1dba1285292226e98a31929f87a5d6b23  traceback2-1.4.0-py2.py3-none-any.whl
