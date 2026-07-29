@@ -27,12 +27,12 @@ clean Windows 11 x64 standard-user machine
 | Strict CUDA doctor | structured result on selected GPU | unverified |
 | Real CUDA application run | run manifest proves requested/resolved CUDA | unverified |
 | Negative CUDA test | hidden/invalid GPU fails without CPU run | unverified |
-| Explicit CPU path | separate user-authorized CPU result | unverified |
-| Coordinator protocol v1 | request/event/error contract tests | partial: Mac protocol tests pending |
-| Existing CLI compatibility | current macOS CLI tests remain green | pending |
+| Explicit CPU path | separate user-authorized CPU result | unverified: real TotalSegmentator CPU inference not run |
+| Coordinator protocol v1 | request/event/error contract tests | partial: Mac contract and fake-backend integration harness pass; real backend and Windows transport unverified |
+| Existing CLI compatibility | current macOS CLI tests remain green | partial: Mac automated suite passes; Windows unverified |
 | Job Object containment | real child/grandchild membership evidence | unverified |
 | Authoritative cancellation | no surviving inference/GPU processes | unverified |
-| Staging commit | incomplete output never promoted | unverified |
+| Staging commit | incomplete output never promoted | partial: Mac required-artifact negative tests pass; real backend and Windows interruption/race injection unverified |
 | C++ helper MSVC build | reproducible configure/build log | unverified |
 | DICOM synthetic parity | Windows and macOS semantic comparison | unverified |
 | Japanese/long paths | runtime, coordinator and DICOM cases | unverified |

@@ -57,9 +57,14 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "run.log"
             stderr = io.StringIO()
+            events: list[tuple[str, dict[str, object]]] = []
             with redirect_stderr(stderr):
                 event = _emit_run_stage(
-                    "toothseg_refine", 3, log_path=log_path, reset_log=True
+                    "toothseg_refine",
+                    3,
+                    log_path=log_path,
+                    reset_log=True,
+                    event_sink=lambda name, payload: events.append((name, payload)),
                 )
 
             self.assertEqual(event["stage_id"], "instance")
@@ -67,6 +72,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(event["total"], 5)
             self.assertEqual(stderr.getvalue(), log_path.read_text(encoding="utf-8"))
             self.assertTrue(stderr.getvalue().startswith(RUN_STAGE_PREFIX))
+            self.assertEqual(events, [("phase_started", event)])
 
     def test_sanitized_command_hides_full_paths(self) -> None:
         command = ["TotalSegmentator", "-i", "/secret/case/source.nii.gz", "-o", "/tmp/out", "-ta", "x"]
@@ -149,12 +155,14 @@ class RunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             log_path = tmp_path / "run.log"
+            events: list[tuple[str, dict[str, object]]] = []
 
             rc, _elapsed, _stdout, stderr = _run_command_streamed(
                 command=[sys.executable, str(fake)],
                 env=os.environ.copy(),
                 log_path=log_path,
                 safe_command=["python", "fake_tqdm.py"],
+                event_sink=lambda name, payload: events.append((name, payload)),
             )
 
             self.assertEqual(rc, 0)
@@ -164,6 +172,9 @@ class RunnerTests(unittest.TestCase):
             self.assertIn('"stage": "Predicting s01"', log_text)
             self.assertIn('"step": 3', log_text)
             self.assertIn('"total": 3', log_text)
+            progress_events = [payload for name, payload in events if name == "progress"]
+            self.assertEqual(progress_events[-1]["step"], 3)
+            self.assertEqual(progress_events[-1]["total"], 3)
 
     def test_streamed_command_can_name_toothseg_branch_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

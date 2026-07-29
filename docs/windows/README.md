@@ -14,12 +14,15 @@ Read in this order:
    evidence required before alpha, beta, or parity claims.
 4. [`03_GPT_PRO_CONSULTATION.md`](03_GPT_PRO_CONSULTATION.md) — external
    consultation record and local disposition.
+5. [`04_COORDINATOR_PROTOCOL_V1.md`](04_COORDINATOR_PROTOCOL_V1.md) — the
+   implemented request/event boundary and its remaining Windows work.
 
 ## Current status
 
 ```text
 Architecture direction: provisional
-Windows implementation: not started
+Platform-neutral coordinator: Mac fake-backend integration harness implemented
+Real TotalSegmentator CPU inference: unverified
 Windows runtime proof: unverified
 Windows CUDA proof: unverified
 Windows DICOM native build: unverified

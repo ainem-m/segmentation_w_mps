@@ -1,0 +1,447 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, TextIO
+
+from totalsegmentator_wrapper_mac.coordinator_protocol import (
+    CAPABILITIES_OPERATION,
+    PROTOCOL_VERSION,
+    RUN_NIFTI_TOTALSEG_OPERATION,
+    CoordinatorProtocolError,
+    CoordinatorRequest,
+    JsonlEventWriter,
+    parse_coordinator_request,
+    safe_operation_id,
+)
+
+
+SegmentationRunner = Callable[..., Any]
+PreviewRunner = Callable[..., dict[str, Any]]
+
+
+class ArtifactVerificationError(RuntimeError):
+    pass
+
+
+def run_coordinator_request(
+    request: CoordinatorRequest,
+    writer: JsonlEventWriter,
+    *,
+    segmentation_runner: SegmentationRunner | None = None,
+    preview_runner: PreviewRunner | None = None,
+) -> int:
+    writer.emit("operation_started", operation=request.operation)
+    if request.operation == CAPABILITIES_OPERATION:
+        writer.emit(
+            "capabilities",
+            operations=[CAPABILITIES_OPERATION, RUN_NIFTI_TOTALSEG_OPERATION],
+            device_policies={
+                "cpu_required": {"implementation": "available"},
+                "cuda_required": {
+                    "implementation": "windows_spike_required",
+                    "verified": False,
+                },
+            },
+            cancellation={
+                "graceful_control": "not_implemented",
+                "authoritative_windows_job": "unverified",
+            },
+            input_kinds=["nifti"],
+        )
+        writer.emit("operation_completed", status="success")
+        return 0
+
+    if request.operation != RUN_NIFTI_TOTALSEG_OPERATION:
+        return _emit_failure(
+            writer,
+            code="operation_unsupported",
+            safe_reason="The coordinator operation is not supported.",
+        )
+    if request.device_policy == "cuda_required":
+        return _emit_failure(
+            writer,
+            code="cuda_unverified",
+            safe_reason="CUDA execution is not available in this coordinator build.",
+        )
+    if request.device_policy != "cpu_required":
+        return _emit_failure(
+            writer,
+            code="device_policy_unsupported",
+            safe_reason="The requested device policy is not supported.",
+        )
+
+    assert request.input_path is not None
+    assert request.output_directory is not None
+    if not request.input_path.is_file():
+        return _emit_failure(
+            writer,
+            code="input_not_found",
+            safe_reason="The selected NIfTI input could not be opened.",
+        )
+    final_case_directory = request.output_directory
+    if final_case_directory.exists():
+        return _emit_failure(
+            writer,
+            code="output_already_exists",
+            safe_reason="The selected output location already exists.",
+        )
+    final_case_directory.parent.mkdir(parents=True, exist_ok=True)
+    staging_directory = final_case_directory.parent / (
+        f".tswm-{request.operation_id}.staging"
+    )
+    if staging_directory.exists():
+        return _emit_failure(
+            writer,
+            code="staging_already_exists",
+            safe_reason="An interrupted staging operation already exists.",
+        )
+
+    if segmentation_runner is None:
+        from totalsegmentator_wrapper_mac.runner_totalseg import run_totalsegmentator
+
+        segmentation_runner = run_totalsegmentator
+    if preview_runner is None:
+        from totalsegmentator_wrapper_mac.surface_preview import run_surface_preview
+
+        preview_runner = run_surface_preview
+
+    def on_runner_event(event: str, payload: dict[str, Any]) -> None:
+        if event == "phase_started":
+            writer.emit(
+                "phase_started",
+                route=payload.get("route"),
+                stage_id=payload.get("stage_id"),
+                index=payload.get("index"),
+                total=payload.get("total"),
+                label=payload.get("label"),
+            )
+        elif event == "progress":
+            safe_progress = {
+                key: payload.get(key)
+                for key in (
+                    "route",
+                    "stage_id",
+                    "scope",
+                    "stage",
+                    "step",
+                    "total",
+                    "percent",
+                    "eta_seconds",
+                    "phase_only",
+                )
+                if key in payload
+            }
+            writer.emit("progress", **safe_progress)
+
+    try:
+        result = segmentation_runner(
+            input_path=request.input_path,
+            output_root=staging_directory,
+            task="craniofacial_structures",
+            requested_device="cpu",
+            backend="totalsegmentator",
+            copy_input=False,
+            robust_crop=request.robust_crop,
+            higher_order_resampling=request.higher_order_resampling,
+            event_sink=on_runner_event,
+        )
+        actual_device = str(getattr(result, "actual_device", "unknown"))
+        fallback_reason = getattr(result, "fallback_reason", None)
+        writer.emit(
+            "device_resolved",
+            requested_policy=request.device_policy,
+            resolved_device=actual_device,
+            fallback_occurred=fallback_reason is not None,
+        )
+        if actual_device != "cpu" or fallback_reason is not None:
+            return _emit_failure(
+                writer,
+                code="unexpected_device_fallback",
+                safe_reason="The backend did not preserve the required device policy.",
+            )
+        if getattr(result, "status", None) != "success":
+            return _emit_failure(
+                writer,
+                code=getattr(result, "error_code", None) or "backend_failed",
+                safe_reason=getattr(result, "safe_reason", None)
+                or "The segmentation backend did not complete.",
+            )
+
+        case_directory = Path(result.output_dir)
+        if case_directory.resolve() != staging_directory.resolve():
+            return _emit_failure(
+                writer,
+                code="backend_output_mismatch",
+                safe_reason="The backend returned an unexpected output location.",
+            )
+        writer.emit(
+            "phase_started",
+            route="totalsegmentator",
+            stage_id="preview",
+            index=4,
+            total=4,
+            label="3D表示・結果情報を作成中",
+        )
+        preview_runner(
+            case_dir=case_directory,
+            detailed_stl=True,
+        )
+        preview_path = case_directory / "surface_preview" / "index.html"
+        if not preview_path.is_file():
+            return _emit_failure(
+                writer,
+                code="preview_missing",
+                safe_reason="The offline preview was not created.",
+            )
+        try:
+            artifacts = _verify_and_manifest_case(
+                case_directory,
+                operation_id=request.operation_id,
+            )
+        except ArtifactVerificationError:
+            return _emit_failure(
+                writer,
+                code="artifact_verification_failed",
+                safe_reason="The case output did not pass artifact verification.",
+            )
+        if final_case_directory.exists():
+            return _emit_failure(
+                writer,
+                code="output_commit_conflict",
+                safe_reason="The selected output location changed during processing.",
+            )
+        staging_directory.rename(final_case_directory)
+        for artifact in artifacts:
+            writer.emit("artifact_created", **artifact)
+        writer.emit(
+            "operation_completed",
+            status="success",
+            requested_policy=request.device_policy,
+            resolved_device=actual_device,
+            fallback_occurred=False,
+            elapsed_seconds=float(getattr(result, "elapsed_seconds", 0.0)),
+            artifacts=artifacts,
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"coordinator diagnostic: {type(exc).__name__}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if writer.terminal_event is not None:
+            return 1
+        return _emit_failure(
+            writer,
+            code="coordinator_operation_failed",
+            safe_reason="The coordinator operation did not complete.",
+        )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    stdin: TextIO | None = None,
+    stdout: TextIO | None = None,
+) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments:
+        print("coordinator diagnostic: arguments are not accepted", file=sys.stderr)
+        return 2
+    input_stream = stdin or sys.stdin
+    output_stream = stdout or sys.stdout
+    operation_id = "unknown"
+    try:
+        payload = json.load(input_stream)
+        if isinstance(payload, dict):
+            operation_id = safe_operation_id(payload.get("operation_id"))
+        request = parse_coordinator_request(payload)
+        writer = JsonlEventWriter(
+            output_stream,
+            operation_id=request.operation_id,
+        )
+        return run_coordinator_request(request, writer)
+    except json.JSONDecodeError:
+        writer = JsonlEventWriter(output_stream, operation_id=operation_id)
+        return _emit_failure(
+            writer,
+            code="request_json_invalid",
+            safe_reason="The coordinator request is not valid JSON.",
+        )
+    except CoordinatorProtocolError as exc:
+        writer = JsonlEventWriter(
+            output_stream,
+            operation_id=operation_id,
+            protocol_version=PROTOCOL_VERSION,
+        )
+        return _emit_failure(
+            writer,
+            code=exc.code,
+            safe_reason=exc.safe_reason,
+        )
+
+
+def _emit_failure(
+    writer: JsonlEventWriter,
+    *,
+    code: str,
+    safe_reason: str,
+) -> int:
+    writer.emit(
+        "operation_failed",
+        status="failed",
+        error_code=code,
+        safe_reason=safe_reason,
+    )
+    return 2
+
+
+def _verify_and_manifest_case(
+    case_directory: Path,
+    *,
+    operation_id: str,
+) -> list[dict[str, Any]]:
+    try:
+        required_files = {
+            "report": case_directory / "README_OUTPUT.md",
+            "run_log": case_directory / "logs" / "run.log",
+            "benchmark": case_directory / "logs" / "benchmark.json",
+            "environment": case_directory / "logs" / "environment.json",
+            "mask_stats": case_directory / "logs" / "mask_stats.json",
+            "offline_preview": case_directory / "surface_preview" / "index.html",
+        }
+        if any(
+            not path.is_file() or path.stat().st_size <= 0
+            for path in required_files.values()
+        ):
+            raise ArtifactVerificationError
+
+        benchmark = _read_json_object(required_files["benchmark"])
+        run = benchmark.get("run")
+        if (
+            not isinstance(run, dict)
+            or run.get("status") != "success"
+            or run.get("backend") != "totalsegmentator"
+            or run.get("task") != "craniofacial_structures"
+            or run.get("requested_device") != "cpu"
+            or run.get("actual_device") != "cpu"
+            or run.get("fallback_reason") is not None
+        ):
+            raise ArtifactVerificationError
+        _read_json_object(required_files["environment"])
+
+        mask_stats = _read_json_object(required_files["mask_stats"])
+        masks = mask_stats.get("masks")
+        mask_count = mask_stats.get("mask_count")
+        if (
+            not isinstance(masks, list)
+            or isinstance(mask_count, bool)
+            or not isinstance(mask_count, int)
+            or mask_count != len(masks)
+            or not masks
+        ):
+            raise ArtifactVerificationError
+
+        raw_masks = sorted(
+            (case_directory / "segmentations" / "raw_totalseg").glob("*.nii.gz")
+        )
+        if not raw_masks:
+            raise ArtifactVerificationError
+        mask_names = {path.name for path in raw_masks}
+        stats_names = {
+            item.get("name")
+            for item in masks
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        if stats_names != mask_names:
+            raise ArtifactVerificationError
+        valid_nonempty_names = {
+            item.get("name")
+            for item in masks
+            if isinstance(item, dict)
+            and item.get("status") == "ok"
+            and isinstance(item.get("nonzero_voxels"), int)
+            and not isinstance(item.get("nonzero_voxels"), bool)
+            and item["nonzero_voxels"] > 0
+        }
+        if not mask_names.intersection(valid_nonempty_names):
+            raise ArtifactVerificationError
+        mask_stats["mask_dir"] = "segmentations/raw_totalseg"
+        for item in masks:
+            item["path"] = (
+                Path("segmentations") / "raw_totalseg" / str(item["name"])
+            ).as_posix()
+        required_files["mask_stats"].write_text(
+            json.dumps(mask_stats, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        manifest_entries = []
+        for path in [*required_files.values(), *raw_masks]:
+            relative_path = path.relative_to(case_directory).as_posix()
+            manifest_entries.append(
+                {
+                    "relative_path": relative_path,
+                    "size_bytes": path.stat().st_size,
+                    "sha256": _sha256_file(path),
+                }
+            )
+        manifest_path = case_directory / "artifact-manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1",
+                    "protocol_version": PROTOCOL_VERSION,
+                    "operation_id": operation_id,
+                    "artifacts": manifest_entries,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if not manifest_path.is_file() or manifest_path.stat().st_size <= 0:
+            raise ArtifactVerificationError
+    except ArtifactVerificationError:
+        raise
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ArtifactVerificationError from exc
+
+    return [
+        {"kind": "report", "relative_path": "README_OUTPUT.md"},
+        {
+            "kind": "segmentation_directory",
+            "relative_path": "segmentations/raw_totalseg",
+        },
+        {
+            "kind": "offline_preview",
+            "relative_path": "surface_preview/index.html",
+        },
+        {"kind": "artifact_manifest", "relative_path": "artifact-manifest.json"},
+    ]
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ArtifactVerificationError
+    return payload
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

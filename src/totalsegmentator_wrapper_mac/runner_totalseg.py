@@ -13,7 +13,7 @@ from dataclasses import dataclass, asdict
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from totalsegmentator_wrapper_mac.benchmark import environment_metadata, input_metadata, write_json
 from totalsegmentator_wrapper_mac import __version__
@@ -49,6 +49,7 @@ PROGRESS_PHASE_RE = re.compile(
 )
 RUN_PROGRESS_PREFIX = "RUN_PROGRESS "
 RUN_STAGE_PREFIX = "RUN_STAGE "
+RunEventSink = Callable[[str, dict[str, Any]], None]
 RUN_STAGE_LAYOUTS: dict[str, tuple[tuple[str, str], ...]] = {
     "totalsegmentator": (
         ("prepare", "実行準備"),
@@ -96,6 +97,7 @@ def _emit_run_stage(
     *,
     log_path: Path,
     reset_log: bool = False,
+    event_sink: RunEventSink | None = None,
 ) -> dict[str, Any]:
     try:
         stages = RUN_STAGE_LAYOUTS[route]
@@ -116,6 +118,8 @@ def _emit_run_stage(
         handle.flush()
     sys.stderr.write(line + "\n")
     sys.stderr.flush()
+    if event_sink is not None:
+        event_sink("phase_started", dict(event))
     return event
 TEETH_SUPPLIED_PREFLIGHT_ROBUST_WARNING = (
     "existing craniofacial case supplied; internal robust preflight skipped"
@@ -379,6 +383,7 @@ def run_totalsegmentator(
     execution_profile: str | None = None,
     require_mps: bool = False,
     emit_run_stages: bool = True,
+    event_sink: RunEventSink | None = None,
 ) -> TotalSegRunResult:
     input_path = input_path.resolve()
     if not input_path.exists():
@@ -491,7 +496,13 @@ def run_totalsegmentator(
 
     route = _progress_route(backend=backend, task=task)
     if emit_run_stages:
-        _emit_run_stage(route, 1, log_path=case.run_log_path, reset_log=True)
+        _emit_run_stage(
+            route,
+            1,
+            log_path=case.run_log_path,
+            reset_log=True,
+            event_sink=event_sink,
+        )
 
     device_check = device_check or resolve_device(requested_device, skip_device_check=skip_device_check)
     if device_check.status != "pass" or not device_check.actual_device:
@@ -642,7 +653,12 @@ def run_totalsegmentator(
         env["TOTALSEG_WEIGHTS_PATH"] = str(totalseg_weights)
 
     if emit_run_stages:
-        _emit_run_stage(route, 2, log_path=case.run_log_path)
+        _emit_run_stage(
+            route,
+            2,
+            log_path=case.run_log_path,
+            event_sink=event_sink,
+        )
     proc_returncode, elapsed, stdout, stderr = _run_command_streamed(
         command=command,
         env=env,
@@ -652,10 +668,16 @@ def run_totalsegmentator(
         progress_route=route,
         progress_stage_id="segment",
         progress_scope="subtask",
+        event_sink=event_sink,
     )
 
     if emit_run_stages and proc_returncode == 0:
-        _emit_run_stage(route, 3, log_path=case.run_log_path)
+        _emit_run_stage(
+            route,
+            3,
+            log_path=case.run_log_path,
+            event_sink=event_sink,
+        )
     if proc_returncode == 0:
         write_json(
             case.mask_stats_path,
@@ -1913,6 +1935,7 @@ def _run_command_streamed(
     progress_route: str | None = None,
     progress_stage_id: str | None = None,
     progress_scope: str = "subtask",
+    event_sink: RunEventSink | None = None,
 ) -> tuple[int, float, str, str]:
     if progress_scope not in {"stage", "subtask"}:
         raise ValueError(f"Unsupported progress scope: {progress_scope!r}")
@@ -1957,6 +1980,8 @@ def _run_command_streamed(
                         log_file.write(progress_line + "\n")
                         sys.stderr.write(progress_line + "\n")
                         sys.stderr.flush()
+                        if event_sink is not None:
+                            event_sink("progress", dict(progress))
                 log_file.flush()
 
         with lock:
