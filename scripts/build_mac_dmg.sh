@@ -7,7 +7,7 @@ APP_NAME="TotalSegmentator Wrapper for Mac"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
 DMG_STAGING="${DIST_DIR}/dmg_staging"
 APP_VERSION="${TOTALSEGMENTATOR_WRAPPER_MAC_APP_VERSION:-0.3.0}"
-DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260728-oss1}"
+DMG_VERSION_TAG="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_VERSION_TAG:-${APP_VERSION}-20260729-final}"
 DMG_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DMG_PATH:-${DIST_DIR}/${APP_NAME}-${DMG_VERSION_TAG}-arm64.dmg}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 
@@ -69,7 +69,7 @@ TotalSegmentator Wrapper for Mac alpha
 - 利用状況データの送信も、専用環境内で無効化します。
 - Setup中は「3Dサンプルを開く」から、同梱Sample 1のオフライン3Dプレビューをブラウザで操作できます。
 - Setup完了後、アプリには同梱Sample 1のCT入力が用意されています。
-- Sample 1の3Dプレビュー作成は、モデル準備済みの場合、このMacでおおむね100秒前後かかります。
+- Sample 1の3Dプレビュー作成は、モデル準備済みでも入力の大きさやMacの状態により数分以上かかる場合があります。
 - CTフォルダを選んだ場合、アプリ内で安全確認し、通常CTとして取り込める場合は同梱dcm2niixでプレビュー用入力を準備します。
 - CTを見るソフトから「表示用の断面画像」として書き出されたデータの場合、slice確認後に救済3Dプレビューへ進めることがあります。
 - 自動取り込みできないCTでも、CT画像そのものが壊れているとは限りません。対応できる場合があるため、必要であれば開発者へご連絡ください。
@@ -169,7 +169,7 @@ ${OPEN_WARNING_TEST}
 - 利用状況データの送信も、専用環境内で無効化します。
 - Setup中は「3Dサンプルを開く」から、同梱Sample 1のオフライン3Dプレビューをブラウザで操作できます。
 - Setup完了後、アプリの入力欄には同梱Sample 1 NIfTIが自動設定されます。
-- Sample 1の3Dプレビュー作成は、モデル準備済みの場合、このMacでおおむね100秒前後かかります。
+- Sample 1の3Dプレビュー作成は、モデル準備済みでも入力の大きさやMacの状態により数分以上かかる場合があります。
 - CTフォルダを選んだ場合、アプリ内で安全確認し、通常CTとして取り込める場合は同梱dcm2niixでプレビュー用入力を準備します。
 - 更新確認はユーザーが「更新を確認」を押した時だけversion manifestを取得します。起動時やSetup中に自動確認しません。
 - 更新がある場合は、追加確認後にnotarized DMGをダウンロードし、SHA256とGatekeeper確認後にアプリを置き換えて再起動します。

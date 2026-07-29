@@ -42,7 +42,7 @@ Sampleで流れを体験する
 - Sample 1 3Dプレビュー still opens in the default browser; no WebView is embedded
   in this migration step.
 - The Sample tutorial explicitly tells users that Sample 1 preview creation
-  takes roughly 100 seconds on the target Mac. The precomputed Sample 1 3D
+  may take several minutes depending on the input size and Mac state. The precomputed Sample 1 3D
   viewer remains instant to open; the 100-second note applies to running the
   local preview workflow.
 - After a successful run, SwiftUI launches
@@ -83,7 +83,7 @@ Sampleで流れを体験する
 - Setup disables TotalSegmentator usage stats (`利用状況データ`) inside the
   private App Support runtime. The Setup and app text explain that
   DICOM/CT/processing results are not sent, and that first preview creation may
-  download model weights. The Sample 1 `100秒前後` estimate is documented as
+  download model weights. The Sample 1 `数分以上かかる場合があります` estimate is documented as
   the model-already-downloaded case.
 
 ## Framework Decision

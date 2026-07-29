@@ -144,7 +144,7 @@ scripts/build_mac_dmg.sh
 This creates:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.3.0-20260728-oss1-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.3.0-20260729-final-arm64.dmg
 ```
 
 The DMG contains the app, an `/Applications` symlink, and a short README. Users

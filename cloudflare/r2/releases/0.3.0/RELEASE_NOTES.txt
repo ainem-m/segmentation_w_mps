@@ -1,0 +1,25 @@
+TotalSegmentator Wrapper for Mac 0.3.0 alpha
+
+- Developer ID signed and Apple notarized DMG for Apple Silicon Macs.
+- Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
+- Bundled dcm2niix and GDCM 3.2.7 DICOM normalizer for local CT intake.
+- Native JPEG, JPEG-LS, JPEG 2000, and RLE DICOM decoding with lossless transcoding before dcm2niix conversion.
+- Invalid compressed DICOM data now fails explicitly instead of silently falling back; Enhanced CT remains blocked until per-frame geometry can be verified.
+- Bundled Sample 1 non-clinical preview data and offline 3D preview HTML.
+- First setup now prepares the craniofacial, robust crop, and teeth model weights.
+- Craniofacial app previews now use the robust crop path by default for local CBCT inputs.
+- High-resolution ToothSeg refinement can be explicitly prepared and run after a successful TotalSegmentator result with detected teeth.
+- The first ToothSeg preparation downloads approximately 920 MB; it never starts refinement automatically after the download.
+- Model-specific stages show measured progress when available and an honest indeterminate range otherwise.
+- Browser-ready 3D previews are produced before detailed STL export finishes.
+- Binary STL serialization is chunked and vectorized while preserving mesh geometry and float-precision normals.
+- Large browser mesh payloads are parsed as JSON to avoid Safari JavaScript parser stack overflow.
+- On the tested M1 Mac with 16 GB unified memory, the bundled 12 mm ROI sample took 34 minutes 27 seconds; other scans may take longer or exceed available memory.
+- Update checks run only after the user presses the update button.
+
+Non-clinical limitation:
+This is a non-clinical research/education preview. It is not a medical device and is not intended for diagnosis, treatment planning, surgical planning, or autonomous clinical decision-making. Outputs must be treated as preliminary segmentation model outputs and manually reviewed.
+
+Data and update endpoint:
+DICOM, CT, generated outputs, local paths, logs, and user identifiers are not
+sent to the update endpoint.
