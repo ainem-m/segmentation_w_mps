@@ -5,10 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MacBook Airでもっと簡単・高速に！CTから顎骨・歯を3Dデータ化！</title>
   <link rel="canonical" href="https://totalsegmentator.lacramy.com/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <meta
     name="description"
     content="CTのDICOMを選ぶだけ。初回準備はアプリ内のボタンひとつで行い、MacのGPUを活用して顎骨や歯の3Dデータを作成します。"
   >
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:url" content="https://totalsegmentator.lacramy.com/">
+  <meta property="og:site_name" content="TotalSegmentator Wrapper for Mac">
+  <meta property="og:title" content="MacBook Airでもっと簡単・高速に！CTから顎骨・歯を3Dデータ化！">
+  <meta
+    property="og:description"
+    content="ボタンひとつで準備し、MacのGPUを活用してCTから顎骨や歯の3Dデータを作成できる無料アプリです。"
+  >
+  <meta property="og:image" content="https://totalsegmentator.lacramy.com/assets/benchmark-dentalseg.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1130">
+  <meta property="og:image:height" content="858">
+  <meta property="og:image:alt" content="顎骨と歯を重ねて表示したDentalSegmentatorのX-ray表示">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MacBook Airでもっと簡単・高速に！CTから顎骨・歯を3Dデータ化！">
+  <meta
+    name="twitter:description"
+    content="ボタンひとつで準備し、MacのGPUを活用してCTから顎骨や歯の3Dデータを作成できる無料アプリです。"
+  >
+  <meta name="twitter:image" content="https://totalsegmentator.lacramy.com/assets/benchmark-dentalseg.png">
+  <meta name="twitter:image:alt" content="顎骨と歯を重ねて表示したDentalSegmentatorのX-ray表示">
   <style>
     :root {
       color-scheme: light;
@@ -1483,7 +1506,7 @@
             <div class="actions">
               <a class="button primary" href="/download">ダウンロード</a>
               <a class="button subtle" href="#support">開発を応援</a>
-              <a class="button subtle" href="#dicom">DICOMを報告</a>
+              <a class="button subtle" href="https://forms.gle/QFPwF1Pi5C8bmSuw6" target="_blank" rel="noopener">読み込めないDICOMを報告</a>
             </div>
           </div>
           <p class="hero-note">
@@ -1619,7 +1642,7 @@
 
             <div class="bar-row">
               <div class="bar-label">
-                <span>本アプリ 0.2.1</span>
+                <span>実測時：本アプリ 0.2.1</span>
                 <strong>4分34.88秒</strong>
               </div>
               <div class="bar-track" aria-label="本アプリの処理時間4分34.88秒">
@@ -1780,9 +1803,9 @@
               <li><span>3</span><div>Lacramyが内容を確認し、対応できるものは今後の更新で改善できるよう努めます</div></li>
             </ol>
             <div class="dicom-contact">
-              <span class="button small disabled-button" aria-disabled="true">
-                読み込めないDICOMの相談フォーム（準備中）
-              </span>
+              <a class="button small" href="https://forms.gle/QFPwF1Pi5C8bmSuw6" target="_blank" rel="noopener">
+                読み込めないDICOMを相談する
+              </a>
             </div>
             <p class="fine-print">
               すべてのDICOMを必ず読み込めることを保証するものではありません。
@@ -1821,7 +1844,9 @@
           <p class="kicker">Keep improving</p>
           <h2>無料で使えるアプリを、育て続けるために。</h2>
           <p class="section-intro">
-            アプリとソースコードを無料で公開しています。
+            アプリは無料で利用でき、本アプリ独自のソースコードは
+            Apache License 2.0の
+            <a href="https://github.com/ainem-m/segmentation_w_mps" target="_blank" rel="noopener">オープンソースとして公開しています</a>。
             不具合への対応やDICOM対応の拡大を継続するため、任意の応援と個別サポートを用意します。
           </p>
         </div>
@@ -1843,7 +1868,10 @@
             <p class="price">60分 5,000円</p>
             <p class="card-copy">
               画面を共有しながら、インストール、初回準備、基本操作、
-              エラーの確認をお手伝いします。公開初期の限定サポートとして準備中です。
+              エラーの確認をお手伝いします。ご希望の方には、個別に日程を調整して対応します。
+              <a href="https://forms.gle/QFPwF1Pi5C8bmSuw6" target="_blank" rel="noopener">相談フォーム</a>、
+              または<a href="mailto:support@lacramy.com">support@lacramy.com</a>からお問い合わせください。
+              メールの件名に「TotalSegmentator Wrapper」とご記載ください。
             </p>
             <ul class="check-list">
               <li>事前に指定のリモートデスクトップアプリをインストール</li>
@@ -1869,6 +1897,7 @@
       </p>
       <div class="footer-links">
         <a href="/release-notes">リリースノート</a>
+        <a href="https://github.com/ainem-m/segmentation_w_mps" rel="noopener">ソースコード</a>
         <a href="https://app.lacramy.com/" rel="noopener">Lacramy Apps</a>
         <a href="https://github.com/wasserth/TotalSegmentator" rel="noopener">TotalSegmentator</a>
         <a href="https://doi.org/10.5281/zenodo.10829675" rel="noopener">DentalSegmentator</a>
