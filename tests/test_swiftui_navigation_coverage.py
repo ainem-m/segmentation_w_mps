@@ -325,6 +325,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn('arguments.firstIndex(of: "--ui-preview")', preview)
         self.assertIn('"input-advanced"', preview)
         self.assertIn('"input-comparison"', preview)
+        self.assertIn('"input-dicom-preview"', preview)
         self.assertIn('"dicom-rescue"', preview)
         self.assertIn('scenario == "input-advanced"', preview)
         self.assertIn("creationChoice = .individualTeethBeta", preview)
@@ -606,8 +607,13 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         conversion = body(STATE, "private func startDicomCleanConversion")
         for token in (
             "CommandBuilder.dicomConvertCleanCommand",
+            "CommandBuilder.niftiPreviewCommand",
             "seriesKey: candidate.seriesKey",
             "convert_clean_metadata.json",
+            "input_preview",
+            "inputCTPreviewRequired = true",
+            "inputCTPreviewSlices = previewSlices",
+            "inputCTPreviewVolumeEmpty = previewVolumeEmpty",
             "inputSource = .nifti",
             "screen = .inputAndCreation",
             "dicom_conversion_cancelled",
@@ -617,6 +623,24 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertNotIn("viewer_export_cancelled", conversion)
         self.assertNotIn("viewer_export_failed", conversion)
         self.assertNotIn("CommandBuilder.runCommand", conversion)
+
+    def test_shared_input_shows_dicom_mpr_and_blocks_empty_volume(self):
+        shared_input = body(VIEWS, "struct InputAndCreationView")
+        for token in (
+            "state.inputCTPreviewRequired",
+            "選択したCTの簡易プレビュー",
+            '("axial", "上から")',
+            '("coronal", "正面から")',
+            '("sagittal", "横から")',
+            "state.inputCTPreviewWarning",
+            "診断や治療計画には使用できません",
+        ):
+            self.assertIn(token, shared_input)
+
+        preflight = body(STATE, "var runPreflightBlockingReason")
+        self.assertIn("inputCTPreviewVolumeEmpty", preflight)
+        self.assertIn("inputCTPreviewFailed", preflight)
+        self.assertIn("空の画像", preflight)
 
     def test_viewer_export_conversion_has_its_own_safe_failures(self):
         conversion = body(STATE, "private func startDicomViewerExportConversion")
@@ -652,6 +676,29 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         slicer_command = body(COMMANDS, "static func slicerExportCommand")
         self.assertIn('"slicer-export"', slicer_command)
         self.assertNotIn("open -a", slicer_command)
+
+    def test_result_exposes_current_flavor_stl_folder_and_generation_state(self):
+        result = body(VIEWS, "struct ResultView")
+        for token in (
+            "state.openSTLFolder()",
+            "state.stlFolderButtonTitle",
+            "state.canOpenSTLFolder",
+            "state.stlGenerationStatusText",
+            "state.openSTLGenerationLog()",
+            "state.startSTLStatusMonitoring()",
+            "state.stopSTLStatusMonitoring()",
+        ):
+            self.assertIn(token, result)
+
+        open_folder = body(STATE, "func openSTLFolder")
+        self.assertIn("expectedSTLDirectoryURL", open_folder)
+        self.assertIn("openURLInWorkspace(directory)", open_folder)
+        self.assertNotIn("surfacePreviewCommand", open_folder)
+
+        preview_output = body(STATE, "private func expectedSurfacePreviewOutputURL")
+        self.assertIn('case .craniofacial:', preview_output)
+        self.assertIn('case .toothSeg:', preview_output)
+        self.assertIn('"surface_preview/toothseg"', preview_output)
 
     def test_stop_and_setup_runtime_contracts_are_preserved(self):
         stop = body(STATE, "func stopRun")

@@ -578,6 +578,26 @@ struct CommandBuilder {
         return command
     }
 
+    static func niftiPreviewCommand(
+        python: URL,
+        input: URL,
+        outputDir: URL,
+        outputJSON: URL
+    ) -> [String] {
+        [
+            python.path,
+            "-m",
+            "totalsegmentator_wrapper_mac",
+            "nifti-preview",
+            "--input",
+            input.path,
+            "--output-dir",
+            outputDir.path,
+            "--output-json",
+            outputJSON.path,
+        ]
+    }
+
     static func dicomPrepareRescueCommand(
         python: URL,
         dicomDir: URL,

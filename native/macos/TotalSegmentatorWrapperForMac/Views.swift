@@ -339,6 +339,53 @@ struct InputAndCreationView: View {
                             .buttonStyle(.bordered)
                     }
                 }
+                if state.inputCTPreviewRequired {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("選択したCTの簡易プレビュー")
+                                    .font(.headline)
+                                if let candidate = state.selectedDicomSeries {
+                                    Text(candidate.displayTitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                state.chooseCTInput()
+                            } label: {
+                                Label("別のCTを選ぶ", systemImage: "folder.badge.plus")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(
+                                [("axial", "上から"), ("coronal", "正面から"), ("sagittal", "横から")],
+                                id: \.0
+                            ) { plane, label in
+                                SlicePreviewCard(
+                                    label: label,
+                                    slice: state.inputCTPreviewSlices.first(where: { $0.plane == plane })
+                                )
+                            }
+                        }
+                        if !state.inputCTPreviewWarning.isEmpty {
+                            Label(
+                                state.inputCTPreviewWarning,
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                        }
+                        Text("表示確認用の簡易画像です。診断や治療計画には使用できません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color.secondary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
                 VStack(alignment: .leading, spacing: 10) {
                     Text("作成する3Dプレビュー")
                         .font(.headline)
@@ -1772,6 +1819,13 @@ struct ResultView: View {
                     }
                     HStack {
                         Button {
+                            state.openSTLFolder()
+                        } label: {
+                            Label(state.stlFolderButtonTitle, systemImage: "folder")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!state.canOpenSTLFolder)
+                        Button {
                             state.exportForSlicer()
                         } label: {
                             Label("3D Slicer用に書き出す", systemImage: "square.and.arrow.up")
@@ -1790,6 +1844,22 @@ struct ResultView: View {
                         }
                         .buttonStyle(.bordered)
                         Spacer()
+                    }
+                    Text(state.stlGenerationStatusText)
+                        .font(.caption)
+                        .foregroundStyle(
+                            state.stlGenerationStatus == "failed"
+                                || state.stlGenerationStatus == "inconsistent"
+                                ? .orange
+                                : .secondary
+                        )
+                    if state.stlGenerationStatus == "failed" {
+                        Button {
+                            state.openSTLGenerationLog()
+                        } label: {
+                            Label("STL生成ログを開く", systemImage: "doc.text")
+                        }
+                        .buttonStyle(.bordered)
                     }
                     if !state.resultLocationItems.isEmpty {
                         DisclosureGroup("保存されたファイル") {
@@ -1847,6 +1917,12 @@ struct ResultView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 12)
+        }
+        .onAppear {
+            state.startSTLStatusMonitoring()
+        }
+        .onDisappear {
+            state.stopSTLStatusMonitoring()
         }
     }
 

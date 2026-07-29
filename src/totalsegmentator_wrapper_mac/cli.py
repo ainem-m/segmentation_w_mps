@@ -131,6 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
     dicom_convert.add_argument("--dcm2niix", type=Path, default=None)
     dicom_convert.add_argument("--timeout-sec", type=int, default=900)
 
+    nifti_preview = subparsers.add_parser(
+        "nifti-preview",
+        help="Write non-inference center MPR images and empty-volume metadata.",
+    )
+    nifti_preview.add_argument("--input", required=True, type=Path)
+    nifti_preview.add_argument("--output-dir", required=True, type=Path)
+    nifti_preview.add_argument("--output-json", required=True, type=Path)
+
     dicom_rescue = subparsers.add_parser(
         "dicom-normalizer-prepare-rescue",
         help="Launch the external C++ DICOM normalizer secondary-capture rescue path.",
@@ -550,6 +558,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.status == "success" else result.returncode or 1
+
+    if args.command == "nifti-preview":
+        from totalsegmentator_wrapper_mac.nifti_preview import write_nifti_preview
+
+        result = write_nifti_preview(
+            input_path=args.input,
+            output_dir=args.output_dir,
+            output_json=args.output_json,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
 
     if args.command == "dicom-normalizer-prepare-rescue":
         result = run_dicom_normalizer_prepare_rescue(

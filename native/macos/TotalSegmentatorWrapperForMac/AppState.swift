@@ -417,6 +417,7 @@ final class AppState: ObservableObject {
     private let dentalPreparationRunner = ProcessRunner()
     private var logTimer: Timer?
     private var dentalPreparationTimer: Timer?
+    private var stlStatusTimer: Timer?
     private var dentalPreparationCancellationRequested = false
     private var startedAt: Date?
     private var lastLogText = ""
@@ -560,6 +561,12 @@ final class AppState: ObservableObject {
     @Published var pendingViewerExportCandidate: ViewerExportCandidate?
     @Published var ctPreviewSlices: [CTPreviewSlice] = []
     @Published var ctPreviewWarning = ""
+    @Published var inputCTPreviewRequired = false
+    @Published var inputCTPreviewSlices: [CTPreviewSlice] = []
+    @Published var inputCTPreviewWarning = ""
+    @Published var inputCTPreviewVolumeEmpty = false
+    @Published var inputCTPreviewFailed = false
+    @Published var stlGenerationStatus = "unavailable"
     @Published var resultKind: ResultKind = .none
     @Published var resultOutcome: ResultOutcome = .none
     @Published var updateMessage = ""
@@ -681,6 +688,13 @@ final class AppState: ObservableObject {
     var runPreflightBlockingReason: String {
         if dentalPreparationRunning {
             return "追加モデルの準備が終了するまでお待ちください。"
+        }
+        if inputCTPreviewRequired && inputCTPreviewVolumeEmpty {
+            return "CT画像の内容を確認できません。空の画像、または正しく書き出されていない画像の可能性があります。"
+        }
+        if inputCTPreviewRequired
+            && (inputCTPreviewFailed || Set(inputCTPreviewSlices.map(\.plane)).count < 3) {
+            return "CTの簡易プレビューを作成できませんでした。再度CTを選び直してください。"
         }
         if segmentationBackend == .dentalSegmentator && runMode == .individualTeeth {
             return "DentalSegmentatorは歯列・顎骨の5ラベルpreview用です。個別歯ベータはTotalSegmentator backendを選んでください。"
@@ -895,6 +909,7 @@ final class AppState: ObservableObject {
             forFlavor: activeResultFlavor
         )
         let preview = expectedSurfacePreviewURL(caseDir: outputURL, flavor: activeResultFlavor)
+        let stlDirectory = expectedSTLDirectoryURL(caseDir: outputURL, flavor: activeResultFlavor)
         let log = activeResultFlavor == .toothSeg
             ? outputURL.appendingPathComponent("logs/toothseg_refine/run.log")
             : outputURL.appendingPathComponent("logs/run.log")
@@ -922,6 +937,14 @@ final class AppState: ObservableObject {
                 detail: "ブラウザで開くoffline HTML viewerです。",
                 systemImage: "cube.transparent",
                 exists: FileManager.default.fileExists(atPath: preview.path)
+            ),
+            RunLocationItem(
+                id: "stl",
+                title: "STLフォルダ",
+                path: stlDirectory.path,
+                detail: stlGenerationStatusText,
+                systemImage: "folder.badge.gearshape",
+                exists: FileManager.default.fileExists(atPath: stlDirectory.path)
             ),
             RunLocationItem(
                 id: "log",
@@ -1114,7 +1137,8 @@ final class AppState: ObservableObject {
         }
         let scenario = arguments[flagIndex + 1]
         let supported = [
-            "setup", "start", "input", "input-advanced", "input-comparison", "running",
+            "setup", "start", "input", "input-advanced", "input-comparison",
+            "input-dicom-preview", "running",
             "running-known", "running-unknown", "running-download", "running-stopped",
             "ct-preview", "dicom-rescue", "dicom-rescue-updating", "result", "result-toothseg",
             "result-toothseg-failure", "result-failure",
@@ -1149,12 +1173,46 @@ final class AppState: ObservableObject {
         case "start":
             screen = .start
             selectedStep = 0
-        case "input", "input-advanced", "input-comparison":
+        case "input", "input-advanced", "input-comparison", "input-dicom-preview":
             screen = .inputAndCreation
             selectedStep = 1
             statusText = "プレビュー作成準備完了"
             if scenario == "input-advanced" {
                 creationChoice = .individualTeethBeta
+            }
+            if scenario == "input-dicom-preview" {
+                inputSource = .nifti
+                inputCTPreviewRequired = true
+                let fixtureRoot = URL(
+                    fileURLWithPath: FileManager.default.currentDirectoryPath,
+                    isDirectory: true
+                ).appendingPathComponent(
+                    "artifacts/ui-transition-map/fixtures",
+                    isDirectory: true
+                )
+                inputCTPreviewSlices = [
+                    CTPreviewSlice(
+                        plane: "axial", label: "上から",
+                        url: fixtureRoot.appendingPathComponent("axial.pgm"),
+                        width: 230, height: 220,
+                        rowSpacingMM: nil, columnSpacingMM: nil,
+                        minValue: 0, maxValue: 255, uniformOrEmpty: false
+                    ),
+                    CTPreviewSlice(
+                        plane: "coronal", label: "正面から",
+                        url: fixtureRoot.appendingPathComponent("coronal.pgm"),
+                        width: 230, height: 160,
+                        rowSpacingMM: nil, columnSpacingMM: nil,
+                        minValue: 0, maxValue: 255, uniformOrEmpty: false
+                    ),
+                    CTPreviewSlice(
+                        plane: "sagittal", label: "横から",
+                        url: fixtureRoot.appendingPathComponent("sagittal.pgm"),
+                        width: 220, height: 160,
+                        rowSpacingMM: nil, columnSpacingMM: nil,
+                        minValue: 0, maxValue: 255, uniformOrEmpty: false
+                    ),
+                ]
             }
         case "running", "running-known", "running-unknown", "running-download", "running-stopped":
             screen = .running
@@ -1291,6 +1349,7 @@ final class AppState: ObservableObject {
     deinit {
         logTimer?.invalidate()
         dentalPreparationTimer?.invalidate()
+        stlStatusTimer?.invalidate()
     }
 
     private func restoreUserSettings() {
@@ -1417,6 +1476,7 @@ final class AppState: ObservableObject {
     }
 
     func useSampleInput() {
+        clearInputCTPreview()
         inputURL = paths.sampleInput
         inputSource = .sample
         outputURL = nil
@@ -1441,6 +1501,7 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
+            clearInputCTPreview()
             if isDirectory(url) {
                 inputURL = url
                 inputSource = .dicomFolder
@@ -1463,6 +1524,7 @@ final class AppState: ObservableObject {
         }
         resetSecondaryCaptureRescue()
         clearPendingCTPreview()
+        clearInputCTPreview()
         if isDirectory(url) {
             inputURL = url
             inputSource = .dicomFolder
@@ -1484,6 +1546,7 @@ final class AppState: ObservableObject {
     }
 
     private func prepareNiftiInput(_ url: URL) {
+        clearInputCTPreview()
         inputURL = url
         inputSource = .nifti
         outputURL = nil
@@ -1699,6 +1762,7 @@ final class AppState: ObservableObject {
         let auditDir = paths.runs.appendingPathComponent("dicom_audit_\(Int(Date().timeIntervalSince1970))", isDirectory: true)
         let auditJSON = auditDir.appendingPathComponent("dicom_normalizer_audit.json")
         try? FileManager.default.createDirectory(at: auditDir, withIntermediateDirectories: true)
+        clearInputCTPreview()
         inputURL = dicomDir
         inputSource = .dicomFolder
         lastDicomDirURL = dicomDir
@@ -2851,10 +2915,30 @@ final class AppState: ObservableObject {
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)
         let runner = self.runner
+        let venvPython = paths.venvPython
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc = runner.run(command, environment: environment, logURL: logURL)
             let metadataJSON = convertDir.appendingPathComponent("convert_clean_metadata.json")
             let niftiURL = rc == 0 ? convertedNiftiURL(metadataJSON: metadataJSON) : nil
+            let previewDir = convertDir.appendingPathComponent("input_preview", isDirectory: true)
+            let previewJSON = previewDir.appendingPathComponent("preview.json")
+            var previewRC: Int32 = 1
+            if let niftiURL, FileManager.default.fileExists(atPath: niftiURL.path) {
+                previewRC = runner.run(
+                    CommandBuilder.niftiPreviewCommand(
+                        python: venvPython,
+                        input: niftiURL,
+                        outputDir: previewDir.appendingPathComponent("images", isDirectory: true),
+                        outputJSON: previewJSON
+                    ),
+                    environment: environment,
+                    logURL: logURL
+                )
+            }
+            let previewSlices = previewRC == 0 ? viewerExportPreviewSlices(metadataJSON: previewJSON) : []
+            let previewVolumeEmpty = previewRC == 0
+                ? niftiPreviewVolumeIsUniformOrEmpty(metadataJSON: previewJSON)
+                : false
             DispatchQueue.main.async {
                 let stopped = self?.stopRequested == true
                 self?.isRunning = false
@@ -2879,6 +2963,15 @@ final class AppState: ObservableObject {
                     self?.resultOutcome = .none
                     self?.inputURL = niftiURL
                     self?.inputSource = .nifti
+                    self?.inputCTPreviewRequired = true
+                    self?.inputCTPreviewSlices = previewSlices
+                    self?.inputCTPreviewVolumeEmpty = previewVolumeEmpty
+                    self?.inputCTPreviewFailed = previewRC != 0 || previewSlices.count < 3
+                    self?.inputCTPreviewWarning = makeInputCTPreviewWarning(
+                        slices: previewSlices,
+                        volumeEmpty: previewVolumeEmpty,
+                        failed: previewRC != 0
+                    )
                     self?.outputURL = nil
                     self?.resultKind = .none
                     self?.dicomSummaryText = ""
@@ -3415,6 +3508,7 @@ final class AppState: ObservableObject {
     private func setResultFlavor(_ flavor: ResultOutputFlavor) {
         guard availableResultFlavors.contains(flavor) else { return }
         activeResultFlavor = flavor
+        refreshSTLGenerationStatus()
     }
 
     func setActiveResultFlavor(_ flavor: ResultOutputFlavor) {
@@ -3473,9 +3567,16 @@ final class AppState: ObservableObject {
             return
         }
         let acceptedInputURL = pendingPreparedInputURL
+        let acceptedSlices = ctPreviewSlices
+        let acceptedWarning = ctPreviewWarning
         clearPendingCTPreview()
         inputURL = acceptedInputURL
         inputSource = .nifti
+        inputCTPreviewRequired = true
+        inputCTPreviewSlices = acceptedSlices
+        inputCTPreviewWarning = acceptedWarning
+        inputCTPreviewVolumeEmpty = acceptedSlices.allSatisfy(\.uniformOrEmpty)
+        inputCTPreviewFailed = acceptedSlices.count < 3
         outputURL = nil
         resultKind = .none
         dicomSummaryText = ""
@@ -3511,6 +3612,14 @@ final class AppState: ObservableObject {
         pendingViewerExportCandidate = nil
         ctPreviewSlices = []
         ctPreviewWarning = ""
+    }
+
+    private func clearInputCTPreview() {
+        inputCTPreviewRequired = false
+        inputCTPreviewSlices = []
+        inputCTPreviewWarning = ""
+        inputCTPreviewVolumeEmpty = false
+        inputCTPreviewFailed = false
     }
 
     func goToStart() {
@@ -3596,6 +3705,128 @@ final class AppState: ObservableObject {
             return
         }
         openURLInWorkspace(outputURL)
+    }
+
+    var canOpenSTLFolder: Bool {
+        guard stlGenerationStatus == "complete", let outputURL else {
+            return false
+        }
+        let directory = expectedSTLDirectoryURL(
+            caseDir: outputURL,
+            flavor: activeResultFlavor
+        )
+        return FileManager.default.fileExists(atPath: directory.path)
+    }
+
+    var stlFolderButtonTitle: String {
+        switch stlGenerationStatus {
+        case "pending", "running":
+            return "STLを作成中…"
+        case "failed":
+            return "STL作成に失敗"
+        case "inconsistent":
+            return "STLフォルダが見つかりません"
+        default:
+            return "STLフォルダを開く"
+        }
+    }
+
+    var stlGenerationStatusText: String {
+        switch stlGenerationStatus {
+        case "pending": return "STL生成待ちです。"
+        case "running": return "STLをバックグラウンドで生成しています。"
+        case "complete": return "STL作成済みです。"
+        case "failed": return "STL作成に失敗しました。stl_generation.logを確認してください。"
+        case "inconsistent": return "完了記録がありますが、STLフォルダが見つかりません。"
+        default: return "STL生成状態を確認できません。"
+        }
+    }
+
+    func openSTLFolder() {
+        guard let outputURL else {
+            resultMessage = "結果フォルダが見つかりません。"
+            return
+        }
+        refreshSTLGenerationStatus()
+        let directory = expectedSTLDirectoryURL(
+            caseDir: outputURL,
+            flavor: activeResultFlavor
+        )
+        guard stlGenerationStatus == "complete",
+              FileManager.default.fileExists(atPath: directory.path)
+        else {
+            resultMessage = stlGenerationStatusText
+            return
+        }
+        openURLInWorkspace(directory)
+    }
+
+    func openSTLGenerationLog() {
+        guard let outputURL else {
+            resultMessage = "結果フォルダが見つかりません。"
+            return
+        }
+        let logURL = expectedSurfacePreviewOutputURL(
+            caseDir: outputURL,
+            flavor: activeResultFlavor
+        ).appendingPathComponent("stl_generation.log")
+        guard FileManager.default.fileExists(atPath: logURL.path) else {
+            resultMessage = "STL生成ログが見つかりません。"
+            return
+        }
+        openURLInWorkspace(logURL)
+    }
+
+    func startSTLStatusMonitoring() {
+        stlStatusTimer?.invalidate()
+        refreshSTLGenerationStatus()
+        guard stlGenerationStatus == "pending" || stlGenerationStatus == "running" else {
+            return
+        }
+        stlStatusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+            [weak self] timer in
+            self?.refreshSTLGenerationStatus()
+            guard let status = self?.stlGenerationStatus,
+                  status == "pending" || status == "running"
+            else {
+                timer.invalidate()
+                return
+            }
+        }
+    }
+
+    func stopSTLStatusMonitoring() {
+        stlStatusTimer?.invalidate()
+        stlStatusTimer = nil
+    }
+
+    private func refreshSTLGenerationStatus() {
+        guard resultKind == .inference, let outputURL else {
+            stlGenerationStatus = "unavailable"
+            return
+        }
+        let previewOutput = expectedSurfacePreviewOutputURL(
+            caseDir: outputURL,
+            flavor: activeResultFlavor
+        )
+        let summaryURL = previewOutput.appendingPathComponent("preview_summary.json")
+        guard let summary = readJSON(summaryURL),
+              let generation = summary["stl_generation"] as? [String: Any],
+              let status = generation["status"] as? String
+        else {
+            stlGenerationStatus = "unavailable"
+            return
+        }
+        if status == "complete" {
+            let directory = previewOutput.appendingPathComponent("combined", isDirectory: true)
+            stlGenerationStatus = FileManager.default.fileExists(atPath: directory.path)
+                ? "complete"
+                : "inconsistent"
+            return
+        }
+        stlGenerationStatus = ["pending", "running", "failed"].contains(status)
+            ? status
+            : "unavailable"
     }
 
     func copySafeErrorInfo() {
@@ -4011,6 +4242,14 @@ final class AppState: ObservableObject {
             }
         }
         return preferred
+    }
+
+    private func expectedSTLDirectoryURL(
+        caseDir: URL,
+        flavor: ResultOutputFlavor
+    ) -> URL {
+        expectedSurfacePreviewOutputURL(caseDir: caseDir, flavor: flavor)
+            .appendingPathComponent("combined", isDirectory: true)
     }
 
     private func primaryResultLabelmapURL(
@@ -4631,6 +4870,32 @@ func makeCTPreviewWarning(slices: [CTPreviewSlice]) -> String {
     }
     if slices.allSatisfy(\.uniformOrEmpty) {
         return "画像がほとんど見えません。別の画像か別のCTを選んでください。"
+    }
+    return ""
+}
+
+func niftiPreviewVolumeIsUniformOrEmpty(metadataJSON: URL) -> Bool {
+    guard let payload = readJSON(metadataJSON),
+          let volume = payload["volume"] as? [String: Any]
+    else {
+        return false
+    }
+    return (volume["uniform_or_empty"] as? Bool) ?? false
+}
+
+func makeInputCTPreviewWarning(
+    slices: [CTPreviewSlice],
+    volumeEmpty: Bool,
+    failed: Bool
+) -> String {
+    if volumeEmpty {
+        return "CT画像の内容を確認できません。空の画像、または正しく書き出されていない画像の可能性があります。"
+    }
+    if failed || Set(slices.map(\.plane)).count < 3 {
+        return "CTの簡易プレビューを作成できませんでした。別のCTを選んでください。"
+    }
+    if slices.contains(where: \.uniformOrEmpty) {
+        return "一部の断面がほぼ空に見えます。顎顔面が含まれているか確認してください。"
     }
     return ""
 }
