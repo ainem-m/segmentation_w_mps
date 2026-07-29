@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,20 @@ from typing import Any
 
 DICOM_NORMALIZER_ENV = "TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER"
 DICOM_NORMALIZER_BINARY_NAME = "totalsegmentator-wrapper-dicom-normalizer"
+
+
+def _launch_command(command: list[str]) -> list[str]:
+    if os.name != "nt" or not command:
+        return command
+    executable = Path(command[0])
+    try:
+        with executable.open("rb") as handle:
+            is_script = handle.read(2) == b"#!"
+    except OSError:
+        is_script = False
+    if is_script:
+        return [sys.executable, *command]
+    return command
 
 
 @dataclass(frozen=True)
@@ -316,7 +331,7 @@ def run_dicom_normalizer_audit(
 
     try:
         proc = subprocess.run(  # noqa: S603
-            command,
+            _launch_command(command),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -516,7 +531,7 @@ def run_dicom_normalizer_doctor(
         )
 
     proc = subprocess.run(  # noqa: S603
-        command,
+        _launch_command(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -598,7 +613,7 @@ def run_dicom_normalizer_convert_clean(
         )
 
     proc = subprocess.run(  # noqa: S603
-        command,
+        _launch_command(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -653,7 +668,7 @@ def run_dicom_normalizer_prepare_rescue(
         )
 
     proc = subprocess.run(  # noqa: S603
-        command,
+        _launch_command(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -704,7 +719,7 @@ def run_dicom_normalizer_export_rescue_stack(
         )
 
     proc = subprocess.run(  # noqa: S603
-        command,
+        _launch_command(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -759,7 +774,7 @@ def run_dicom_normalizer_prepare_viewer_export(
         )
 
     proc = subprocess.run(  # noqa: S603
-        command,
+        _launch_command(command),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

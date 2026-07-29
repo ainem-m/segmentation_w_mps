@@ -185,8 +185,10 @@ def install_dentalsegmentator_model(
     env["nnUNet_raw"] = str(nnunet_raw)
     env["nnUNet_preprocessed"] = str(nnunet_preprocessed)
     try:
+        from totalsegmentator_wrapper_mac.runner_totalseg import executable_command
+
         proc = subprocess.run(  # noqa: S603
-            [str(installer_path), str(model_zip)],
+            [*executable_command(str(installer_path)), str(model_zip)],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

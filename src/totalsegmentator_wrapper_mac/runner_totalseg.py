@@ -2031,8 +2031,9 @@ def _run_command_streamed(
             log_file.write("\n\n")
         log_file.write("COMMAND:\n" + " ".join(safe_command))
         log_file.flush()
+        launch_command = [*executable_command(command[0]), *command[1:]]
         proc = subprocess.Popen(  # noqa: S603
-            command,
+            launch_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

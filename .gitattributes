@@ -1,0 +1,5 @@
+/cloudflare/pages/preview/*.html text eol=lf
+/cloudflare/pages/preview/*.js text eol=lf
+/resources/sample1/**/*.html text eol=lf
+/resources/sample1/**/*.js text eol=lf
+/resources/sample1/**/*.json text eol=lf
