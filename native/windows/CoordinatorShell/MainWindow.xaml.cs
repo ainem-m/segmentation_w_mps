@@ -44,7 +44,11 @@ public partial class MainWindow : Window
             DispatcherPriority.Background,
             (_, _) => UpdateElapsed(),
             Dispatcher);
-        Closed += (_, _) => _session?.Dispose();
+        Closed += (_, _) =>
+        {
+            _dicomSession?.Dispose();
+            _session?.Dispose();
+        };
         OutputDisplayName.Text =
             $"保存先: {Path.GetFileName(_configuration.OutputRoot)}";
         SetScreen(ShellScreen.Setup, "待機中");
@@ -66,6 +70,11 @@ public partial class MainWindow : Window
             [SampleChoiceButton] = "Sampleから始める",
             [OwnDataChoiceButton] = "手元のCTデータを使う",
             [ChooseInputButton] = "手元のCTを選ぶ",
+            [ChooseNiftiButton] = "NIfTIファイルを選ぶ",
+            [ChooseDicomFolderButton] = "DICOMフォルダを選ぶ",
+            [ChangeDicomSeriesButton] = "使用する撮影を変更",
+            [UseSelectedDicomSeriesButton] = "この撮影を使う",
+            [CloseDicomSeriesButton] = "撮影選択を閉じる",
             [RunButton] = "Sampleで3Dプレビューを作る",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
@@ -108,11 +117,25 @@ public partial class MainWindow : Window
             && AutomationProperties.GetName(CopyErrorButton)
                 == "停止情報をコピー";
         SetCopyInformationButtonForCancellation(cancelled: false);
+        SetInputButtonsForNoInput();
+        var noInputLabelPassed =
+            Equals(ChooseInputButton.Content, "CTデータを選ぶ")
+            && AutomationProperties.GetName(ChooseInputButton)
+                == "CTデータを選ぶ";
+        SetInputButtonsForSample(sampleSelected: true);
+        SetReturnToInputButtonForDicomFailure(dicomFailure: true);
+        var dicomRecoveryLabelPassed =
+            Equals(ReturnToInputButton.Content, "別のCTを選ぶ")
+            && AutomationProperties.GetName(ReturnToInputButton)
+                == "別のCTを選ぶ";
+        SetReturnToInputButtonForDicomFailure(dicomFailure: false);
         var dynamicLabelsPassed =
             ownInputLabelPassed
             && detailsExpandedLabelPassed
             && stopRequestedLabelPassed
-            && cancellationCopyLabelPassed;
+            && cancellationCopyLabelPassed
+            && noInputLabelPassed
+            && dicomRecoveryLabelPassed;
         var systemColorsPassed =
             Equals(PrepareButton.Background, SystemColors.HighlightBrush)
             && Equals(Background, SystemColors.WindowBrush);
@@ -361,12 +384,12 @@ public partial class MainWindow : Window
 
     private void OwnDataChoiceButton_Click(object sender, RoutedEventArgs e)
     {
-        ChooseNiftiInput();
+        BeginOwnDataSelection(clearExistingInput: true);
     }
 
     private void ChooseInputButton_Click(object sender, RoutedEventArgs e)
     {
-        ChooseNiftiInput();
+        BeginOwnDataSelection(clearExistingInput: false);
     }
 
     private async void RunButton_Click(object sender, RoutedEventArgs e)
@@ -385,6 +408,10 @@ public partial class MainWindow : Window
         SetStopButtonRequested(requested: true);
         StatusPillText.Text = "停止要求済み";
         SubProgressText.Text = "終了処理中です。画面が切り替わるまで待ってください。";
+        if (RequestDicomStop())
+        {
+            return;
+        }
         if (_session is not null)
         {
             try
@@ -423,6 +450,10 @@ public partial class MainWindow : Window
 
     private void CopyErrorButton_Click(object sender, RoutedEventArgs e)
     {
+        if (TryCopyDicomFailure())
+        {
+            return;
+        }
         if (_lastResult is null)
         {
             return;
@@ -505,20 +536,27 @@ public partial class MainWindow : Window
 
     private void ReturnToInputButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ReturnFromDicomFailure())
+        {
+            return;
+        }
         SetScreen(ShellScreen.Input, "プレビュー作成準備完了");
     }
 
     private void ReturnToStartButton_Click(object sender, RoutedEventArgs e)
     {
         _inputPath = null;
+        ClearDicomSelection();
         SetScreen(ShellScreen.Start, "準備済み");
     }
 
     private void SelectBundledSample()
     {
+        ClearDicomSelection();
         _inputPath = _configuration.BundledSamplePath;
         InputDisplayName.Text = "Sample 1";
         SetInputButtonsForSample(sampleSelected: true);
+        RunButton.IsEnabled = true;
         SampleNotice.Visibility = Visibility.Visible;
         SetScreen(ShellScreen.Input, "プレビュー作成準備完了");
     }
@@ -549,9 +587,11 @@ public partial class MainWindow : Window
                 MessageBoxImage.Information);
             return;
         }
+        ClearDicomSelection();
         _inputPath = dialog.FileName;
         InputDisplayName.Text = Path.GetFileName(dialog.FileName);
         SetInputButtonsForSample(sampleSelected: false);
+        RunButton.IsEnabled = true;
         SampleNotice.Visibility = Visibility.Collapsed;
         SetScreen(ShellScreen.Input, "プレビュー作成準備完了");
     }
@@ -578,6 +618,9 @@ public partial class MainWindow : Window
         _session = new CoordinatorSession(_configuration);
         _session.EventReceived += OnCoordinatorEvent;
         _lastResult = null;
+        _lastDicomFailure = null;
+        SetReturnToInputButtonForDicomFailure(
+            dicomFailure: false);
         _safeEventLog.Clear();
         SafeEventLogTextBox.Clear();
         SetDetailsExpanded(expanded: false);
@@ -714,11 +757,16 @@ public partial class MainWindow : Window
 
     private void ShowResult(CoordinatorSessionResult result)
     {
+        _lastDicomFailure = null;
+        SetReturnToInputButtonForDicomFailure(
+            dicomFailure: false);
         if (result.TerminalEvent == "operation_completed")
         {
             ResultTitle.Text = "3Dプレビューを作成しました";
             ResultReason.Text =
-                "strict CUDAで処理し、保存結果とoffline previewを検証しました。";
+                _selectedDicomCandidate is null
+                    ? "strict CUDAで処理し、保存結果とoffline previewを検証しました。"
+                    : $"使用した撮影: {_selectedDicomCandidate.DisplayTitle}。strict CUDAで処理し、保存結果とoffline previewを検証しました。";
             ResultErrorCode.Visibility = Visibility.Collapsed;
             OpenPreviewButton.Visibility = Visibility.Visible;
             OpenOutputButton.Visibility = Visibility.Visible;
@@ -852,6 +900,9 @@ public partial class MainWindow : Window
         {
             ShellScreen.Setup => PrepareButton.Focus(),
             ShellScreen.Start => SampleChoiceButton.Focus(),
+            ShellScreen.Input when
+                InputSourceChoicePanel.Visibility == Visibility.Visible =>
+                    ChooseNiftiButton.Focus(),
             ShellScreen.Input => RunButton.Focus(),
             ShellScreen.Running => StopButton.Focus(),
             ShellScreen.Result when
@@ -915,6 +966,10 @@ public partial class MainWindow : Window
                     "cuda_unavailable",
                     "The required CUDA device did not pass strict validation.");
                 ShowResult(_lastResult);
+                break;
+            case "dicom-input":
+            case "dicom-series":
+                ApplyDicomPreviewScenario(scenario);
                 break;
             default:
                 throw new ArgumentException(

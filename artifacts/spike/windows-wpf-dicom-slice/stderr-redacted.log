@@ -1,0 +1,10 @@
+schema=totalsegmentator_wrapper.windows_wpf_dicom_stderr_redaction.v1
+status=pass
+raw_content_copied=false
+dicom_normalizer_output_retained=false
+dicom_third_party_output_forwarded=false
+coordinator_stderr_bytes=2835
+coordinator_stderr_sha256=51652690d517f12223676ba32b79dbf847c8acab780faab9b8516bf117321d7b
+host_stderr_bytes=0
+host_stderr_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+note=Only counts and hashes are retained here; raw diagnostic text is excluded.

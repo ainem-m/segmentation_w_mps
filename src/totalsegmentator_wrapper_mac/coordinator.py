@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
+import os
 import sys
 import threading
 from collections.abc import Callable
@@ -324,8 +326,9 @@ def run_coordinator_request(
 def _read_initial_json_document(stream: TextIO) -> Any:
     decoder = json.JSONDecoder()
     buffer = ""
+    byte_reader = _single_byte_reader(stream)
     while True:
-        character = stream.read(1)
+        character = byte_reader() if byte_reader is not None else stream.read(1)
         if character == "":
             return json.loads(buffer)
         buffer += character
@@ -337,6 +340,27 @@ def _read_initial_json_document(stream: TextIO) -> Any:
         except json.JSONDecodeError:
             continue
         return payload
+
+
+def _single_byte_reader(stream: TextIO) -> Callable[[], str] | None:
+    try:
+        file_descriptor = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        return None
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    errors = getattr(stream, "errors", None) or "strict"
+    decoder = codecs.getincrementaldecoder(encoding)(errors=errors)
+
+    def read_character() -> str:
+        while True:
+            chunk = os.read(file_descriptor, 1)
+            if chunk == b"":
+                return decoder.decode(b"", final=True)
+            character = decoder.decode(chunk)
+            if character:
+                return character
+
+    return read_character
 
 
 def _read_cancel_controls(

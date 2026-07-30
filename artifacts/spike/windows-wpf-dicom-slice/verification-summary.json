@@ -1,0 +1,70 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_dicom_verification.v1",
+  "status": "pass",
+  "fixture": {
+    "contains_patient_data": false,
+    "series_count": 2,
+    "file_count": 193,
+    "unchanged_after_run": true
+  },
+  "intake": {
+    "clean_candidate_count": 2,
+    "selected_series_number": 3,
+    "selected_series_file_count": 161,
+    "selection_basis": "first_geometry_ok",
+    "manifest_privacy_safe": true,
+    "raw_output_forwarded": false,
+    "segmentation_started_during_intake": false,
+    "normalized_nifti": {
+      "shape": [
+        209,
+        209,
+        161
+      ],
+      "dtype": "int16",
+      "spacing": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "finite": true,
+      "nonempty": true
+    }
+  },
+  "coordinator": {
+    "event_count": 23,
+    "terminal_event": "operation_completed",
+    "terminal_event_count": 1,
+    "os_exit_code": 0,
+    "requested_policy": "cuda_required",
+    "requested_device_index": 0,
+    "resolved_device": "cuda:0",
+    "fallback_allowed": false,
+    "fallback_occurred": false,
+    "created_suspended": true,
+    "assigned_before_resume": true,
+    "active_processes_after": 0,
+    "no_survivors": true,
+    "final_output_promoted": true
+  },
+  "runtime": {
+    "compute_capability": "7.5",
+    "cuda_available": true,
+    "cuda_build": "12.6",
+    "cuda_device_count": 1,
+    "device_index": 0,
+    "device_name": "NVIDIA GeForce RTX 2060",
+    "driver_version": "572.83",
+    "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "torch_version": "2.11.0+cu126",
+    "total_memory_bytes": 6442123264
+  },
+  "artifacts": {
+    "manifest_entry_count": 14,
+    "hashes_verified": true,
+    "nifti_mask_count": 7,
+    "nonempty_nifti_mask_count": 6,
+    "offline_preview_file_count": 15,
+    "remote_preview_references": 0
+  }
+}

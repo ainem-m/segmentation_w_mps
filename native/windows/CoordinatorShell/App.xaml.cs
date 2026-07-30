@@ -16,7 +16,8 @@ public partial class App : Application
             var options = LaunchOptions.Parse(e.Args);
             if (options.CapturePath is not null
                 || options.EvidenceRunPath is not null
-                || options.EvidenceCancelPath is not null)
+                || options.EvidenceCancelPath is not null
+                || options.EvidenceDicomPath is not null)
             {
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
             }
@@ -59,7 +60,8 @@ public partial class App : Application
                 options.PreviewScenario);
             if (options.CapturePath is not null
                 || options.EvidenceRunPath is not null
-                || options.EvidenceCancelPath is not null)
+                || options.EvidenceCancelPath is not null
+                || options.EvidenceDicomPath is not null)
             {
                 TextOptions.SetTextRenderingMode(
                     mainWindow,
@@ -101,6 +103,23 @@ public partial class App : Application
                     await CaptureAfterRenderAsync(
                         mainWindow,
                         Path.Combine(parent, "wpf-real-cancel-result.png"));
+                }
+                Shutdown(passed ? 0 : 1);
+                return;
+            }
+            if (options.EvidenceDicomPath is not null
+                && options.EvidenceDicomFolder is not null)
+            {
+                var passed = await mainWindow.RunEvidenceDicomAsync(
+                    options.EvidenceDicomFolder,
+                    options.EvidenceDicomPath);
+                var parent = Path.GetDirectoryName(
+                    Path.GetFullPath(options.EvidenceDicomPath));
+                if (parent is not null)
+                {
+                    await CaptureAfterRenderAsync(
+                        mainWindow,
+                        Path.Combine(parent, "wpf-dicom-result.png"));
                 }
                 Shutdown(passed ? 0 : 1);
             }
@@ -153,7 +172,9 @@ public partial class App : Application
         bool ContractSelfTest,
         string? ContractEvidencePath,
         string? EvidenceRunPath,
-        string? EvidenceCancelPath)
+        string? EvidenceCancelPath,
+        string? EvidenceDicomFolder,
+        string? EvidenceDicomPath)
     {
         internal static LaunchOptions Parse(string[] args)
         {
@@ -163,6 +184,8 @@ public partial class App : Application
             string? contractEvidencePath = null;
             string? evidenceRunPath = null;
             string? evidenceCancelPath = null;
+            string? evidenceDicomFolder = null;
+            string? evidenceDicomPath = null;
             var contractSelfTest = false;
             for (var index = 0; index < args.Length; index++)
             {
@@ -232,6 +255,24 @@ public partial class App : Application
                                 "The cancellation evidence path must be absolute.");
                         }
                         break;
+                    case "--evidence-run-dicom":
+                        evidenceDicomFolder = RequiredValue(
+                            args,
+                            ref index,
+                            "--evidence-run-dicom");
+                        evidenceDicomPath = RequiredValue(
+                            args,
+                            ref index,
+                            "--evidence-run-dicom");
+                        if (!Path.IsPathFullyQualified(
+                                evidenceDicomFolder)
+                            || !Path.IsPathFullyQualified(
+                                evidenceDicomPath))
+                        {
+                            throw new ArgumentException(
+                                "The DICOM input and evidence paths must be absolute.");
+                        }
+                        break;
                     default:
                         throw new ArgumentException(
                             "The Windows shell option is not supported.");
@@ -242,6 +283,7 @@ public partial class App : Application
                     capturePath,
                     evidenceRunPath,
                     evidenceCancelPath,
+                    evidenceDicomPath,
                 }.Count(value => value is not null) > 1)
             {
                 throw new ArgumentException(
@@ -250,7 +292,8 @@ public partial class App : Application
             if (contractSelfTest
                 && (capturePath is not null
                     || evidenceRunPath is not null
-                    || evidenceCancelPath is not null))
+                    || evidenceCancelPath is not null
+                    || evidenceDicomPath is not null))
             {
                 throw new ArgumentException(
                     "The contract self-test cannot be combined with another mode.");
@@ -262,7 +305,9 @@ public partial class App : Application
                 contractSelfTest,
                 contractEvidencePath,
                 evidenceRunPath,
-                evidenceCancelPath);
+                evidenceCancelPath,
+                evidenceDicomFolder,
+                evidenceDicomPath);
         }
 
         private static string RequiredValue(

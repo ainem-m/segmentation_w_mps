@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -216,6 +217,31 @@ class CoordinatorProtocolTests(unittest.TestCase):
         self.assertEqual(request.device_policy, "cpu_required")
         self.assertTrue(request.robust_crop)
         self.assertFalse(request.higher_order_resampling)
+
+    def test_protocol_v1_rejects_dicom_operation(self) -> None:
+        payload = {
+            "protocol_version": PROTOCOL_VERSION,
+            "operation_id": "dicom-operation",
+            "operation": "run_dicom_totalsegmentator",
+        }
+
+        with self.assertRaises(CoordinatorProtocolError) as raised:
+            parse_coordinator_request(payload)
+
+        self.assertEqual(raised.exception.code, "operation_unsupported")
+
+    def test_protocol_v1_rejects_dicom_input_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _run_request_payload(Path(tmp))
+            payload["input"] = {
+                "kind": "dicom",
+                "path": str(Path(tmp) / "dicom"),
+            }
+
+            with self.assertRaises(CoordinatorProtocolError) as raised:
+                parse_coordinator_request(payload)
+
+        self.assertEqual(raised.exception.code, "input_kind_unsupported")
 
     def test_rejects_unknown_protocol_version(self) -> None:
         payload = {
@@ -888,6 +914,42 @@ class CoordinatorExecutionTests(unittest.TestCase):
         self.assertEqual(events[0]["event"], "operation_started")
         self.assertEqual(events[-1]["event"], "operation_completed")
         self.assertEqual(stderr, "")
+
+    def test_initial_request_reader_does_not_overread_cancel_line(self) -> None:
+        request = {
+            "protocol_version": 1,
+            "operation_id": "pipe-request",
+            "operation": "capabilities",
+        }
+        control = {
+            "protocol_version": 1,
+            "operation_id": "pipe-request",
+            "control": "cancel",
+        }
+        read_fd, write_fd = os.pipe()
+        stream = os.fdopen(read_fd, "r", encoding="utf-8")
+        try:
+            os.write(
+                write_fd,
+                (
+                    json.dumps(request, ensure_ascii=False, indent=2)
+                    + "\n"
+                    + json.dumps(control)
+                    + "\n"
+                ).encode("utf-8"),
+            )
+            self.assertEqual(
+                _read_initial_json_document(stream),
+                request,
+            )
+            self.assertEqual(stream.readline(), "\n")
+            self.assertEqual(
+                json.loads(stream.readline()),
+                control,
+            )
+        finally:
+            stream.close()
+            os.close(write_fd)
 
     def test_invalid_operation_id_is_not_reflected_to_stdout(self) -> None:
         request = json.dumps(

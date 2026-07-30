@@ -1,0 +1,77 @@
+{
+  "artifacts": [
+    {
+      "relative_path": "README_OUTPUT.md",
+      "sha256": "5d413fb3385991458e24ecba46d59c18a4f5ed2e62d5e5cc7d8ad9c68aec373f",
+      "size_bytes": 1586
+    },
+    {
+      "relative_path": "logs/run.log",
+      "sha256": "4ec94dfcdd8593401d3ed84e4341f8d3a70f3c924e5e98fa786d750013e1ba60",
+      "size_bytes": 4518
+    },
+    {
+      "relative_path": "logs/benchmark.json",
+      "sha256": "199ddc2709e06a41b64bb2a0166f07cb9236af38808af509a79f2921e3b99bf6",
+      "size_bytes": 2564
+    },
+    {
+      "relative_path": "logs/environment.json",
+      "sha256": "a78a7af143354a697ef59f98279c38a20037d09eb57424c00ba6040eeab16692",
+      "size_bytes": 607
+    },
+    {
+      "relative_path": "logs/mask_stats.json",
+      "sha256": "9f98fdd765370e859211faf376b37fd2eed33623535696e9e759a9bdefd392ea",
+      "size_bytes": 2636
+    },
+    {
+      "relative_path": "surface_preview/index.html",
+      "sha256": "fd771f192cb0510b0be39e6e55aa0187d56192e35c0318d5487aff1bafbc5916",
+      "size_bytes": 10208
+    },
+    {
+      "relative_path": "run-manifest.json",
+      "sha256": "8a397008a91c3c6c1b8e958c834ac2ee9672e40ee5859761a0d1efdb909f5b8a",
+      "size_bytes": 775
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/head.nii.gz",
+      "sha256": "11eb6704a47e69a92bbb028ca982183c430ce5883e535b993b207fed54312c4f",
+      "size_bytes": 287686
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/mandible.nii.gz",
+      "sha256": "32c2b277d0465f5e8ce22e6fca92deb51607629939bbfa2e0b29b3cd645c0807",
+      "size_bytes": 90347
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/sinus_frontal.nii.gz",
+      "sha256": "97f65c6c2aa54eec6e0e0462c0a02daf65d0f5a30db175a2d44f5bd0dc58d6ae",
+      "size_bytes": 30833
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/sinus_maxillary.nii.gz",
+      "sha256": "20b0e34e4641aae1fff0c4b27df1870499c58237e85754e63bb719845758c826",
+      "size_bytes": 60101
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/skull.nii.gz",
+      "sha256": "1e3227b4536a4bdb39003d4c0190fa262377d285f1cba15eedbfd744ecad915a",
+      "size_bytes": 115889
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/teeth_lower.nii.gz",
+      "sha256": "4d85ceaf42b5453d101f2d6e55c808b911745aff2a9ad45ccad0471d35801afa",
+      "size_bytes": 59596
+    },
+    {
+      "relative_path": "segmentations/raw_totalseg/teeth_upper.nii.gz",
+      "sha256": "f04c19bec275fcb65915801f908df0948e094c4f9d0749226630ddc4bb68f875",
+      "size_bytes": 62535
+    }
+  ],
+  "operation_id": "6b1ecd36-ff19-4df1-8f54-8fcba00b5b83",
+  "protocol_version": 1,
+  "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1"
+}

@@ -259,11 +259,11 @@
                 Click="OwnDataChoiceButton_Click"
                 TabIndex="2"
                 automation:AutomationProperties.Name="手元のCTデータを使う"
-                automation:AutomationProperties.HelpText="NIfTI形式のCTファイルを選びます。">
+                automation:AutomationProperties.HelpText="NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。">
               <StackPanel>
                 <TextBlock Text="□" FontSize="26" Margin="0,0,0,14" />
                 <TextBlock Text="手元のCTデータを使う" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBlock Text="NIfTI形式のCTファイルを選びます。DICOMはこのtechnical spikeの対象外です。" Style="{StaticResource MutedTextStyle}" />
+                <TextBlock Text="NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。" Style="{StaticResource MutedTextStyle}" />
               </StackPanel>
             </Button>
           </Grid>
@@ -286,6 +286,115 @@
                   TabIndex="1"
                   automation:AutomationProperties.Name="手元のCTを選ぶ" />
             </Grid>
+            <Border
+                x:Name="InputSourceChoicePanel"
+                Visibility="Collapsed"
+                Padding="16"
+                Margin="0,0,0,20"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+              <StackPanel>
+                <TextBlock Text="CTデータを選ぶ" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBlock
+                    Text="NIfTIファイル、またはDICOMファイルを直接含む撮影フォルダを選んでください。"
+                    Style="{StaticResource MutedTextStyle}"
+                    Margin="0,0,0,12" />
+                <WrapPanel>
+                  <Button
+                      x:Name="ChooseNiftiButton"
+                      Content="NIfTIファイルを選ぶ"
+                      Click="ChooseNiftiButton_Click"
+                      Margin="0,0,8,8"
+                      TabIndex="2"
+                      automation:AutomationProperties.Name="NIfTIファイルを選ぶ" />
+                  <Button
+                      x:Name="ChooseDicomFolderButton"
+                      Content="DICOMフォルダを選ぶ"
+                      Click="ChooseDicomFolderButton_Click"
+                      Margin="0,0,8,8"
+                      TabIndex="3"
+                      automation:AutomationProperties.Name="DICOMフォルダを選ぶ" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+            <Border
+                x:Name="DicomSeriesSummaryPanel"
+                Visibility="Collapsed"
+                Padding="14"
+                Margin="0,0,0,16"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                CornerRadius="8">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    x:Name="DicomSeriesSummaryText"
+                    Text="使用する撮影:"
+                    VerticalAlignment="Center"
+                    TextWrapping="Wrap" />
+                <Button
+                    x:Name="ChangeDicomSeriesButton"
+                    Grid.Column="1"
+                    Content="変更"
+                    Click="ChangeDicomSeriesButton_Click"
+                    Margin="12,0,0,0"
+                    TabIndex="4"
+                    automation:AutomationProperties.Name="使用する撮影を変更" />
+              </Grid>
+            </Border>
+            <Border
+                x:Name="DicomSeriesSelectionPanel"
+                Visibility="Collapsed"
+                Padding="18"
+                Margin="0,0,0,20"
+                BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
+                BorderThickness="2"
+                CornerRadius="8"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+              <StackPanel>
+                <TextBlock Text="使用する撮影を変更" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBlock
+                    Text="最初の候補を選択しています。別の撮影を使う場合だけ変更してください。"
+                    Style="{StaticResource MutedTextStyle}"
+                    Margin="0,0,0,12" />
+                <ListBox
+                    x:Name="DicomSeriesListBox"
+                    MinHeight="90"
+                    MaxHeight="210"
+                    Margin="0,0,0,14"
+                    SelectionMode="Single"
+                    automation:AutomationProperties.Name="取り込める通常CTの撮影候補">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <StackPanel Margin="4">
+                        <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding DisplayDetail}" Style="{StaticResource MutedTextStyle}" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+                <Button
+                    x:Name="UseSelectedDicomSeriesButton"
+                    Content="この撮影を使う"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Click="UseSelectedDicomSeriesButton_Click"
+                    Margin="0,0,0,10"
+                    TabIndex="5"
+                    automation:AutomationProperties.Name="この撮影を使う" />
+                <Button
+                    x:Name="CloseDicomSeriesButton"
+                    Content="閉じる"
+                    HorizontalAlignment="Left"
+                    Click="CloseDicomSeriesButton_Click"
+                    TabIndex="6"
+                    automation:AutomationProperties.Name="撮影選択を閉じる" />
+              </StackPanel>
+            </Border>
             <TextBlock Text="作成する3Dプレビュー" Style="{StaticResource SectionTitleStyle}" />
             <Border
                 Padding="18"

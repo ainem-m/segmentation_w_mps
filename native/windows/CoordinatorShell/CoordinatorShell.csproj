@@ -11,4 +11,11 @@
     <AssemblyName>tswm-windows-shell</AssemblyName>
     <RootNamespace>TotalSegmentatorWrapper.Windows.CoordinatorShell</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.IO" />
+    <Compile Include="..\ProcessSupervisor\JobProcess.cs"
+             Link="ProcessSupervisor\JobProcess.cs" />
+    <Compile Include="..\ProcessSupervisor\NativeMethods.cs"
+             Link="ProcessSupervisor\NativeMethods.cs" />
+  </ItemGroup>
 </Project>

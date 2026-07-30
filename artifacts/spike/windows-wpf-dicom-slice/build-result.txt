@@ -1,0 +1,23 @@
+PASS git diff --check
+PASS Python full suite: 280 tests, 3 skipped
+PASS pip check: no broken requirements
+PASS production import matrix
+PASS coordinator protocol and entrypoint tests
+PASS open-stdin initial request and preserved cancel-line regression
+PASS ProcessSupervisor Release build: 0 warnings, 0 errors
+PASS CoordinatorShell Release build: 0 warnings, 0 errors
+PASS WPF runtime contract: 17 buttons, all required contract fields true
+PASS synthetic Job Object cancellation: zero survivors
+PASS real bundled-sample cancellation: operation_cancelled, coordinator exit 3, zero survivors, no final promotion
+PASS real clean-DICOM strict-CUDA completion: one operation_completed, coordinator exit 0
+PASS no-clean-series negative: typed dicom_clean_series_unavailable, segmentation not started
+PASS artifact hashes, nonempty NIfTI masks, and local-only offline preview
+PASS existing macOS CLI contract tests within the Python suite
+
+Application package refresh:
+  local source only
+  --no-index
+  --no-deps
+  --no-build-isolation
+  package version unchanged at 0.3.0
+  dependency resolution not performed

@@ -10,13 +10,16 @@ internal sealed record ShellConfiguration(
     string CoordinatorWorkingDirectory,
     string BundledSamplePath,
     string OutputRoot,
-    string TotalSegmentatorHome)
+    string TotalSegmentatorHome,
+    string DicomNormalizerPath,
+    string Dcm2niixPath)
 {
     internal static ShellConfiguration Load(string? engineeringConfigPath)
     {
+        var baseDirectory = AppContext.BaseDirectory;
+        var nativeRuntime = Path.Combine(baseDirectory, "runtime", "native");
         if (engineeringConfigPath is null)
         {
-            var baseDirectory = AppContext.BaseDirectory;
             var runtime = Path.Combine(baseDirectory, "runtime", "python");
             return new ShellConfiguration(
                 Path.Combine(baseDirectory, "tswm-process-supervisor.exe"),
@@ -35,7 +38,11 @@ internal sealed record ShellConfiguration(
                         Environment.SpecialFolder.LocalApplicationData),
                     "TotalSegmentatorWrapperWindows",
                     "runs"),
-                Path.Combine(baseDirectory, "models", "totalseg-home"));
+                Path.Combine(baseDirectory, "models", "totalseg-home"),
+                Path.Combine(
+                    nativeRuntime,
+                    "totalsegmentator-wrapper-dicom-normalizer.exe"),
+                Path.Combine(nativeRuntime, "dcm2niix.exe"));
         }
 
         var absoluteConfigPath = Path.GetFullPath(engineeringConfigPath);
@@ -58,7 +65,17 @@ internal sealed record ShellConfiguration(
                 "coordinator_working_directory"),
             RequireAbsolute(payload.BundledSamplePath, "bundled_sample_path"),
             RequireAbsolute(payload.OutputRoot, "output_root"),
-            RequireAbsolute(payload.TotalSegmentatorHome, "totalseg_home"));
+            RequireAbsolute(payload.TotalSegmentatorHome, "totalseg_home"),
+            OptionalAbsolute(
+                payload.DicomNormalizerPath,
+                Path.Combine(
+                    nativeRuntime,
+                    "totalsegmentator-wrapper-dicom-normalizer.exe"),
+                "dicom_normalizer_path"),
+            OptionalAbsolute(
+                payload.Dcm2niixPath,
+                Path.Combine(nativeRuntime, "dcm2niix.exe"),
+                "dcm2niix_path"));
     }
 
     internal RuntimeCheckResult CheckRuntime()
@@ -102,6 +119,40 @@ internal sealed record ShellConfiguration(
                 "アプリの配置と保存先を確認してから、「準備を始める」をもう一度押してください。");
     }
 
+    internal RuntimeCheckResult CheckDicomRuntime()
+    {
+        var failures = new List<string>();
+        CheckFile(
+            DicomNormalizerPath,
+            "DICOM読み込み機能",
+            failures);
+        CheckFile(Dcm2niixPath, "DICOM変換機能", failures);
+        try
+        {
+            Directory.CreateDirectory(OutputRoot);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or ArgumentException)
+        {
+            failures.Add("保存先を準備できません。");
+        }
+        return failures.Count == 0
+            ? new RuntimeCheckResult(
+                true,
+                "DICOM読み込み環境を確認しました。",
+                null,
+                null)
+            : new RuntimeCheckResult(
+                false,
+                string.Join(
+                    " ",
+                    failures.Distinct(StringComparer.Ordinal)),
+                "dicom_runtime_unavailable",
+                "アプリに同梱されたDICOM読み込み機能を確認してください。");
+    }
+
     private static string RequireAbsolute(string? value, string name)
     {
         if (string.IsNullOrWhiteSpace(value)
@@ -111,6 +162,16 @@ internal sealed record ShellConfiguration(
                 $"The {name} value must be an absolute path.");
         }
         return Path.GetFullPath(value);
+    }
+
+    private static string OptionalAbsolute(
+        string? value,
+        string defaultValue,
+        string name)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? Path.GetFullPath(defaultValue)
+            : RequireAbsolute(value, name);
     }
 
     private static void CheckFile(
@@ -202,6 +263,12 @@ internal sealed record ShellConfiguration(
 
         [JsonPropertyName("totalseg_home")]
         public string? TotalSegmentatorHome { get; init; }
+
+        [JsonPropertyName("dicom_normalizer_path")]
+        public string? DicomNormalizerPath { get; init; }
+
+        [JsonPropertyName("dcm2niix_path")]
+        public string? Dcm2niixPath { get; init; }
     }
 }
 

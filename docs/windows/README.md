@@ -29,6 +29,7 @@ Windows process-tree proof: Windows 10 engineering pass; Windows 11 unverified
 Windows coordinator vertical slice: Windows 10 engineering pass; Windows 11 unverified
 Windows DICOM native build: Windows 10 engineering pass; Windows 11 and cross-host semantic parity unverified
 Windows WPF coordinator shell: Windows 10 engineering pass; accessibility/clean Windows 11 install unverified
+Windows WPF clean-DICOM intake: Windows 10 engineering pass; Windows 11, rescue, and clean packaging unverified
 Windows installer/signing: unverified
 ```
 
@@ -42,6 +43,12 @@ NIfTI sample
   -> authoritative process-tree cancellation
   -> offline HTML preview
 ```
+
+The bounded clean-DICOM slice now audits a local folder, converts one
+`original_ct_geometry_ok` series with the app-private native tools, and passes
+the verified NIfTI to the unchanged coordinator only after an explicit Run
+action. It does not add DICOM to protocol v1 and does not implement
+secondary-capture rescue.
 
 Do not start DICOM rescue, DentalSegmentator, ToothSeg, AMD, ARM64, or a
 production updater until the spike gates in the documents above have been

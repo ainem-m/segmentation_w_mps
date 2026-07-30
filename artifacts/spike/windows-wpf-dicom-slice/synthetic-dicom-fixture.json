@@ -1,0 +1,19 @@
+{
+  "schema": "totalsegmentator_wrapper.synthetic_dicom_fixture.v1",
+  "status": "success",
+  "contains_patient_data": false,
+  "source": "bundled_non_clinical_sample",
+  "series_count": 2,
+  "file_count": 193,
+  "primary_shape": [
+    209,
+    209,
+    161
+  ],
+  "primary_spacing": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "aggregate_sha256": "cc048b47adc35fea99296f082288d7062af1888abd572529843d2d02a5557693"
+}

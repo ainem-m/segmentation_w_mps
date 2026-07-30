@@ -1,0 +1,22 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_dicom_intake.v1",
+  "status": "success",
+  "operation_id": "15994e1e-9317-4a75-a8f9-441e6df443a9",
+  "source_kind": "dicom",
+  "selected_series": {
+    "series_number": 3,
+    "file_count": 161,
+    "classification": "original_ct_geometry_ok"
+  },
+  "selection_basis": "first_geometry_ok",
+  "normalizer": {
+    "exit_code": 0,
+    "status": "success"
+  },
+  "dcm2niix": {
+    "exit_code": 0,
+    "status": "success"
+  },
+  "segmentation_started": false,
+  "raw_output_recorded": false
+}

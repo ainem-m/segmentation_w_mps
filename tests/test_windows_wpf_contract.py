@@ -31,8 +31,10 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"12000"', session)
         self.assertIn("StandardOutputEncoding = new UTF8Encoding(false)", session)
         self.assertIn('protocol_version = 1', session)
+        self.assertIn('operation = "run_nifti_totalsegmentator"', session)
         self.assertIn('mode = "cuda_required"', session)
         self.assertIn('index = 0', session)
+        self.assertNotIn("dicom", session.lower())
         self.assertNotIn('mode = "auto"', session)
         self.assertNotIn('mode = "cpu"', session)
         self.assertIn('await process.StandardInput.WriteLineAsync("cancel")', session)
@@ -44,19 +46,98 @@ class WindowsWpfContractTests(unittest.TestCase):
             '"host_cancellation_verification_failed"',
             session,
         )
-        shell = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+        shell = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(SHELL.glob("MainWindow*.cs"))
+        )
         self.assertIn("RunEvidenceCancelSampleAsync", shell)
         self.assertIn("await RequestStopAsync()", shell)
+
+    def test_dicom_intake_is_clean_only_private_and_boundary_checked(self) -> None:
+        session_path = SHELL / "DicomIntakeSession.cs"
+        self.assertTrue(session_path.is_file())
+        intake = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(SHELL.glob("Dicom*.cs"))
+        )
+        shell = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(SHELL.glob("MainWindow*.cs"))
+        )
+
+        self.assertIn('"audit"', intake)
+        self.assertIn('"convert-clean"', intake)
+        self.assertIn('"--series-key"', intake)
+        self.assertNotIn('"--series-number"', intake)
+        self.assertIn('"series_instance_uid"', intake)
+        self.assertIn("candidate.NativeSeriesKey", intake)
+        self.assertIn("public string DisplayTitle", intake)
+        self.assertIn("public string DisplayDetail", intake)
+        self.assertIn(
+            'new DicomCleanCandidate(\n'
+            '                        "preview-1"',
+            shell,
+        )
+        self.assertIn('"original_ct_geometry_ok"', intake)
+        self.assertIn('"convert_clean"', intake)
+        self.assertIn('"requires_external_tool"', intake)
+        for unsupported_command in (
+            '"prepare-rescue"',
+            '"export-rescue-stack"',
+            '"prepare-viewer-export"',
+        ):
+            with self.subTest(unsupported_command=unsupported_command):
+                self.assertNotIn(unsupported_command, intake)
+        self.assertNotIn("CoordinatorSession", intake)
+        self.assertNotIn('"run_nifti_totalsegmentator"', intake)
+
+        self.assertIn("DrainAsync(process.StandardOutput)", intake)
+        self.assertIn("DrainAsync(process.StandardError)", intake)
+        self.assertIn("reader.ReadAsync", intake)
+        self.assertNotIn("StandardOutput", shell)
+        self.assertNotIn("StandardError", shell)
+        self.assertNotRegex(shell.lower(), r"dicom.{0,80}(stdout|stderr)")
+        self.assertNotRegex(shell.lower(), r"(stdout|stderr).{0,80}dicom")
+        self.assertIn("_dicomStopRequested", shell)
+        self.assertIn('"dicom_audit_cancelled"', shell)
+        self.assertIn('"dicom_conversion_cancelled"', shell)
+        self.assertIn(
+            "jobBecameEmptyWithoutForcedCleanup",
+            intake,
+        )
+
+        self.assertIn("convert_clean_metadata.json", intake)
+        self.assertIn('"product_boundary"', intake)
+        self.assertIn('"segmentation_started"', intake)
+        self.assertIn('"secondary_capture_rescue"', intake)
+        self.assertRegex(
+            intake,
+            r"(Count|Length)\s*!=\s*1|\.Single(?:OrDefault)?\(",
+        )
+        self.assertRegex(
+            intake,
+            r"FileInfo\s*\(|new\s+FileInfo|\.Length\s*(?:<=|==)\s*0",
+        )
+        self.assertIn("Path.GetFullPath", intake)
+        self.assertRegex(
+            intake,
+            r"Path\.GetRelativePath|StartsWith\s*\(",
+        )
 
     def test_manual_flow_and_local_preview_remain_explicit(self) -> None:
         xaml = (SHELL / "MainWindow.xaml").read_text(encoding="utf-8")
         code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
 
-        labels = (
+        automation_names = (
             "準備を始める",
             "Sampleから始める",
             "手元のCTデータを使う",
             "手元のCTを選ぶ",
+            "NIfTIファイルを選ぶ",
+            "DICOMフォルダを選ぶ",
+            "使用する撮影を変更",
+            "この撮影を使う",
+            "撮影選択を閉じる",
             "Sampleで3Dプレビューを作る",
             "停止",
             "3Dプレビューを開く",
@@ -66,7 +147,16 @@ class WindowsWpfContractTests(unittest.TestCase):
             "入力と作成内容へ戻る",
             "最初に戻る",
         )
-        for label in labels:
+        visible_copy = (
+            "NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。",
+            "NIfTIファイルを選ぶ",
+            "DICOMフォルダを選ぶ",
+            "使用する撮影を変更",
+            "最初の候補を選択しています。別の撮影を使う場合だけ変更してください。",
+            "この撮影を使う",
+            "閉じる",
+        )
+        for label in (*automation_names, *visible_copy):
             with self.subTest(label=label):
                 self.assertIn(label, xaml)
         root = ET.fromstring(xaml)
@@ -76,11 +166,12 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 12)
+        self.assertEqual(len(buttons), 17)
         self.assertTrue(all(button.get("Click") for button in buttons))
+        self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
             {button.get(automation_name) for button in buttons},
-            set(labels),
+            set(automation_names),
         )
         for dynamic_label in (
             "別のCTを選ぶ",
@@ -117,6 +208,9 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"checkpoint_final.pth"', configuration)
         self.assertIn("RecoveryMessage", configuration)
         self.assertIn("failures.Distinct(StringComparer.Ordinal)", configuration)
+        self.assertIn('"dicom_normalizer_path"', configuration)
+        self.assertIn('"dcm2niix_path"', configuration)
+        self.assertIn("CheckDicomRuntime", configuration)
         for safe_component in (
             "Windowsの処理管理機能",
             "3Dプレビュー作成機能",

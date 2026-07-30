@@ -1,0 +1,15 @@
+date=2026-07-30
+source_branch=agent/windows-wpf-dicom-slice
+source_base_commit=1ad9206cd21a83b41b8be8d8b0998036c3c72a0e
+host_os=Microsoft Windows 10 IoT Enterprise
+host_version=10.0.19045
+host_build=19045
+host_architecture=x64
+evidence_classification=Windows 10 engineering evidence
+windows_11_status=UNVERIFIED
+input_source=bundled non-clinical sample converted to synthetic DICOM
+contains_patient_data=false
+operation_ids=random non-PHI UUIDs
+heavy_temporary_storage=dedicated D drive
+public_dependency_index_used=false
+dependency_resolution_performed=false

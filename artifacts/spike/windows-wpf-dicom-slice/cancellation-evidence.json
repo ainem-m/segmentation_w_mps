@@ -1,0 +1,21 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_cancel_evidence.v1",
+  "status": "pass",
+  "operation_id": "7ba06155-c78b-4b0d-839f-e44a6ceeb9f1",
+  "cancel_trigger_reached": true,
+  "terminal_event": "operation_cancelled",
+  "supervisor_exit_code": 0,
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": "cuda:0",
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "final_output_promoted": false,
+  "staging_exists": true,
+  "supervisor_evidence_exists": true,
+  "transient_request_deleted": true,
+  "ui_screen": "result",
+  "ui_status": "\u505C\u6B62\u3057\u307E\u3057\u305F",
+  "error_code": null,
+  "reason_code": "cancel_requested"
+}

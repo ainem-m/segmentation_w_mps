@@ -5,9 +5,9 @@ Date: 2026-07-30
 This document describes the platform-neutral coordinator boundary implemented
 on the Windows spike branch. Runtime, strict CUDA, normal completion, and
 cancellation have engineering evidence on the Windows 10 spike host. The WPF
-shell integration also has Windows 10 engineering evidence; Windows 11,
-external UI accessibility interaction, clean-machine distribution, and the
-installer remain unverified.
+shell and its clean-DICOM-to-NIfTI intake integration also have Windows 10
+engineering evidence; Windows 11, external UI accessibility interaction,
+clean-machine distribution, DICOM rescue, and the installer remain unverified.
 
 ## Entrypoint and transport
 
@@ -25,6 +25,11 @@ It does not replace the existing macOS CLI. The coordinator:
 - writes versioned JSON Lines events to standard output;
 - reserves standard error for local diagnostics;
 - flushes every event immediately.
+
+On Windows, the initial JSON reader consumes the underlying anonymous pipe
+without requiring the host to close stdin, while leaving later control lines
+for the cancellation listener. This behavior has a regression test using an
+open stdin pipe and real Windows supervisor evidence.
 
 The Windows shell should create the process with inherited pipes and send
 patient paths through standard input. The existing Python runner still passes
@@ -96,6 +101,12 @@ before data processing.
 `cuda_required` performs strict per-operation validation of the requested
 device index. A failed check emits a typed failure and never starts CPU
 inference.
+
+Protocol v1 remains NIfTI-only. The Windows WPF clean-DICOM path audits and
+converts a selected clean series in a pre-coordinator adapter, verifies exactly
+one nonempty NIfTI output, and invokes this operation only after the user starts
+the run. DICOM operation names and DICOM input kinds are rejected by protocol
+tests.
 
 ## Event envelope
 
@@ -169,7 +180,9 @@ atomicity under concurrent creation remain Windows-spike work.
 
 A real supervised Windows 10 run completed with one `operation_completed`
 terminal event, coordinator OS exit code 0, zero remaining Job members, and a
-verified staging-to-final promotion. Windows 11 remains unverified.
+verified staging-to-final promotion. The same result now passes from a
+synthetic clean DICOM folder through WPF audit, real dcm2niix conversion, and
+strict `cuda:0` TotalSegmentator execution. Windows 11 remains unverified.
 
 ## Cancellation
 

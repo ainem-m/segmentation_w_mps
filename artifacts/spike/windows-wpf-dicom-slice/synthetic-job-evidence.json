@@ -1,0 +1,15 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_process_supervisor.v1",
+  "mode": "synthetic_tree",
+  "status": "pass",
+  "kill_on_job_close": true,
+  "created_suspended": true,
+  "assigned_before_resume": true,
+  "graceful_cancel_sent": true,
+  "root_exited_during_grace": true,
+  "members_before_cancel": 3,
+  "members_after_grace": 3,
+  "terminate_job_called": true,
+  "active_processes_after": 0,
+  "no_survivors": true
+}
