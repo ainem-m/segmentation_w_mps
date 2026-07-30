@@ -1,0 +1,15 @@
+[model-load cancellation]
+RUN_STAGE prepare
+RUN_STAGE segment
+CONTROL cancel
+TERMINAL operation_cancelled
+Raw third-party output omitted.
+
+[inference cancellation]
+RUN_STAGE prepare
+RUN_STAGE segment
+RUN_PROGRESS Resampling
+RUN_PROGRESS Predicting
+CONTROL cancel
+TERMINAL operation_cancelled
+Raw third-party output omitted.

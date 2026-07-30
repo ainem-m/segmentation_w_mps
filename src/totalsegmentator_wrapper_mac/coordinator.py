@@ -3,17 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
 from totalsegmentator_wrapper_mac.coordinator_protocol import (
+    CANCEL_CONTROL,
     CAPABILITIES_OPERATION,
     PROTOCOL_VERSION,
     RUN_NIFTI_TOTALSEG_OPERATION,
     CoordinatorProtocolError,
     CoordinatorRequest,
     JsonlEventWriter,
+    OperationCancelled,
+    parse_coordinator_control,
     parse_coordinator_request,
     safe_operation_id,
 )
@@ -22,6 +26,8 @@ from totalsegmentator_wrapper_mac.coordinator_protocol import (
 SegmentationRunner = Callable[..., Any]
 PreviewRunner = Callable[..., dict[str, Any]]
 CudaDeviceChecker = Callable[[int], Any]
+ShouldCancel = Callable[[], bool]
+StartCancelListener = Callable[[], None]
 
 
 class ArtifactVerificationError(RuntimeError):
@@ -35,8 +41,12 @@ def run_coordinator_request(
     segmentation_runner: SegmentationRunner | None = None,
     preview_runner: PreviewRunner | None = None,
     cuda_device_checker: CudaDeviceChecker | None = None,
+    should_cancel: ShouldCancel | None = None,
+    start_cancel_listener: StartCancelListener | None = None,
 ) -> int:
     writer.emit("operation_started", operation=request.operation)
+    if _cancellation_requested(should_cancel):
+        return _emit_cancelled(writer)
     if request.operation == CAPABILITIES_OPERATION:
         writer.emit(
             "capabilities",
@@ -49,7 +59,7 @@ def run_coordinator_request(
                 },
             },
             cancellation={
-                "graceful_control": "not_implemented",
+                "graceful_control": "available",
                 "authoritative_windows_job": "unverified",
             },
             input_kinds=["nifti"],
@@ -95,6 +105,8 @@ def run_coordinator_request(
             code="staging_already_exists",
             safe_reason="An interrupted staging operation already exists.",
         )
+    if _cancellation_requested(should_cancel):
+        return _emit_cancelled(writer)
 
     expected_device = "cpu"
     prevalidated_device_check = None
@@ -106,6 +118,8 @@ def run_coordinator_request(
 
             cuda_device_checker = smoke_test_cuda
         prevalidated_device_check = cuda_device_checker(request.device_index)
+        if _cancellation_requested(should_cancel):
+            return _emit_cancelled(writer)
         expected_device = f"cuda:{request.device_index}"
         if (
             getattr(prevalidated_device_check, "status", None) != "pass"
@@ -144,6 +158,8 @@ def run_coordinator_request(
         from totalsegmentator_wrapper_mac.surface_preview import run_surface_preview
 
         preview_runner = run_surface_preview
+    if start_cancel_listener is not None:
+        start_cancel_listener()
 
     def on_runner_event(event: str, payload: dict[str, Any]) -> None:
         if event == "phase_started":
@@ -174,6 +190,7 @@ def run_coordinator_request(
             writer.emit("progress", **safe_progress)
 
     try:
+        _raise_if_cancelled(should_cancel)
         runner_kwargs: dict[str, Any] = {
             "input_path": request.input_path,
             "output_root": staging_directory,
@@ -187,9 +204,12 @@ def run_coordinator_request(
         }
         if prevalidated_device_check is not None:
             runner_kwargs["prevalidated_device_check"] = prevalidated_device_check
+        if should_cancel is not None:
+            runner_kwargs["should_cancel"] = should_cancel
         result = segmentation_runner(
             **runner_kwargs,
         )
+        _raise_if_cancelled(should_cancel)
         actual_device = str(getattr(result, "actual_device", "unknown"))
         fallback_reason = getattr(result, "fallback_reason", None)
         if not device_event_emitted:
@@ -222,6 +242,7 @@ def run_coordinator_request(
                 code="backend_output_mismatch",
                 safe_reason="The backend returned an unexpected output location.",
             )
+        _raise_if_cancelled(should_cancel)
         writer.emit(
             "phase_started",
             route="totalsegmentator",
@@ -230,10 +251,12 @@ def run_coordinator_request(
             total=4,
             label="3D表示・結果情報を作成中",
         )
+        _raise_if_cancelled(should_cancel)
         preview_runner(
             case_dir=case_directory,
             detailed_stl=True,
         )
+        _raise_if_cancelled(should_cancel)
         preview_path = case_directory / "surface_preview" / "index.html"
         if not preview_path.is_file():
             return _emit_failure(
@@ -242,6 +265,7 @@ def run_coordinator_request(
                 safe_reason="The offline preview was not created.",
             )
         try:
+            _raise_if_cancelled(should_cancel)
             artifacts = _verify_and_manifest_case(
                 case_directory,
                 operation_id=request.operation_id,
@@ -255,12 +279,14 @@ def run_coordinator_request(
                 code="artifact_verification_failed",
                 safe_reason="The case output did not pass artifact verification.",
             )
+        _raise_if_cancelled(should_cancel)
         if final_case_directory.exists():
             return _emit_failure(
                 writer,
                 code="output_commit_conflict",
                 safe_reason="The selected output location changed during processing.",
             )
+        _raise_if_cancelled(should_cancel)
         staging_directory.rename(final_case_directory)
         for artifact in artifacts:
             writer.emit("artifact_created", **artifact)
@@ -276,6 +302,10 @@ def run_coordinator_request(
             artifacts=artifacts,
         )
         return 0
+    except OperationCancelled:
+        if writer.terminal_event is not None:
+            return 3
+        return _emit_cancelled(writer)
     except Exception as exc:  # noqa: BLE001
         print(
             f"coordinator diagnostic: {type(exc).__name__}",
@@ -289,6 +319,54 @@ def run_coordinator_request(
             code="coordinator_operation_failed",
             safe_reason="The coordinator operation did not complete.",
         )
+
+
+def _read_initial_json_document(stream: TextIO) -> Any:
+    decoder = json.JSONDecoder()
+    buffer = ""
+    while True:
+        character = stream.read(1)
+        if character == "":
+            return json.loads(buffer)
+        buffer += character
+        candidate = buffer.lstrip()
+        if not candidate:
+            continue
+        try:
+            payload, _end = decoder.raw_decode(candidate)
+        except json.JSONDecodeError:
+            continue
+        return payload
+
+
+def _read_cancel_controls(
+    stream: TextIO,
+    *,
+    operation_id: str,
+    cancel_event: threading.Event,
+) -> None:
+    while True:
+        line = stream.readline()
+        if line == "":
+            return
+        if not line.strip():
+            continue
+        try:
+            control = parse_coordinator_control(json.loads(line))
+        except (CoordinatorProtocolError, json.JSONDecodeError):
+            print(
+                "coordinator diagnostic: control message ignored",
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+        if (
+            control.protocol_version == PROTOCOL_VERSION
+            and control.operation_id == operation_id
+            and control.control == CANCEL_CONTROL
+        ):
+            cancel_event.set()
+            return
 
 
 def main(
@@ -305,7 +383,7 @@ def main(
     output_stream = stdout or sys.stdout
     operation_id = "unknown"
     try:
-        payload = json.load(input_stream)
+        payload = _read_initial_json_document(input_stream)
         if isinstance(payload, dict):
             operation_id = safe_operation_id(payload.get("operation_id"))
         request = parse_coordinator_request(payload)
@@ -313,7 +391,34 @@ def main(
             output_stream,
             operation_id=request.operation_id,
         )
-        return run_coordinator_request(request, writer)
+        cancel_event: threading.Event | None = None
+        start_cancel_listener: StartCancelListener | None = None
+        if request.operation == RUN_NIFTI_TOTALSEG_OPERATION:
+            cancel_event = threading.Event()
+            listener_started = False
+
+            def start_cancel_listener() -> None:
+                nonlocal listener_started
+                if listener_started:
+                    return
+                listener_started = True
+                threading.Thread(
+                    target=_read_cancel_controls,
+                    kwargs={
+                        "stream": input_stream,
+                        "operation_id": request.operation_id,
+                        "cancel_event": cancel_event,
+                    },
+                    daemon=True,
+                    name="coordinator-control-reader",
+                ).start()
+
+        return run_coordinator_request(
+            request,
+            writer,
+            should_cancel=cancel_event.is_set if cancel_event is not None else None,
+            start_cancel_listener=start_cancel_listener,
+        )
     except json.JSONDecodeError:
         writer = JsonlEventWriter(output_stream, operation_id=operation_id)
         return _emit_failure(
@@ -332,6 +437,24 @@ def main(
             code=exc.code,
             safe_reason=exc.safe_reason,
         )
+
+
+def _cancellation_requested(should_cancel: ShouldCancel | None) -> bool:
+    return should_cancel is not None and should_cancel()
+
+
+def _raise_if_cancelled(should_cancel: ShouldCancel | None) -> None:
+    if _cancellation_requested(should_cancel):
+        raise OperationCancelled
+
+
+def _emit_cancelled(writer: JsonlEventWriter) -> int:
+    writer.emit(
+        "operation_cancelled",
+        status="cancelled",
+        reason_code="cancel_requested",
+    )
+    return 3
 
 
 def _emit_failure(

@@ -1,0 +1,29 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_process_supervisor.v1",
+  "mode": "supervised_process",
+  "operation_id": "c4074c07-406c-4a9f-a2da-c6a636c16b97",
+  "status": "pass",
+  "kill_on_job_close": true,
+  "created_suspended": true,
+  "assigned_before_resume": true,
+  "graceful_cancel_sent": true,
+  "graceful_control_acknowledged": true,
+  "grace_ms": 12000,
+  "cancel_trigger": "stage:segment",
+  "job_members_at_cancel": 4,
+  "job_member_pids_at_cancel": [
+    11640,
+    9396,
+    21944,
+    24080
+  ],
+  "root_exited_during_grace": true,
+  "members_after_grace": 0,
+  "terminate_job_called": false,
+  "active_processes_after": 0,
+  "no_survivors": true,
+  "observed_processes_exited": true,
+  "terminal_event": "operation_cancelled",
+  "final_output_promoted": false,
+  "staging_exists": true
+}

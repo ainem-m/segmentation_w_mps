@@ -21,10 +21,11 @@ Read in this order:
 
 ```text
 Architecture direction: provisional
-Platform-neutral coordinator: Mac fake-backend integration harness implemented
+Platform-neutral coordinator: real Windows CUDA transport/cancel evidence recorded
 Real TotalSegmentator CPU inference: unverified
-Windows runtime proof: unverified
-Windows CUDA proof: unverified
+Windows runtime proof: Windows 10 engineering pass; Windows 11 unverified
+Windows CUDA proof: Windows 10 engineering pass; Windows 11 unverified
+Windows process-tree proof: Windows 10 engineering pass; Windows 11 unverified
 Windows DICOM native build: unverified
 Windows installer/signing: unverified
 ```

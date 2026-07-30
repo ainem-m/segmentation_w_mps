@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from totalsegmentator_wrapper_mac.benchmark import environment_metadata, input_metadata, write_json
 from totalsegmentator_wrapper_mac import __version__
+from totalsegmentator_wrapper_mac.coordinator_protocol import OperationCancelled
 from totalsegmentator_wrapper_mac.device import DeviceCheck, resolve_device
 from totalsegmentator_wrapper_mac.output_report import generate_output_report
 from totalsegmentator_wrapper_mac.mask_stats import collect_mask_stats
@@ -50,6 +51,7 @@ PROGRESS_PHASE_RE = re.compile(
 RUN_PROGRESS_PREFIX = "RUN_PROGRESS "
 RUN_STAGE_PREFIX = "RUN_STAGE "
 RunEventSink = Callable[[str, dict[str, Any]], None]
+ShouldCancel = Callable[[], bool]
 RUN_STAGE_LAYOUTS: dict[str, tuple[tuple[str, str], ...]] = {
     "totalsegmentator": (
         ("prepare", "実行準備"),
@@ -406,7 +408,9 @@ def run_totalsegmentator(
     emit_run_stages: bool = True,
     event_sink: RunEventSink | None = None,
     prevalidated_device_check: DeviceCheck | None = None,
+    should_cancel: ShouldCancel | None = None,
 ) -> TotalSegRunResult:
+    _raise_if_cancelled(should_cancel)
     input_path = input_path.resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"Input not found: {input_path}")
@@ -507,6 +511,7 @@ def run_totalsegmentator(
                 mps_state="unavailable",
             )
 
+    _raise_if_cancelled(should_cancel)
     refine_diagnostics = backend == "toothseg" and toothseg_refine
     case = prepare_case_output(
         output_root,
@@ -692,7 +697,9 @@ def run_totalsegmentator(
         progress_stage_id="segment",
         progress_scope="subtask",
         event_sink=event_sink,
+        should_cancel=should_cancel,
     )
+    _raise_if_cancelled(should_cancel)
 
     if emit_run_stages and proc_returncode == 0:
         _emit_run_stage(
@@ -706,6 +713,7 @@ def run_totalsegmentator(
             case.mask_stats_path,
             collect_mask_stats(case.root / "segmentations", recursive=True),
         )
+    _raise_if_cancelled(should_cancel)
     teeth_detected = _teeth_detected_from_mask_stats(case.mask_stats_path)
     result = TotalSegRunResult(
         status="success" if proc_returncode == 0 else "failed",
@@ -735,6 +743,7 @@ def run_totalsegmentator(
         robust_crop=robust_crop,
         higher_order_resampling=higher_order_resampling,
     )
+    _raise_if_cancelled(should_cancel)
     generate_output_report(
         case=case,
         source_volume_path=source_for_summary,
@@ -1946,6 +1955,11 @@ def _progress_key(progress: dict[str, Any], stream_label: str) -> tuple[Any, ...
     )
 
 
+def _raise_if_cancelled(should_cancel: ShouldCancel | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise OperationCancelled
+
+
 def _run_command_streamed(
     *,
     command: list[str],
@@ -1959,6 +1973,7 @@ def _run_command_streamed(
     progress_stage_id: str | None = None,
     progress_scope: str = "subtask",
     event_sink: RunEventSink | None = None,
+    should_cancel: ShouldCancel | None = None,
 ) -> tuple[int, float, str, str]:
     if progress_scope not in {"stage", "subtask"}:
         raise ValueError(f"Unsupported progress scope: {progress_scope!r}")
@@ -2032,8 +2047,10 @@ def _run_command_streamed(
         log_file.write("COMMAND:\n" + " ".join(safe_command))
         log_file.flush()
         launch_command = [*executable_command(command[0]), *command[1:]]
+        _raise_if_cancelled(should_cancel)
         proc = subprocess.Popen(  # noqa: S603
             launch_command,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -2052,7 +2069,32 @@ def _run_command_streamed(
         stdout_thread.start()
         stderr_thread.start()
         try:
-            returncode = proc.wait(timeout=timeout_sec)
+            if should_cancel is None:
+                returncode = proc.wait(timeout=timeout_sec)
+            else:
+                deadline = (
+                    None
+                    if timeout_sec is None
+                    else time.perf_counter() + timeout_sec
+                )
+                while True:
+                    _raise_if_cancelled(should_cancel)
+                    if deadline is None:
+                        wait_timeout = 0.1
+                    else:
+                        remaining = deadline - time.perf_counter()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(
+                                launch_command,
+                                timeout_sec,
+                            )
+                        wait_timeout = min(0.1, remaining)
+                    try:
+                        returncode = proc.wait(timeout=wait_timeout)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if deadline is not None and time.perf_counter() >= deadline:
+                            raise
         except subprocess.TimeoutExpired:
             with lock:
                 log_file.write(f"\n\nTIMEOUT after {timeout_sec} seconds; terminating child.\n")
@@ -2062,6 +2104,14 @@ def _run_command_streamed(
             stderr_thread.join(timeout=5)
             elapsed = time.perf_counter() - start
             return 124, elapsed, "".join(stdout_chunks), "".join(stderr_chunks)
+        except OperationCancelled:
+            with lock:
+                log_file.write("\n\nCANCELLATION requested; terminating child.\n")
+                log_file.flush()
+            _terminate_process_group(proc)
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+            raise
         except BaseException:
             _terminate_process_group(proc)
             stdout_thread.join(timeout=5)
@@ -2076,6 +2126,24 @@ def _run_command_streamed(
 
 def _terminate_process_group(proc: subprocess.Popen[str]) -> None:
     if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        except OSError:
+            if proc.poll() is not None:
+                return
+            raise
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                return
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)

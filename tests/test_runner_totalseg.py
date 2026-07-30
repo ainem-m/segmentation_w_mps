@@ -6,12 +6,15 @@ import io
 import stat
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from totalsegmentator_wrapper_mac.cli import main as cli_main
+from totalsegmentator_wrapper_mac.coordinator_protocol import OperationCancelled
 
 from totalsegmentator_wrapper_mac.runner_totalseg import (
     RUN_PROGRESS_PREFIX,
@@ -233,6 +236,60 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(progress_lines[-1]["stage_id"], "semantic")
             self.assertEqual(progress_lines[-1]["scope"], "stage")
             self.assertIn(RUN_PROGRESS_PREFIX, mirrored.getvalue())
+
+    def test_streamed_command_cancellation_terminates_child_with_bounded_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake = tmp_path / "sleeping_child.py"
+            fake.write_text(
+                "import time\n"
+                "print('started', flush=True)\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            log_path = tmp_path / "run.log"
+            cancel_event = threading.Event()
+            timer = threading.Timer(0.2, cancel_event.set)
+            started = time.perf_counter()
+            timer.start()
+            try:
+                with self.assertRaises(OperationCancelled):
+                    _run_command_streamed(
+                        command=[sys.executable, str(fake)],
+                        env=os.environ.copy(),
+                        log_path=log_path,
+                        safe_command=["python", "sleeping_child.py"],
+                        should_cancel=cancel_event.is_set,
+                    )
+            finally:
+                timer.cancel()
+                timer.join(timeout=1)
+
+            self.assertLess(time.perf_counter() - started, 10)
+            self.assertIn(
+                "CANCELLATION requested; terminating child.",
+                log_path.read_text(encoding="utf-8"),
+            )
+
+    def test_streamed_command_does_not_inherit_coordinator_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            probe = tmp_path / "stdin_probe.py"
+            probe.write_text(
+                "import sys\n"
+                "print(len(sys.stdin.read()), flush=True)\n",
+                encoding="utf-8",
+            )
+
+            rc, _elapsed, stdout, _stderr = _run_command_streamed(
+                command=[sys.executable, str(probe)],
+                env=os.environ.copy(),
+                log_path=tmp_path / "run.log",
+                safe_command=["python", "stdin_probe.py"],
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(stdout.strip(), "0")
 
     def test_run_totalsegmentator_with_fake_binary_writes_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,14 @@
+Windows process supervisor toolchain
+PowerShell: 5.1.19041.6456
+Python: 3.12.10 (app-private runtime from the runtime/CUDA spike)
+PyTorch: 2.11.0+cu126
+PyTorch CUDA build: 12.6
+TotalSegmentator: 2.14.0
+.NET SDK: 10.0.302 x64 (private ZIP extraction)
+.NET runtime: 10.0.10 x64
+Target framework/runtime identifier: net10.0 / win-x64
+External NuGet packages: none
+SDK ZIP bytes: 297545270
+SDK ZIP SHA-512: 7d170ed75fa9af34c00646621d92011dbd71943952e2787cd15df9be78e6452b55dadef34d7eff77b802e6af4959e071a55855ac649afeac70901c3a2a258716
+SDK source: official Microsoft builds endpoint
+Repository pin: global.json, exact 10.0.302, rollForward disabled

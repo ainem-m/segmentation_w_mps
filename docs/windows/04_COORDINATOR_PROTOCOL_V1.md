@@ -3,8 +3,9 @@
 Date: 2026-07-30
 
 This document describes the platform-neutral coordinator boundary implemented
-on the Windows spike branch. It does not claim that the Windows runtime,
-CUDA path, cancellation, or installer has been verified.
+on the Windows spike branch. Runtime, strict CUDA, and cancellation have
+engineering evidence on the Windows 10 spike host. Windows 11, WPF integration,
+DICOM, and the installer remain unverified.
 
 ## Entrypoint and transport
 
@@ -17,7 +18,8 @@ totalsegmentator-wrapper-coordinator
 It does not replace the existing macOS CLI. The coordinator:
 
 - accepts no command-line arguments;
-- reads exactly one JSON request from standard input;
+- reads one initial JSON request from standard input without waiting for EOF;
+- accepts later newline-delimited control messages for a running operation;
 - writes versioned JSON Lines events to standard output;
 - reserves standard error for local diagnostics;
 - flushes every event immediately.
@@ -46,9 +48,10 @@ filename, or case description.
 }
 ```
 
-Capabilities report the current truth. In the Mac-built vertical slice,
-`cpu_required` is available while `cuda_required`, graceful cancellation, and
-Windows Job Object containment are explicitly unverified or not implemented.
+Capabilities report the current coordinator truth. `cpu_required`,
+`cuda_required`, and graceful control are implemented. Authoritative Job Object
+ownership remains a host responsibility, so the platform-neutral coordinator
+continues to report that field as `unverified`.
 
 ### NIfTI TotalSegmentator run
 
@@ -88,8 +91,9 @@ model path, and cannot bypass device verification. Unknown optional fields may
 be ignored for forward compatibility, but a different protocol version fails
 before data processing.
 
-`cuda_required` currently returns the typed failure `cuda_unverified` without
-starting inference. It must not fall back to CPU.
+`cuda_required` performs strict per-operation validation of the requested
+device index. A failed check emits a typed failure and never starts CPU
+inference.
 
 ## Event envelope
 
@@ -163,17 +167,33 @@ atomicity under concurrent creation remain Windows-spike work.
 
 ## Cancellation
 
-Cancellation is not implemented in protocol v1 yet. Do not send a control
-message and assume it is honored.
+After the initial request, the host may send:
 
-The Windows spike must add and verify both:
+```json
+{
+  "protocol_version": 1,
+  "operation_id": "opaque-operation-id",
+  "control": "cancel"
+}
+```
 
-1. a graceful control message that stops new work; and
-2. authoritative termination through a Windows Job Object containing the
-   coordinator and every descendant.
+The coordinator accepts only protocol version 1, the active operation ID, and
+the `cancel` control. It stops starting new stages, terminates a running backend
+with bounded waits, does not promote staging, emits one terminal
+`operation_cancelled` event, and exits with code 3. Backend stdin is closed so
+that it cannot consume coordinator control messages.
 
-Until both paths have real no-survivor evidence, cancellation remains
-`unverified` in capabilities and in the verification matrix.
+The Windows process supervisor creates the coordinator suspended, assigns it to
+a kill-on-close Job Object, resumes it, sends graceful control first, and uses
+`TerminateJobObject` when descendants remain. Synthetic parent/child/grandchild
+and real TotalSegmentator model-load/`Predicting` runs passed with zero Job
+survivors on the Windows 10 engineering host. NVIDIA PID polling also confirmed
+that the observed inference GPU processes were Job members and absent after
+cancellation.
+
+Windows 11 remains unverified. The capability field for authoritative Job
+ownership therefore remains `unverified` until the Windows application host
+integrates and reports this supervisor.
 
 ## Compatibility rule
 

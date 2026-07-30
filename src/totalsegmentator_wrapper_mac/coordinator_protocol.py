@@ -11,6 +11,7 @@ from typing import Any, TextIO
 PROTOCOL_VERSION = 1
 CAPABILITIES_OPERATION = "capabilities"
 RUN_NIFTI_TOTALSEG_OPERATION = "run_nifti_totalsegmentator"
+CANCEL_CONTROL = "cancel"
 SUPPORTED_OPERATIONS = frozenset(
     {
         CAPABILITIES_OPERATION,
@@ -45,6 +46,10 @@ class CoordinatorProtocolError(ValueError):
         self.safe_reason = safe_reason
 
 
+class OperationCancelled(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class CoordinatorRequest:
     protocol_version: int
@@ -56,6 +61,13 @@ class CoordinatorRequest:
     device_index: int | None = None
     robust_crop: bool = True
     higher_order_resampling: bool = False
+
+
+@dataclass(frozen=True)
+class CoordinatorControl:
+    protocol_version: int
+    operation_id: str
+    control: str
 
 
 class JsonlEventWriter:
@@ -222,6 +234,33 @@ def parse_coordinator_request(payload: Any) -> CoordinatorRequest:
         device_index=device_index,
         robust_crop=robust_crop,
         higher_order_resampling=higher_order_resampling,
+    )
+
+
+def parse_coordinator_control(payload: Any) -> CoordinatorControl:
+    control = _require_mapping(payload, code="control_invalid", name="control")
+    protocol_version = control.get("protocol_version")
+    if isinstance(protocol_version, bool) or protocol_version != PROTOCOL_VERSION:
+        raise CoordinatorProtocolError(
+            "control_protocol_version_unsupported",
+            "The coordinator control protocol version is not supported.",
+        )
+    operation_id = control.get("operation_id")
+    if safe_operation_id(operation_id) == "unknown" and operation_id != "unknown":
+        raise CoordinatorProtocolError(
+            "control_operation_id_invalid",
+            "The coordinator control operation identifier is invalid.",
+        )
+    control_name = control.get("control")
+    if control_name != CANCEL_CONTROL:
+        raise CoordinatorProtocolError(
+            "control_unsupported",
+            "The coordinator control message is not supported.",
+        )
+    return CoordinatorControl(
+        protocol_version=protocol_version,
+        operation_id=operation_id,
+        control=control_name,
     )
 
 

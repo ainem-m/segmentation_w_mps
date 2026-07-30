@@ -1,0 +1,16 @@
+Windows process-tree ownership spike baseline
+Date: 2026-07-30 JST
+Branch: agent/windows-job-object-spike
+Base commit: 71499e5f5f26468a82afbf186750af94ffe28b2d
+Base branch: agent/windows-runtime-cuda-spike
+Starting worktree: clean
+Host: Microsoft Windows 10 IoT Enterprise 22H2
+Version/build: 10.0.19045 / 19045
+Architecture: x64
+GPU: NVIDIA GeForce RTX 2060, 6144 MiB
+Driver: 572.83
+Input: bundled repository NIfTI sample
+Patient data used: no
+Operation identifiers: random UUIDs
+Windows 11 result: UNVERIFIED (verification assigned to a separate machine)
+Out of scope: WPF, DICOM/MSVC, installer, update/rollback

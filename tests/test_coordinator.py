@@ -6,19 +6,26 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
 
-from totalsegmentator_wrapper_mac.coordinator import run_coordinator_request
+from totalsegmentator_wrapper_mac.coordinator import (
+    _read_cancel_controls,
+    _read_initial_json_document,
+    run_coordinator_request,
+)
 from totalsegmentator_wrapper_mac.coordinator_protocol import (
     PROTOCOL_VERSION,
     CoordinatorProtocolError,
     JsonlEventWriter,
+    OperationCancelled,
+    parse_coordinator_control,
     parse_coordinator_request,
 )
 from totalsegmentator_wrapper_mac.runner_totalseg import TotalSegRunResult
@@ -92,6 +99,100 @@ def _write_fake_success_case(case_directory: Path, *, device: str = "cpu") -> No
 
 
 class CoordinatorProtocolTests(unittest.TestCase):
+    def test_pretty_initial_request_is_complete_without_requiring_eof(self) -> None:
+        payload = {
+            "protocol_version": 1,
+            "operation_id": "pretty-request",
+            "operation": "capabilities",
+        }
+
+        parsed = _read_initial_json_document(
+            io.StringIO(json.dumps(payload, indent=2) + "\n")
+        )
+
+        self.assertEqual(parsed, payload)
+
+    def test_cancel_control_parser_accepts_only_cancel(self) -> None:
+        control = parse_coordinator_control(
+            {
+                "protocol_version": 1,
+                "operation_id": "cancel-test",
+                "control": "cancel",
+            }
+        )
+        self.assertEqual(control.operation_id, "cancel-test")
+        with self.assertRaises(CoordinatorProtocolError):
+            parse_coordinator_control(
+                {
+                    "protocol_version": 1,
+                    "operation_id": "cancel-test",
+                    "control": "pause",
+                }
+            )
+
+    def test_control_reader_cancels_only_matching_version_and_operation(self) -> None:
+        cancel_event = threading.Event()
+        controls = io.StringIO(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "protocol_version": 2,
+                            "operation_id": "target-operation",
+                            "control": "cancel",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "protocol_version": 1,
+                            "operation_id": "different-operation",
+                            "control": "cancel",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "protocol_version": 1,
+                            "operation_id": "target-operation",
+                            "control": "cancel",
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        control_stdout = io.StringIO()
+        with redirect_stdout(control_stdout), redirect_stderr(io.StringIO()):
+            _read_cancel_controls(
+                controls,
+                operation_id="target-operation",
+                cancel_event=cancel_event,
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(control_stdout.getvalue(), "")
+
+    def test_control_reader_ignores_other_operation(self) -> None:
+        cancel_event = threading.Event()
+        controls = io.StringIO(
+            json.dumps(
+                {
+                    "protocol_version": 1,
+                    "operation_id": "different-operation",
+                    "control": "cancel",
+                }
+            )
+            + "\n"
+        )
+
+        _read_cancel_controls(
+            controls,
+            operation_id="target-operation",
+            cancel_event=cancel_event,
+        )
+
+        self.assertFalse(cancel_event.is_set())
+
     def test_capabilities_request_is_minimal(self) -> None:
         request = parse_coordinator_request(
             {
@@ -222,6 +323,142 @@ class CoordinatorExecutionTests(unittest.TestCase):
             capabilities["cancellation"]["authoritative_windows_job"],
             "unverified",
         )
+        self.assertEqual(
+            capabilities["cancellation"]["graceful_control"],
+            "available",
+        )
+
+    def test_cancel_before_backend_emits_typed_terminal_without_starting_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
+            request = parse_coordinator_request(_run_request_payload(root))
+            stream = io.StringIO()
+            cancel_event = threading.Event()
+            cancel_event.set()
+            called = False
+
+            def unexpected_runner(**_kwargs: object) -> object:
+                nonlocal called
+                called = True
+                raise AssertionError("backend should not run")
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(stream, operation_id=request.operation_id),
+                segmentation_runner=unexpected_runner,
+                should_cancel=cancel_event.is_set,
+            )
+
+            self.assertEqual(rc, 3)
+            self.assertFalse(called)
+            self.assertFalse((root / "private-output").exists())
+            self.assertFalse((root / ".tswm-test-operation.staging").exists())
+            events = _events(stream)
+            self.assertEqual(
+                [event["event"] for event in events],
+                ["operation_started", "operation_cancelled"],
+            )
+            self.assertEqual(events[-1]["status"], "cancelled")
+            self.assertEqual(events[-1]["reason_code"], "cancel_requested")
+
+    def test_cancelled_runner_keeps_staging_and_never_starts_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
+            request = parse_coordinator_request(_run_request_payload(root))
+            stream = io.StringIO()
+            cancel_event = threading.Event()
+            preview_called = False
+
+            def cancelled_runner(**kwargs: object) -> TotalSegRunResult:
+                should_cancel = kwargs["should_cancel"]
+                self.assertTrue(callable(should_cancel))
+                staging = Path(kwargs["output_root"])
+                staging.mkdir(parents=True)
+                cancel_event.set()
+                raise OperationCancelled
+
+            def unexpected_preview(**_kwargs: object) -> dict[str, object]:
+                nonlocal preview_called
+                preview_called = True
+                return {}
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(stream, operation_id=request.operation_id),
+                segmentation_runner=cancelled_runner,
+                preview_runner=unexpected_preview,
+                should_cancel=cancel_event.is_set,
+            )
+
+            self.assertEqual(rc, 3)
+            self.assertFalse(preview_called)
+            self.assertFalse((root / "private-output").exists())
+            self.assertTrue((root / ".tswm-test-operation.staging").exists())
+            events = _events(stream)
+            self.assertEqual(events[-1]["event"], "operation_cancelled")
+            self.assertEqual(
+                sum(
+                    event["event"]
+                    in {
+                        "operation_completed",
+                        "operation_failed",
+                        "operation_cancelled",
+                    }
+                    for event in events
+                ),
+                1,
+            )
+
+    def test_control_listener_starts_after_cuda_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
+            request = parse_coordinator_request(
+                {
+                    **_run_request_payload(root),
+                    "device_policy": {
+                        "mode": "cuda_required",
+                        "index": 0,
+                    },
+                }
+            )
+            stream = io.StringIO()
+            order: list[str] = []
+
+            def cuda_checker(_index: int) -> SimpleNamespace:
+                order.append("cuda_preflight")
+                return SimpleNamespace(status="pass", actual_device="cuda:0")
+
+            def cancelled_runner(**_kwargs: object) -> object:
+                order.append("runner")
+                raise OperationCancelled
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(stream, operation_id=request.operation_id),
+                segmentation_runner=cancelled_runner,
+                preview_runner=lambda **_kwargs: {},
+                cuda_device_checker=cuda_checker,
+                should_cancel=lambda: False,
+                start_cancel_listener=lambda: order.append("control_listener"),
+            )
+
+            self.assertEqual(rc, 3)
+            self.assertEqual(
+                order,
+                ["cuda_preflight", "control_listener", "runner"],
+            )
 
     def test_cuda_required_fails_without_running_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -610,6 +847,47 @@ class CoordinatorExecutionTests(unittest.TestCase):
         self.assertEqual(events[0]["event"], "operation_started")
         self.assertEqual(events[-1]["event"], "operation_completed")
         self.assertEqual(proc.stderr, "")
+
+    def test_module_entrypoint_starts_after_complete_request_without_stdin_eof(self) -> None:
+        request = json.dumps(
+            {
+                "protocol_version": 1,
+                "operation_id": "open-stdin-capabilities",
+                "operation": "capabilities",
+            },
+            indent=2,
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "totalsegmentator_wrapper_mac.coordinator"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+        try:
+            proc.stdin.write(request)
+            proc.stdin.flush()
+            try:
+                returncode = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+                self.fail("coordinator waited for stdin EOF after a complete request")
+            stdout = proc.stdout.read()
+            stderr = proc.stderr.read()
+        finally:
+            proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+
+        self.assertEqual(returncode, 0, stderr)
+        events = [json.loads(line) for line in stdout.splitlines()]
+        self.assertEqual(events[0]["event"], "operation_started")
+        self.assertEqual(events[-1]["event"], "operation_completed")
+        self.assertEqual(stderr, "")
 
     def test_invalid_operation_id_is_not_reflected_to_stdout(self) -> None:
         request = json.dumps(
