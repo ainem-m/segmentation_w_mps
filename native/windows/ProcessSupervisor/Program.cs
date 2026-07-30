@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace TotalSegmentatorWrapper.Windows.ProcessSupervisor;
@@ -10,6 +11,8 @@ internal static class Program
 
     internal static async Task<int> Main(string[] args)
     {
+        Console.InputEncoding = new UTF8Encoding(false);
+        Console.OutputEncoding = new UTF8Encoding(false);
         try
         {
             if (args.Length == 0)
@@ -20,6 +23,7 @@ internal static class Program
             {
                 "self-test" => await RunSelfTestAsync(args[1..]),
                 "supervise" => await RunSupervisorAsync(args[1..]),
+                "synthetic-coordinator" => await RunSyntheticCoordinatorAsync(args[1..]),
                 "synthetic-node" => await RunSyntheticNodeAsync(args[1..]),
                 _ => throw new ArgumentException("The command is not supported."),
             };
@@ -94,19 +98,32 @@ internal static class Program
         var evidencePath = options.RequiredPath("evidence");
         var workingDirectory = options.RequiredPath("working-directory");
         var normalCompletion = options.HasFlag("normal-completion");
+        var interactiveCancel = options.HasFlag("interactive-cancel");
         var grace = TimeSpan.FromMilliseconds(options.OptionalInt("grace-ms", 3000));
         var cancelAfter = options.OptionalInt("cancel-after-ms", -1);
         var cancelOnStage = options.Optional("cancel-on-stage");
         var cancelDelay = options.OptionalInt("cancel-delay-ms", 0);
         if (normalCompletion
-            && (options.Optional("cancel-after-ms") is not null
+            && (interactiveCancel
+                || options.Optional("cancel-after-ms") is not null
                 || cancelOnStage is not null
                 || options.Optional("cancel-delay-ms") is not null))
         {
             throw new ArgumentException(
                 "--normal-completion cannot be combined with cancellation options.");
         }
-        if (!normalCompletion && cancelAfter < 0 && cancelOnStage is null)
+        if (interactiveCancel
+            && (options.Optional("cancel-after-ms") is not null
+                || cancelOnStage is not null
+                || options.Optional("cancel-delay-ms") is not null))
+        {
+            throw new ArgumentException(
+                "--interactive-cancel cannot be combined with timed or stage cancellation.");
+        }
+        if (!normalCompletion
+            && !interactiveCancel
+            && cancelAfter < 0
+            && cancelOnStage is null)
         {
             throw new ArgumentException(
                 "Either --cancel-after-ms or --cancel-on-stage is required.");
@@ -158,6 +175,8 @@ internal static class Program
             TaskCreationOptions.RunContinuationsAsynchronously);
         string? terminalEvent = null;
         var terminalEventCount = 0;
+        var terminalReached = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var stdoutTask = Task.Run(async () =>
         {
             while (await process.StandardOutput.ReadLineAsync() is { } line)
@@ -176,6 +195,7 @@ internal static class Program
                         {
                             terminalEvent = eventName;
                             terminalEventCount++;
+                            terminalReached.TrySetResult(eventName);
                         }
                     }
                     if (cancelOnStage is not null && MatchesStage(root, cancelOnStage))
@@ -200,15 +220,94 @@ internal static class Program
             }
         });
 
+        Task<string?>? interactiveCommandTask = null;
+        if (interactiveCancel)
+        {
+            interactiveCommandTask = Task.Run(Console.In.ReadLine);
+        }
         process.Resume();
         await process.StandardInput.WriteLineAsync(requestLine);
-        if (normalCompletion)
+        var coordinatorExitedBeforeInteractiveCancel = false;
+        SortedSet<int>? interactiveObservedProcessIds = null;
+        IReadOnlyList<int>? interactiveMembersAtCancel = null;
+        var interactiveControlSent = false;
+        if (interactiveCancel)
+        {
+            interactiveObservedProcessIds = new(process.ActiveProcessIds());
+            var coordinatorExitTask = Task.Run(
+                () => process.WaitForExit(Timeout.InfiniteTimeSpan));
+            while (true)
+            {
+                interactiveObservedProcessIds.UnionWith(
+                    process.ActiveProcessIds());
+                var completed = await Task.WhenAny(
+                    interactiveCommandTask
+                        ?? throw new InvalidOperationException(
+                            "The interactive command reader was not initialized."),
+                    terminalReached.Task,
+                    coordinatorExitTask,
+                    Task.Delay(100));
+                if (completed == interactiveCommandTask)
+                {
+                    break;
+                }
+                if (completed == terminalReached.Task
+                    || completed == coordinatorExitTask)
+                {
+                    coordinatorExitedBeforeInteractiveCancel = true;
+                    break;
+                }
+            }
+            interactiveObservedProcessIds.UnionWith(process.ActiveProcessIds());
+            if (!coordinatorExitedBeforeInteractiveCancel)
+            {
+                var command = await interactiveCommandTask;
+                if (!string.Equals(command, "cancel", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Interactive supervisor input must be exactly one cancel command.");
+                }
+                interactiveMembersAtCancel = process.ActiveProcessIds();
+                try
+                {
+                    await process.StandardInput.WriteLineAsync(
+                        JsonSerializer.Serialize(new
+                        {
+                            protocol_version = 1,
+                            operation_id = operationId,
+                            control = "cancel",
+                        }));
+                    interactiveControlSent = true;
+                }
+                catch (IOException) when (
+                    process.WaitForExit(TimeSpan.FromSeconds(1)))
+                {
+                    coordinatorExitedBeforeInteractiveCancel = true;
+                }
+            }
+        }
+        if (normalCompletion || coordinatorExitedBeforeInteractiveCancel)
         {
             process.StandardInput.Close();
-            var observedProcessIds = new SortedSet<int>(process.ActiveProcessIds());
+            var observedProcessIds =
+                interactiveObservedProcessIds
+                ?? new SortedSet<int>(process.ActiveProcessIds());
+            var rootExitWait = Stopwatch.StartNew();
+            var rootExitTimedOut = false;
             while (!process.WaitForExit(TimeSpan.FromMilliseconds(100)))
             {
                 observedProcessIds.UnionWith(process.ActiveProcessIds());
+                if (interactiveCancel && rootExitWait.Elapsed >= grace)
+                {
+                    rootExitTimedOut = true;
+                    process.Terminate(24);
+                    if (!process.WaitForExit(TimeSpan.FromSeconds(5)))
+                    {
+                        throw new InvalidOperationException(
+                            "The coordinator did not exit after Job termination.");
+                    }
+                    break;
+                }
             }
             observedProcessIds.UnionWith(process.ActiveProcessIds());
             var coordinatorExitCode = process.ExitCode;
@@ -233,6 +332,7 @@ internal static class Program
             var normalCompletionPassed =
                 terminalEvent == "operation_completed"
                 && terminalEventCount == 1
+                && !rootExitTimedOut
                 && coordinatorExitCode == 0
                 && membersAfterCompletion.Count == 0
                 && normalFinalOutputExists
@@ -257,6 +357,11 @@ internal static class Program
                     terminal_event_count = terminalEventCount,
                     observed_job_process_count = observedProcessIds.Count,
                     observed_job_process_ids = observedProcessIds,
+                    root_exit_grace_ms = interactiveCancel
+                        ? checked((int)grace.TotalMilliseconds)
+                        : (int?)null,
+                    root_exit_timed_out = rootExitTimedOut,
+                    root_exit_terminate_job_called = rootExitTimedOut,
                     active_processes_after = membersAfterCompletion.Count,
                     cleanup_terminate_job_called = cleanupTerminateJobCalled,
                     active_processes_after_cleanup = membersAfterCleanup.Count,
@@ -269,7 +374,7 @@ internal static class Program
                 });
             return normalCompletionPassed ? 0 : 1;
         }
-        if (cancelOnStage is not null)
+        if (!interactiveCancel && cancelOnStage is not null)
         {
             await stageReached.Task.WaitAsync(TimeSpan.FromMinutes(5));
             if (cancelDelay > 0)
@@ -277,18 +382,23 @@ internal static class Program
                 await Task.Delay(cancelDelay);
             }
         }
-        else
+        else if (!interactiveCancel)
         {
             await Task.Delay(cancelAfter);
         }
 
-        var membersAtCancel = process.ActiveProcessIds();
-        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
+        var membersAtCancel =
+            interactiveMembersAtCancel
+            ?? process.ActiveProcessIds();
+        if (!interactiveControlSent)
         {
-            protocol_version = 1,
-            operation_id = operationId,
-            control = "cancel",
-        }));
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                protocol_version = 1,
+                operation_id = operationId,
+                control = "cancel",
+            }));
+        }
         var rootExitedDuringGrace = process.WaitForExit(grace);
         var membersAfterGrace = process.ActiveProcessIds();
         var terminateJobCalled = membersAfterGrace.Count > 0;
@@ -300,10 +410,13 @@ internal static class Program
         process.StandardInput.Close();
         await Task.WhenAll(stdoutTask, stderrTask);
 
+        var cancelCoordinatorExitCode = process.ExitCode;
         var finalOutputExists = Directory.Exists(finalOutputPath);
         var stagingExists = Directory.Exists(stagingPath);
         var passed =
             terminalEvent == "operation_cancelled"
+            && terminalEventCount == 1
+            && cancelCoordinatorExitCode == 3
             && survivors.Count == 0
             && !finalOutputExists;
         await WriteEvidenceAsync(
@@ -321,9 +434,11 @@ internal static class Program
                 graceful_control_acknowledged =
                     terminalEvent == "operation_cancelled",
                 grace_ms = checked((int)grace.TotalMilliseconds),
-                cancel_trigger = cancelOnStage is null
-                    ? $"after_ms:{cancelAfter}"
-                    : $"stage:{cancelOnStage}",
+                cancel_trigger = interactiveCancel
+                    ? "interactive_stdin"
+                    : cancelOnStage is null
+                        ? $"after_ms:{cancelAfter}"
+                        : $"stage:{cancelOnStage}",
                 job_members_at_cancel = membersAtCancel.Count,
                 job_member_pids_at_cancel = membersAtCancel,
                 root_exited_during_grace = rootExitedDuringGrace,
@@ -332,11 +447,91 @@ internal static class Program
                 active_processes_after = survivors.Count,
                 no_survivors = survivors.Count == 0,
                 observed_processes_exited = survivors.Count == 0,
+                coordinator_os_exit_code = cancelCoordinatorExitCode,
                 terminal_event = terminalEvent,
+                terminal_event_count = terminalEventCount,
                 final_output_promoted = finalOutputExists,
                 staging_exists = stagingExists,
             });
         return passed ? 0 : 1;
+    }
+
+    private static async Task<int> RunSyntheticCoordinatorAsync(string[] args)
+    {
+        if (args.Length > 1
+            || (args.Length == 1
+                && args[0] is not "complete" and not "complete-linger"))
+        {
+            throw new ArgumentException(
+                "The synthetic coordinator mode is not supported.");
+        }
+        var completesNormally = args.Length == 1;
+        var lingersAfterTerminal = args is ["complete-linger"];
+        var requestLine = await Console.In.ReadLineAsync()
+            ?? throw new InvalidDataException("A synthetic request is required.");
+        using var request = JsonDocument.Parse(requestLine);
+        var operationId = request.RootElement
+            .GetProperty("operation_id")
+            .GetString()
+            ?? throw new InvalidDataException("The synthetic operation_id is missing.");
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            protocol_version = 1,
+            operation_id = operationId,
+            sequence = 1,
+            @event = "operation_started",
+        }));
+
+        if (completesNormally)
+        {
+            var finalOutputPath = request.RootElement
+                .GetProperty("output_directory")
+                .GetString()
+                ?? throw new InvalidDataException(
+                    "The synthetic output directory is missing.");
+            Directory.CreateDirectory(
+                Path.Combine(finalOutputPath, "surface_preview"));
+            await File.WriteAllTextAsync(
+                Path.Combine(finalOutputPath, "run-manifest.json"),
+                "{}");
+            await File.WriteAllTextAsync(
+                Path.Combine(finalOutputPath, "artifact-manifest.json"),
+                "{}");
+            await File.WriteAllTextAsync(
+                Path.Combine(finalOutputPath, "surface_preview", "index.html"),
+                "<!doctype html>");
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                protocol_version = 1,
+                operation_id = operationId,
+                sequence = 2,
+                @event = "operation_completed",
+            }));
+            if (lingersAfterTerminal)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30));
+            }
+            return 0;
+        }
+
+        var controlLine = await Console.In.ReadLineAsync()
+            ?? throw new InvalidDataException("A synthetic control message is required.");
+        using var control = JsonDocument.Parse(controlLine);
+        var root = control.RootElement;
+        if (root.GetProperty("protocol_version").GetInt32() != 1
+            || root.GetProperty("operation_id").GetString() != operationId
+            || root.GetProperty("control").GetString() != "cancel")
+        {
+            throw new InvalidDataException("The synthetic cancel control is invalid.");
+        }
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            protocol_version = 1,
+            operation_id = operationId,
+            sequence = 2,
+            @event = "operation_cancelled",
+        }));
+        return 3;
     }
 
     private static async Task<int> RunSyntheticNodeAsync(string[] args)
@@ -482,7 +677,9 @@ internal static class Program
                     throw new ArgumentException("An option name was expected.");
                 }
                 var name = argument[2..];
-                if (name is "root-control" or "normal-completion")
+                if (name is "root-control"
+                    or "normal-completion"
+                    or "interactive-cancel")
                 {
                     values[name] = null;
                     continue;

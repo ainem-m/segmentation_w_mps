@@ -1,0 +1,7 @@
+primary_host_stderr_bytes=0
+primary_coordinator_stderr_copied=false
+raw_third_party_output_copied=false
+absolute_paths_copied=false
+
+Coordinator progress diagnostics remain only in private scratch evidence and
+are intentionally excluded from the checked-in engineering evidence.

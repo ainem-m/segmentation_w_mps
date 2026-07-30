@@ -1,0 +1,16 @@
+date_jst=2026-07-30
+repository=ainem-m/segmentation_w_mps
+starting_remote_branch=agent/windows-dicom-msvc-spike
+expected_start_commit=11cfaaa2039deb37ce53baf68e3a46d0ed503022
+observed_start_commit=11cfaaa2039deb37ce53baf68e3a46d0ed503022
+working_branch=agent/windows-wpf-vertical-slice
+dedicated_worktree=true
+preexisting_worktree_changes=false
+host_os=Microsoft Windows 10 IoT Enterprise 22H2
+host_build=19045
+host_architecture=x64
+windows_11=unverified
+scope=representative WPF coordinator shell engineering slice
+installer=unverified
+signing=unverified
+update_rollback=unverified

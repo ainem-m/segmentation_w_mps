@@ -1,0 +1,23 @@
+{
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "operation_id": "e80c674a-c401-4dce-9c52-75759766f302",
+  "protocol_version": 1,
+  "requested_device": "cuda:0",
+  "requested_device_index": 0,
+  "requested_policy": "cuda_required",
+  "resolved_device": "cuda:0",
+  "runtime": {
+    "compute_capability": "7.5",
+    "cuda_available": true,
+    "cuda_build": "12.6",
+    "cuda_device_count": 1,
+    "device_index": 0,
+    "device_name": "NVIDIA GeForce RTX 2060",
+    "driver_version": "572.83",
+    "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "torch_version": "2.11.0+cu126",
+    "total_memory_bytes": 6442123264
+  },
+  "schema": "totalsegmentator_wrapper.run_manifest.v1"
+}

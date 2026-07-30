@@ -193,6 +193,13 @@ typed failure
 open output
 ```
 
+The Windows 10 engineering slice now covers these representative WPF views,
+the production coordinator normal path, strict-CUDA typed failure, and real
+Job Object cancellation. Self-contained publish, external UI Automation,
+actual high-contrast and multi-DPI interaction, the native file-dialog path,
+clean Windows 11 install/uninstall, and future DICOM image interaction remain
+unverified.
+
 Publish a self-contained test build and install it per-user on a clean Windows
 11 standard account with no Python or .NET runtime installed.
 

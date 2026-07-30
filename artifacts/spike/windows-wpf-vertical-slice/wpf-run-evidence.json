@@ -1,0 +1,23 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_evidence_run.v1",
+  "status": "pass",
+  "operation_id": "e80c674a-c401-4dce-9c52-75759766f302",
+  "terminal_event": "operation_completed",
+  "supervisor_exit_code": 0,
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": "cuda:0",
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "output_promoted": true,
+  "offline_preview_exists": true,
+  "artifact_manifest_exists": true,
+  "output_directory_name": "case-20260730-060705-e80c674a",
+  "ui_screen": "result",
+  "ui_status": "\u5B8C\u4E86",
+  "ui_dpi_x": 96,
+  "ui_dpi_y": 96,
+  "system_high_contrast": false,
+  "error_code": null,
+  "safe_reason": null
+}

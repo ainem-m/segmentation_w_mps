@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PAGES_INDEX = ROOT / "cloudflare" / "pages" / "index.html"
 APP_HUB_INDEX = ROOT / "cloudflare" / "app-hub" / "index.html"
 SWIFT_APP_DIR = ROOT / "native" / "macos" / "TotalSegmentatorWrapperForMac"
+WPF_SHELL_DIR = ROOT / "native" / "windows" / "CoordinatorShell"
 SUPPORT_CARD = ROOT / "docs" / "34_ALPHA_DISTRIBUTION_SUPPORT_CARD.md"
 CURRENT_RELEASE_NOTES = ROOT / "cloudflare" / "r2" / "releases" / "0.1.2" / "RELEASE_NOTES.txt"
 
@@ -112,6 +113,16 @@ class NonClinicalLanguageTests(unittest.TestCase):
         self.assertIn(SAMPLE_NOTICE_JA, combined)
         self.assertIn(UNOFFICIAL_WRAPPER_NOTICE_JA, combined)
 
+    def test_wpf_ui_uses_standard_japanese_disclaimers(self) -> None:
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(WPF_SHELL_DIR.glob("*"))
+            if path.is_file()
+        )
+
+        self.assertIn(NON_CLINICAL_SCOPE_JA, combined)
+        self.assertIn(SAMPLE_NOTICE_JA, combined)
+
     def test_support_card_uses_standard_short_notice(self) -> None:
         support_card = SUPPORT_CARD.read_text(encoding="utf-8")
 
@@ -130,6 +141,11 @@ class NonClinicalLanguageTests(unittest.TestCase):
                 *[
                     path.read_text(encoding="utf-8")
                     for path in sorted(SWIFT_APP_DIR.glob("*.swift"))
+                ],
+                *[
+                    path.read_text(encoding="utf-8")
+                    for path in sorted(WPF_SHELL_DIR.glob("*"))
+                    if path.is_file()
                 ],
                 SUPPORT_CARD.read_text(encoding="utf-8"),
             ]

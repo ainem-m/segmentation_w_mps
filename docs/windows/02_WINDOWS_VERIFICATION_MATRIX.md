@@ -36,7 +36,7 @@ clean Windows 11 x64 standard-user machine
 | C++ helper MSVC build | reproducible configure/build log | partial: exact GDCM 3.2.6 static libraries from the approved binary wheel and MSVC Release build pass on the Windows 10 engineering host without a GDCM DLL dependency; clean Windows 11 and distributable package closure unverified |
 | DICOM synthetic parity | Windows and macOS semantic comparison | partial: the Windows synthetic harness, compressed codec corpus, real dcm2niix conversion, timeout, and Job Object cancellation pass; cross-host macOS semantic comparison unverified |
 | Japanese/long paths | runtime, coordinator and DICOM cases | partial: DICOM input, output, and child executable paths with spaces/Japanese plus a greater-than-260-character input path pass on the Windows 10 engineering host; remaining product surfaces and Windows 11 unverified |
-| WPF representative UI | keyboard, UIA, high contrast, DPI | unverified |
+| WPF representative UI | keyboard, UIA, high contrast, DPI | partial: manual-aligned setup/input/run/result views, protocol v1 event mapping, strict-CUDA normal/typed-failure paths, real cancellation, automation names, focusable controls, dynamic system colors, and 96-DPI rendering pass on the Windows 10 engineering host; external UI Automation, actual keyboard traversal, high contrast, other DPI/viewport sizes, native file-dialog interaction, future DICOM image interaction, self-contained distribution, and Windows 11 remain unverified |
 | Standard-user install | clean-machine install without elevation | unverified |
 | Offline second launch | no network after completed setup | unverified |
 | Setup recovery | interruption/fault matrix | unverified |

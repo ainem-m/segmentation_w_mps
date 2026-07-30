@@ -1,0 +1,23 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_evidence_run.v1",
+  "status": "fail",
+  "operation_id": "86ef4b3f-47f5-4b8c-aae0-eef93d8f141d",
+  "terminal_event": "operation_failed",
+  "supervisor_exit_code": 1,
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": null,
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "output_promoted": false,
+  "offline_preview_exists": false,
+  "artifact_manifest_exists": false,
+  "output_directory_name": "case-20260730-061010-86ef4b3f",
+  "ui_screen": "result",
+  "ui_status": "\u51E6\u7406\u3092\u5B8C\u4E86\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F",
+  "ui_dpi_x": 96,
+  "ui_dpi_y": 96,
+  "system_high_contrast": false,
+  "error_code": "cuda_unavailable",
+  "safe_reason": "The required CUDA device did not pass strict validation."
+}

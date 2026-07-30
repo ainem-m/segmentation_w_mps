@@ -1,0 +1,29 @@
+PowerShell=5.1.19041.6456
+.NET SDK=10.0.302
+Microsoft.WindowsDesktop.App=10.0.10
+CPython=3.12.10 x64
+PyTorch=2.11.0+cu126
+PyTorch CUDA build=12.6
+torchvision=0.26.0+cu126
+TotalSegmentator=2.14.0
+nnU-Net v2=2.8.1
+GPU=NVIDIA GeForce RTX 2060
+VRAM=6144 MiB
+NVIDIA driver=572.83
+model_cache=Dataset115_mandible and Dataset297_TotalSegmentator_total_3mm_1559subj present
+TotalSegmentator send_usage_stats=false
+public package index used=false
+Python dependency re-resolution=false
+current branch source overlay used=true
+CMake in this WPF shell environment=not required; not on PATH
+
+The existing app-private dependency runtime was reused. Its installed
+application entrypoint predates interactive coordinator input, so engineering
+evidence used the current branch source through PYTHONPATH while retaining the
+same Python binaries and dependency set.
+
+A self-contained .NET publish was attempted offline and stopped with
+NETSDK1112 because the win-x64 runtime pack was not present in the private
+NuGet cache. No public source was contacted. The engineering run used the
+existing app-private .NET 10 host; self-contained distribution remains
+unverified.

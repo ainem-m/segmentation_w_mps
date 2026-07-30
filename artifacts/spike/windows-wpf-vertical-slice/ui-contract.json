@@ -1,0 +1,11 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_contract_self_test.v1",
+  "status": "pass",
+  "coordinator_event_parser": true,
+  "automation_names": true,
+  "keyboard_focusable": true,
+  "dynamic_system_colors": true,
+  "per_monitor_v2_manifest": true,
+  "long_path_aware_manifest": true,
+  "external_ui_automation": "unverified"
+}

@@ -4,8 +4,10 @@ Date: 2026-07-30
 
 This document describes the platform-neutral coordinator boundary implemented
 on the Windows spike branch. Runtime, strict CUDA, normal completion, and
-cancellation have engineering evidence on the Windows 10 spike host. Windows
-11, WPF integration, DICOM, and the installer remain unverified.
+cancellation have engineering evidence on the Windows 10 spike host. The WPF
+shell integration also has Windows 10 engineering evidence; Windows 11,
+external UI accessibility interaction, clean-machine distribution, and the
+installer remain unverified.
 
 ## Entrypoint and transport
 
@@ -195,9 +197,9 @@ survivors on the Windows 10 engineering host. NVIDIA PID polling also confirmed
 that the observed inference GPU processes were Job members and absent after
 cancellation.
 
-Windows 11 remains unverified. The capability field for authoritative Job
-ownership therefore remains `unverified` until the Windows application host
-integrates and reports this supervisor.
+The Windows 10 WPF shell now invokes this supervisor for real completion and
+cancellation, while the platform-neutral coordinator correctly keeps Job
+ownership outside its own capability claim. Windows 11 remains unverified.
 
 ## Compatibility rule
 

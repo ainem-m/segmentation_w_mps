@@ -1,0 +1,33 @@
+<Application
+    x:Class="TotalSegmentatorWrapper.Windows.CoordinatorShell.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Startup="OnStartup"
+    ShutdownMode="OnMainWindowClose">
+  <Application.Resources>
+    <Style TargetType="Button">
+      <Setter Property="FontFamily" Value="Segoe UI, Yu Gothic UI" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="Segoe UI, Yu Gothic UI" />
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" />
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+    </Style>
+    <Style TargetType="ProgressBar">
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+    </Style>
+  </Application.Resources>
+</Application>

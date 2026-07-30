@@ -1,0 +1,428 @@
+<Window
+    x:Class="TotalSegmentatorWrapper.Windows.CoordinatorShell.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+    Title="TotalSegmentator Wrapper for Windows"
+    Width="1180"
+    Height="760"
+    MinWidth="900"
+    MinHeight="640"
+    WindowStartupLocation="CenterScreen"
+    Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
+    UseLayoutRounding="True"
+    TextOptions.TextFormattingMode="Display"
+    automation:AutomationProperties.Name="TotalSegmentator Wrapper for Windows">
+  <Window.Resources>
+    <Style
+        x:Key="PrimaryButtonStyle"
+        TargetType="Button"
+        BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+      <Setter Property="FontSize" Value="17" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="MinHeight" Value="54" />
+      <Setter Property="Padding" Value="18,10" />
+    </Style>
+    <Style
+        x:Key="CardButtonStyle"
+        TargetType="Button"
+        BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+      <Setter Property="Padding" Value="20" />
+      <Setter Property="MinHeight" Value="230" />
+    </Style>
+    <Style x:Key="StepCircleStyle" TargetType="Border">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="CornerRadius" Value="17" />
+      <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+      <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+    <Style
+        x:Key="SectionTitleStyle"
+        TargetType="TextBlock"
+        BasedOn="{StaticResource {x:Type TextBlock}}">
+      <Setter Property="FontSize" Value="17" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+    <Style
+        x:Key="MutedTextStyle"
+        TargetType="TextBlock"
+        BasedOn="{StaticResource {x:Type TextBlock}}">
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="280" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <Border
+        Grid.Column="0"
+        Padding="24"
+        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+        BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+        BorderThickness="0,0,1,0">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock
+            Grid.Row="0"
+            Text="TotalSegmentator Wrapper&#x0a;for Windows"
+            FontSize="22"
+            FontWeight="SemiBold"
+            Margin="0,0,0,12" />
+        <TextBlock
+            Grid.Row="1"
+            Text="研究・教育・検証用の3Dプレビューを作成します。"
+            Style="{StaticResource MutedTextStyle}"
+            Margin="0,0,0,24" />
+        <StackPanel Grid.Row="2">
+          <Separator Margin="0,0,0,18" />
+          <Grid Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="Step1Circle" Style="{StaticResource StepCircleStyle}">
+              <TextBlock Text="1" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="目的" FontSize="16" FontWeight="SemiBold" />
+              <TextBlock Text="Sampleか手元のCTデータを選びます。" Style="{StaticResource MutedTextStyle}" FontSize="12" />
+            </StackPanel>
+          </Grid>
+          <Grid Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="Step2Circle" Style="{StaticResource StepCircleStyle}">
+              <TextBlock Text="2" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="入力" FontSize="16" FontWeight="SemiBold" />
+              <TextBlock Text="CT入力と作成内容を確認します。" Style="{StaticResource MutedTextStyle}" FontSize="12" />
+            </StackPanel>
+          </Grid>
+          <Grid Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="Step3Circle" Style="{StaticResource StepCircleStyle}">
+              <TextBlock Text="3" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="実行" FontSize="16" FontWeight="SemiBold" />
+              <TextBlock Text="このWindows PCで3Dプレビューを作成します。" Style="{StaticResource MutedTextStyle}" FontSize="12" />
+            </StackPanel>
+          </Grid>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="Step4Circle" Style="{StaticResource StepCircleStyle}">
+              <TextBlock Text="4" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="結果" FontSize="16" FontWeight="SemiBold" />
+              <TextBlock Text="3Dプレビューと保存結果を確認します。" Style="{StaticResource MutedTextStyle}" FontSize="12" />
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+        <TextBlock
+            Grid.Row="3"
+            Text="研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。"
+            Style="{StaticResource MutedTextStyle}"
+            FontSize="11"
+            automation:AutomationProperties.Name="非臨床利用の注意" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1" Margin="34,28">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <Grid Grid.Row="0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock x:Name="HeaderTitle" FontSize="34" FontWeight="SemiBold" />
+          <TextBlock
+              x:Name="HeaderSubtitle"
+              Style="{StaticResource MutedTextStyle}"
+              FontSize="15"
+              Margin="0,5,0,0" />
+        </StackPanel>
+        <Border
+            Grid.Column="1"
+            Padding="14,8"
+            CornerRadius="18"
+            Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+            VerticalAlignment="Center">
+          <TextBlock x:Name="StatusPillText" FontWeight="SemiBold" />
+        </Border>
+      </Grid>
+      <Separator Grid.Row="1" Margin="0,18,0,22" />
+
+      <Grid Grid.Row="2">
+        <ScrollViewer x:Name="SetupPanel" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock
+                Text="3Dプレビューを作成するための実行環境を、このWindows PCで確認します。新しい依存関係の取得や再解決は行いません。"
+                Style="{StaticResource MutedTextStyle}"
+                FontSize="16"
+                Margin="0,0,0,18" />
+            <Expander Header="データの扱い" Margin="0,0,0,22">
+              <TextBlock
+                  Text="入力データ、作成結果、ログはこのWindows PC内に保存します。外部へ送信しません。"
+                  Style="{StaticResource MutedTextStyle}"
+                  Margin="18,10,0,0" />
+            </Expander>
+            <TextBlock Text="準備を始める" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock
+                x:Name="RuntimeMessage"
+                Text="同梱済みのapp-private runtime、Sample、モデルキャッシュを確認します。"
+                Style="{StaticResource MutedTextStyle}"
+                Margin="0,0,0,18" />
+            <TextBlock
+                x:Name="RuntimeErrorCode"
+                Visibility="Collapsed"
+                FontFamily="Cascadia Mono, Consolas"
+                Margin="0,0,0,18" />
+            <Button
+                x:Name="PrepareButton"
+                Content="準備を始める"
+                Style="{StaticResource PrimaryButtonStyle}"
+                Click="PrepareButton_Click"
+                IsDefault="True"
+                TabIndex="1"
+                automation:AutomationProperties.Name="準備を始める"
+                automation:AutomationProperties.HelpText="同梱済みのWindows実行環境を確認します。" />
+          </StackPanel>
+        </ScrollViewer>
+
+        <ScrollViewer x:Name="StartPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="18" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button
+                x:Name="SampleChoiceButton"
+                Grid.Column="0"
+                Style="{StaticResource CardButtonStyle}"
+                Click="SampleChoiceButton_Click"
+                TabIndex="1"
+                automation:AutomationProperties.Name="Sampleから始める"
+                automation:AutomationProperties.HelpText="Sample 1を使って入力から結果確認まで試します。">
+              <StackPanel>
+                <TextBlock Text="✦" FontSize="26" Margin="0,0,0,14" />
+                <TextBlock Text="Sampleから始める" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <TextBlock Text="入力から結果確認までの流れを先に試します。" Style="{StaticResource MutedTextStyle}" />
+                <TextBlock Text="★ おすすめ" Margin="0,18,0,0" Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" />
+              </StackPanel>
+            </Button>
+            <Button
+                x:Name="OwnDataChoiceButton"
+                Grid.Column="2"
+                Style="{StaticResource CardButtonStyle}"
+                Click="OwnDataChoiceButton_Click"
+                TabIndex="2"
+                automation:AutomationProperties.Name="手元のCTデータを使う"
+                automation:AutomationProperties.HelpText="NIfTI形式のCTファイルを選びます。">
+              <StackPanel>
+                <TextBlock Text="□" FontSize="26" Margin="0,0,0,14" />
+                <TextBlock Text="手元のCTデータを使う" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <TextBlock Text="NIfTI形式のCTファイルを選びます。DICOMはこのtechnical spikeの対象外です。" Style="{StaticResource MutedTextStyle}" />
+              </StackPanel>
+            </Button>
+          </Grid>
+        </ScrollViewer>
+
+        <ScrollViewer x:Name="InputPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Text="入力" Style="{StaticResource SectionTitleStyle}" />
+            <Grid Margin="0,0,0,20">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="InputDisplayName" Text="Sample 1" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <Button
+                  Grid.Column="1"
+                  Content="別のCTを選ぶ"
+                  Click="ChooseInputButton_Click"
+                  TabIndex="1"
+                  automation:AutomationProperties.Name="別のCTを選ぶ" />
+            </Grid>
+            <TextBlock Text="作成する3Dプレビュー" Style="{StaticResource SectionTitleStyle}" />
+            <Border
+                Padding="18"
+                Margin="0,0,0,18"
+                BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
+                BorderThickness="2"
+                CornerRadius="8"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+              <StackPanel>
+                <TextBlock Text="✓  標準モデル" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="TotalSegmentator" FontSize="17" FontWeight="SemiBold" Margin="0,10,0,6" />
+                <TextBlock Text="顎骨と歯列をまとめて作成します。最初におすすめの方法です。" Style="{StaticResource MutedTextStyle}" />
+              </StackPanel>
+            </Border>
+            <TextBlock Text="GPU  NVIDIA CUDA (cuda:0)を必須として使用" Margin="0,0,0,8" FontWeight="SemiBold" />
+            <TextBlock Text="CPUへ自動的に切り替えません。" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,14" />
+            <TextBlock x:Name="OutputDisplayName" Text="保存先: runs" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,14" />
+            <TextBlock
+                x:Name="SampleNotice"
+                Text="同梱Sample 1はUI確認・動作確認用です。診断、治療方針の決定、治療計画、定量的な精度評価、または臨床利用には使用できません。"
+                Style="{StaticResource MutedTextStyle}"
+                Margin="0,0,0,20"
+                automation:AutomationProperties.Name="Sample利用の注意" />
+            <Button
+                x:Name="RunButton"
+                Content="Sampleで3Dプレビューを作る"
+                Style="{StaticResource PrimaryButtonStyle}"
+                Click="RunButton_Click"
+                IsDefault="True"
+                TabIndex="2"
+                automation:AutomationProperties.Name="Sampleで3Dプレビューを作る"
+                automation:AutomationProperties.HelpText="strict CUDAでTotalSegmentator処理を開始します。" />
+          </StackPanel>
+        </ScrollViewer>
+
+        <ScrollViewer x:Name="RunningPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <Grid Margin="0,0,0,12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="RunningTitle" Text="実行準備" FontSize="23" FontWeight="SemiBold" />
+              <TextBlock x:Name="ElapsedText" Grid.Column="1" Text="経過時間: 0秒" Style="{StaticResource MutedTextStyle}" />
+            </Grid>
+            <TextBlock x:Name="RunningDetail" Text="production coordinatorを開始しています。" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,16" />
+            <TextBlock x:Name="OverallProgressText" Text="全体の進捗範囲: 0〜25%" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <ProgressBar
+                x:Name="RunProgressBar"
+                Height="14"
+                Minimum="0"
+                Maximum="100"
+                IsIndeterminate="True"
+                automation:AutomationProperties.Name="処理の進行状況"
+                automation:AutomationProperties.HelpText="工程内の進行率または継続中状態を表示します。" />
+            <TextBlock x:Name="SubProgressText" Text="処理を継続しています。" Style="{StaticResource MutedTextStyle}" Margin="0,12,0,20" />
+            <TextBlock x:Name="DeviceText" Text="使用機能: TotalSegmentator / strict CUDA確認中" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <TextBlock x:Name="RunningOutputText" Text="保存先: 新しいcase" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,18" />
+            <Button
+                x:Name="StopButton"
+                Content="停止"
+                HorizontalAlignment="Left"
+                Click="StopButton_Click"
+                TabIndex="1"
+                automation:AutomationProperties.Name="停止"
+                automation:AutomationProperties.HelpText="graceful cancelを要求し、必要な場合はJob Objectで終了します。" />
+          </StackPanel>
+        </ScrollViewer>
+
+        <ScrollViewer x:Name="ResultPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock x:Name="ResultTitle" Text="3Dプレビューを作成しました" FontSize="23" FontWeight="SemiBold" Margin="0,0,0,10" />
+            <TextBlock x:Name="ResultReason" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,8" />
+            <TextBlock x:Name="ResultErrorCode" FontFamily="Cascadia Mono, Consolas" Margin="0,0,0,16" Visibility="Collapsed" />
+            <Button
+                x:Name="OpenPreviewButton"
+                Content="3Dプレビューを開く"
+                Style="{StaticResource PrimaryButtonStyle}"
+                Click="OpenPreviewButton_Click"
+                Margin="0,0,0,14"
+                TabIndex="1"
+                automation:AutomationProperties.Name="3Dプレビューを開く"
+                automation:AutomationProperties.HelpText="保存済みのローカルoffline previewを既定のブラウザで開きます。" />
+            <WrapPanel Margin="0,0,0,14">
+              <Button
+                  x:Name="OpenOutputButton"
+                  Content="結果フォルダを開く"
+                  Click="OpenOutputButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="2"
+                  automation:AutomationProperties.Name="結果フォルダを開く" />
+              <Button
+                  x:Name="CopyErrorButton"
+                  Content="エラー情報をコピー"
+                  Click="CopyErrorButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="3"
+                  Visibility="Collapsed"
+                  automation:AutomationProperties.Name="エラー情報をコピー" />
+              <Button
+                  x:Name="ShowDetailsButton"
+                  Content="詳細情報を見る"
+                  Click="ShowDetailsButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="4"
+                  automation:AutomationProperties.Name="詳細情報を見る"
+                  automation:AutomationProperties.HelpText="安全なprotocol event要約だけを表示します。" />
+            </WrapPanel>
+            <Border
+                x:Name="SafeDetailsPanel"
+                Visibility="Collapsed"
+                Padding="12"
+                Margin="0,0,0,14"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                CornerRadius="6">
+              <TextBox
+                  x:Name="SafeEventLogTextBox"
+                  IsReadOnly="True"
+                  TextWrapping="Wrap"
+                  AcceptsReturn="True"
+                  MinHeight="100"
+                  MaxHeight="180"
+                  VerticalScrollBarVisibility="Auto"
+                  automation:AutomationProperties.Name="安全な処理イベント要約" />
+            </Border>
+            <WrapPanel>
+              <Button
+                  Content="入力と作成内容へ戻る"
+                  Click="ReturnToInputButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="5"
+                  automation:AutomationProperties.Name="入力と作成内容へ戻る" />
+              <Button
+                  Content="最初に戻る"
+                  Click="ReturnToStartButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="6"
+                  automation:AutomationProperties.Name="最初に戻る" />
+            </WrapPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>
