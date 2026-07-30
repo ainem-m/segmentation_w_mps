@@ -1,0 +1,15 @@
+dependency_resolution=not performed
+public_index_used=false
+runtime_source=existing app-private Windows runtime
+model_source=existing repository-configured official source
+pip_check=PASS (No broken requirements found.)
+production_import_matrix=PASS
+totalsegmentator-wrapper-mac=0.3.0
+TotalSegmentator=2.14.0
+torch=2.11.0+cu126
+nnunetv2=2.8.1
+batchgenerators=0.25.3
+acvl-utils=0.2.6
+numpy=2.5.1
+nibabel=5.4.2
+scipy=1.18.0

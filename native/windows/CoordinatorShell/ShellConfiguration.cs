@@ -12,7 +12,8 @@ internal sealed record ShellConfiguration(
     string OutputRoot,
     string TotalSegmentatorHome,
     string DicomNormalizerPath,
-    string Dcm2niixPath)
+    string Dcm2niixPath,
+    string DentalSegmentatorModelRoot)
 {
     internal static ShellConfiguration Load(string? engineeringConfigPath)
     {
@@ -42,7 +43,8 @@ internal sealed record ShellConfiguration(
                 Path.Combine(
                     nativeRuntime,
                     "totalsegmentator-wrapper-dicom-normalizer.exe"),
-                Path.Combine(nativeRuntime, "dcm2niix.exe"));
+                Path.Combine(nativeRuntime, "dcm2niix.exe"),
+                Path.Combine(baseDirectory, "models", "dentalseg"));
         }
 
         var absoluteConfigPath = Path.GetFullPath(engineeringConfigPath);
@@ -75,7 +77,11 @@ internal sealed record ShellConfiguration(
             OptionalAbsolute(
                 payload.Dcm2niixPath,
                 Path.Combine(nativeRuntime, "dcm2niix.exe"),
-                "dcm2niix_path"));
+                "dcm2niix_path"),
+            OptionalAbsolute(
+                payload.DentalSegmentatorModelRoot,
+                Path.Combine(baseDirectory, "models", "dentalseg"),
+                "dentalseg_model_root"));
     }
 
     internal RuntimeCheckResult CheckRuntime()
@@ -151,6 +157,77 @@ internal sealed record ShellConfiguration(
                     failures.Distinct(StringComparer.Ordinal)),
                 "dicom_runtime_unavailable",
                 "アプリに同梱されたDICOM読み込み機能を確認してください。");
+    }
+
+    internal RuntimeCheckResult CheckDentalSegmentatorRuntime()
+    {
+        const string datasetName =
+            "Dataset112_DentalSegmentator_v100";
+        var failures = new List<string>();
+        CheckDirectory(
+            DentalSegmentatorModelRoot,
+            "DentalSegmentator の追加モデル",
+            failures);
+        try
+        {
+            var datasetRoot = Path.Combine(
+                DentalSegmentatorModelRoot,
+                "nnUNet_results",
+                datasetName);
+            using var marker = JsonDocument.Parse(
+                File.ReadAllText(
+                    Path.Combine(
+                        datasetRoot,
+                        ".dentalsegmentator_model_ready.json")));
+            var root = marker.RootElement;
+            if (!root.TryGetProperty("schema", out var schema)
+                || schema.GetString()
+                    != "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1"
+                || !root.TryGetProperty("model_state", out var state)
+                || state.GetString() != "ready"
+                || !root.TryGetProperty("expected_md5", out var md5)
+                || md5.GetString()
+                    != "b71cd5230168d28a4f71b078265b76be"
+                || !root.TryGetProperty("dataset_id", out var datasetId)
+                || datasetId.GetString() != "112"
+                || !root.TryGetProperty("dataset_name", out var name)
+                || name.GetString() != datasetName
+                || !Directory.EnumerateFiles(
+                        datasetRoot,
+                        "dataset.json",
+                        SearchOption.AllDirectories)
+                    .Any()
+                || !Directory.EnumerateFiles(
+                        datasetRoot,
+                        "checkpoint_final.pth",
+                        SearchOption.AllDirectories)
+                    .Any(path => new FileInfo(path).Length > 0))
+            {
+                failures.Add(
+                    "DentalSegmentator の追加モデルを確認できません。");
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or JsonException)
+        {
+            failures.Add(
+                "DentalSegmentator の追加モデルを確認できません。");
+        }
+        return failures.Count == 0
+            ? new RuntimeCheckResult(
+                true,
+                "DentalSegmentator の追加モデルを確認しました。",
+                null,
+                null)
+            : new RuntimeCheckResult(
+                false,
+                string.Join(
+                    " ",
+                    failures.Distinct(StringComparer.Ordinal)),
+                "dentalseg_prepare_required",
+                "検証済みのapp-private DentalSegmentatorモデルを準備してから、もう一度選んでください。");
     }
 
     private static string RequireAbsolute(string? value, string name)
@@ -269,6 +346,9 @@ internal sealed record ShellConfiguration(
 
         [JsonPropertyName("dcm2niix_path")]
         public string? Dcm2niixPath { get; init; }
+
+        [JsonPropertyName("dentalseg_model_root")]
+        public string? DentalSegmentatorModelRoot { get; init; }
     }
 }
 

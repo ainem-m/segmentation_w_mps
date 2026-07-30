@@ -1,0 +1,7 @@
+branch=agent/windows-wpf-additional-models-slice
+base_branch=origin/agent/windows-wpf-dicom-slice
+expected_base_commit=d0c51c1117fb143d6b5e0ed0e082ecbe56208ea7
+observed_base_commit=d0c51c1117fb143d6b5e0ed0e082ecbe56208ea7
+base_commit_match=true
+host_scope=Windows 10 engineering evidence
+windows_11=UNVERIFIED

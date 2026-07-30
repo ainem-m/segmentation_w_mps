@@ -1,0 +1,14 @@
+os=Microsoft Windows 10 IoT Enterprise
+os_version=10.0.19045
+architecture=64-bit
+powershell=5.1.19041.6456
+dotnet_sdk=10.0.302
+python=3.12.10
+git=2.53.0.windows.1
+cmake=not required for this slice; unavailable on PATH
+gpu=NVIDIA GeForce RTX 2060
+gpu_memory=6144 MiB
+compute_capability=7.5
+nvidia_driver=572.83
+pytorch=2.11.0+cu126
+cuda_build=12.6

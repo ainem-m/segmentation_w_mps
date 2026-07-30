@@ -1,0 +1,15 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_dentalsegmentator_negative.v1",
+  "status": "pass",
+  "operation_id": "f3a9bd61-4dc2-4bd5-b7d2-dff4d7ad1512",
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": null,
+  "terminal_event": "operation_failed",
+  "error_code": "cuda_unavailable",
+  "coordinator_os_exit_code": 2,
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "final_output_promoted": false,
+  "active_processes_after": 0
+}

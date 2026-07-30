@@ -6,8 +6,10 @@ This document describes the platform-neutral coordinator boundary implemented
 on the Windows spike branch. Runtime, strict CUDA, normal completion, and
 cancellation have engineering evidence on the Windows 10 spike host. The WPF
 shell and its clean-DICOM-to-NIfTI intake integration also have Windows 10
-engineering evidence; Windows 11, external UI accessibility interaction,
-clean-machine distribution, DICOM rescue, and the installer remain unverified.
+engineering evidence. The fixed DentalSegmentator operation has Windows 10
+strict-CUDA completion and hidden-GPU failure evidence. Windows 11, external UI
+accessibility interaction, clean-machine/model distribution, DICOM rescue, and
+the installer remain unverified.
 
 ## Entrypoint and transport
 
@@ -101,6 +103,31 @@ before data processing.
 `cuda_required` performs strict per-operation validation of the requested
 device index. A failed check emits a typed failure and never starts CPU
 inference.
+
+### NIfTI DentalSegmentator run
+
+The fixed additional-model operation uses the same request envelope with:
+
+```json
+{
+  "operation": "run_nifti_dentalsegmentator",
+  "device_policy": {
+    "mode": "cuda_required",
+    "device_index": 0
+  },
+  "options": {
+    "robust_crop": false,
+    "higher_order_resampling": false
+  }
+}
+```
+
+It is limited to the DentalSegmentator `craniofacial_structures` five-label
+path. The host supplies a verified app-private model root outside the request;
+clients cannot select a model path, backend, task, fold, TTA mode, or CPU
+fallback. The Windows WPF shell uses fold 0 with TTA disabled, matching the
+existing product choice. A missing model emits `dentalseg_prepare_required`;
+a hidden or invalid CUDA device fails before inference.
 
 Protocol v1 remains NIfTI-only. The Windows WPF clean-DICOM path audits and
 converts a selected clean series in a pre-coordinator adapter, verifies exactly

@@ -1,0 +1,18 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_dentalseg_run.v1",
+  "status": "pass",
+  "operation": "run_nifti_dentalsegmentator",
+  "backend": "dentalsegmentator",
+  "task": "craniofacial_structures",
+  "operation_id": "6553a967-7a18-4a42-ac1d-16dcb252a421",
+  "terminal_event": "operation_completed",
+  "supervisor_exit_code": 0,
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": "cuda:0",
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "run_manifest_verified": true,
+  "artifact_manifest_exists": true,
+  "segmentation_started": true
+}

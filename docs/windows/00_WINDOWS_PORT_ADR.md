@@ -97,7 +97,7 @@ coordinator protocol v1:
   stderr = diagnostics only
 ```
 
-The first coordinator slice supports only:
+The initial coordinator slice supported only:
 
 ```text
 - capabilities
@@ -106,6 +106,13 @@ The first coordinator slice supports only:
 - craniofacial_structures
 - explicit required device policy
 ```
+
+Protocol v1 now also exposes the fixed
+`run_nifti_dentalsegmentator` operation. It remains NIfTI-only and
+`craniofacial_structures`-only, accepts no backend/task/model selector, and
+requires the host-provided app-private model gate. Windows 10 engineering
+evidence proves strict CUDA completion without fallback; Windows 11 and model
+distribution remain unverified.
 
 Compatibility adapters remain until both macOS and Windows have independently
 validated the coordinator surface.

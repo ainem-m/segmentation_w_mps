@@ -14,6 +14,7 @@ from totalsegmentator_wrapper_mac.coordinator_protocol import (
     CANCEL_CONTROL,
     CAPABILITIES_OPERATION,
     PROTOCOL_VERSION,
+    RUN_NIFTI_DENTALSEG_OPERATION,
     RUN_NIFTI_TOTALSEG_OPERATION,
     CoordinatorProtocolError,
     CoordinatorRequest,
@@ -45,6 +46,7 @@ def run_coordinator_request(
     cuda_device_checker: CudaDeviceChecker | None = None,
     should_cancel: ShouldCancel | None = None,
     start_cancel_listener: StartCancelListener | None = None,
+    dentalseg_model_root: Path | None = None,
 ) -> int:
     writer.emit("operation_started", operation=request.operation)
     if _cancellation_requested(should_cancel):
@@ -52,7 +54,11 @@ def run_coordinator_request(
     if request.operation == CAPABILITIES_OPERATION:
         writer.emit(
             "capabilities",
-            operations=[CAPABILITIES_OPERATION, RUN_NIFTI_TOTALSEG_OPERATION],
+            operations=[
+                CAPABILITIES_OPERATION,
+                RUN_NIFTI_DENTALSEG_OPERATION,
+                RUN_NIFTI_TOTALSEG_OPERATION,
+            ],
             device_policies={
                 "cpu_required": {"implementation": "available"},
                 "cuda_required": {
@@ -69,7 +75,10 @@ def run_coordinator_request(
         writer.emit("operation_completed", status="success")
         return 0
 
-    if request.operation != RUN_NIFTI_TOTALSEG_OPERATION:
+    if request.operation not in {
+        RUN_NIFTI_DENTALSEG_OPERATION,
+        RUN_NIFTI_TOTALSEG_OPERATION,
+    }:
         return _emit_failure(
             writer,
             code="operation_unsupported",
@@ -109,6 +118,27 @@ def run_coordinator_request(
         )
     if _cancellation_requested(should_cancel):
         return _emit_cancelled(writer)
+
+    backend = (
+        "dentalsegmentator"
+        if request.operation == RUN_NIFTI_DENTALSEG_OPERATION
+        else "totalsegmentator"
+    )
+    task = "craniofacial_structures"
+    progress_route = backend
+    resolved_dentalseg_root: Path | None = None
+    if backend == "dentalsegmentator":
+        resolved_dentalseg_root = _ready_dentalseg_model_root(
+            dentalseg_model_root
+        )
+        if resolved_dentalseg_root is None:
+            return _emit_failure(
+                writer,
+                code="dentalseg_prepare_required",
+                safe_reason=(
+                    "The app-private DentalSegmentator model is not ready."
+                ),
+            )
 
     expected_device = "cpu"
     prevalidated_device_check = None
@@ -196,14 +226,32 @@ def run_coordinator_request(
         runner_kwargs: dict[str, Any] = {
             "input_path": request.input_path,
             "output_root": staging_directory,
-            "task": "craniofacial_structures",
+            "task": task,
             "requested_device": expected_device,
-            "backend": "totalsegmentator",
+            "backend": backend,
             "copy_input": False,
             "robust_crop": request.robust_crop,
             "higher_order_resampling": request.higher_order_resampling,
             "event_sink": on_runner_event,
         }
+        if resolved_dentalseg_root is not None:
+            runner_kwargs.update(
+                {
+                    "dentalseg_nnunet_raw": (
+                        resolved_dentalseg_root / "nnUNet_raw"
+                    ),
+                    "dentalseg_nnunet_preprocessed": (
+                        resolved_dentalseg_root
+                        / "nnUNet_preprocessed"
+                    ),
+                    "dentalseg_nnunet_results": (
+                        resolved_dentalseg_root
+                        / "nnUNet_results"
+                    ),
+                    "dentalseg_folds": ("0",),
+                    "dentalseg_disable_tta": True,
+                }
+            )
         if prevalidated_device_check is not None:
             runner_kwargs["prevalidated_device_check"] = prevalidated_device_check
         if should_cancel is not None:
@@ -247,7 +295,7 @@ def run_coordinator_request(
         _raise_if_cancelled(should_cancel)
         writer.emit(
             "phase_started",
-            route="totalsegmentator",
+            route=progress_route,
             stage_id="preview",
             index=4,
             total=4,
@@ -274,6 +322,8 @@ def run_coordinator_request(
                 expected_device=expected_device,
                 requested_policy=request.device_policy,
                 requested_device_index=request.device_index,
+                expected_backend=backend,
+                expected_task=task,
             )
         except ArtifactVerificationError:
             return _emit_failure(
@@ -295,6 +345,8 @@ def run_coordinator_request(
         writer.emit(
             "operation_completed",
             status="success",
+            backend=backend,
+            task=task,
             requested_policy=request.device_policy,
             requested_device_index=request.device_index,
             resolved_device=actual_device,
@@ -417,7 +469,10 @@ def main(
         )
         cancel_event: threading.Event | None = None
         start_cancel_listener: StartCancelListener | None = None
-        if request.operation == RUN_NIFTI_TOTALSEG_OPERATION:
+        if request.operation in {
+            RUN_NIFTI_DENTALSEG_OPERATION,
+            RUN_NIFTI_TOTALSEG_OPERATION,
+        }:
             cancel_event = threading.Event()
             listener_started = False
 
@@ -463,6 +518,40 @@ def main(
         )
 
 
+def _ready_dentalseg_model_root(
+    configured_root: Path | None,
+) -> Path | None:
+    candidate = configured_root
+    if candidate is None:
+        raw_root = os.environ.get("TSWM_DENTALSEG_MODEL_ROOT")
+        if not raw_root:
+            return None
+        candidate = Path(raw_root)
+    candidate = candidate.expanduser()
+    if not candidate.is_absolute():
+        return None
+    candidate = candidate.resolve()
+    try:
+        from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
+            dentalsegmentator_model_status,
+        )
+        from totalsegmentator_wrapper_mac.setup_manager import (
+            DENTALSEGMENTATOR_DATASET_ID,
+            DENTALSEGMENTATOR_DATASET_NAME,
+            DENTALSEGMENTATOR_MODEL_MD5,
+        )
+
+        status = dentalsegmentator_model_status(
+            model_root=candidate,
+            expected_md5=DENTALSEGMENTATOR_MODEL_MD5,
+            dataset_id=DENTALSEGMENTATOR_DATASET_ID,
+            dataset_name=DENTALSEGMENTATOR_DATASET_NAME,
+        )
+    except (OSError, ValueError):
+        return None
+    return candidate if status.get("model_state") == "ready" else None
+
+
 def _cancellation_requested(should_cancel: ShouldCancel | None) -> bool:
     return should_cancel is not None and should_cancel()
 
@@ -503,6 +592,8 @@ def _verify_and_manifest_case(
     expected_device: str,
     requested_policy: str,
     requested_device_index: int | None,
+    expected_backend: str,
+    expected_task: str,
 ) -> list[dict[str, Any]]:
     try:
         required_files = {
@@ -524,8 +615,8 @@ def _verify_and_manifest_case(
         if (
             not isinstance(run, dict)
             or run.get("status") != "success"
-            or run.get("backend") != "totalsegmentator"
-            or run.get("task") != "craniofacial_structures"
+            or run.get("backend") != expected_backend
+            or run.get("task") != expected_task
             or run.get("requested_device") != expected_device
             or run.get("actual_device") != expected_device
             or run.get("fallback_reason") is not None
@@ -545,6 +636,8 @@ def _verify_and_manifest_case(
                     "schema": "totalsegmentator_wrapper.run_manifest.v1",
                     "protocol_version": PROTOCOL_VERSION,
                     "operation_id": operation_id,
+                    "backend": expected_backend,
+                    "task": expected_task,
                     "requested_policy": requested_policy,
                     "requested_device_index": requested_device_index,
                     "requested_device": expected_device,
@@ -595,12 +688,22 @@ def _verify_and_manifest_case(
         ):
             raise ArtifactVerificationError
 
-        raw_masks = sorted(
-            (case_directory / "segmentations" / "raw_totalseg").glob("*.nii.gz")
+        segmentation_relative = (
+            Path("segmentations") / "dentalsegmentator"
+            if expected_backend == "dentalsegmentator"
+            else Path("segmentations") / "raw_totalseg"
         )
-        if not raw_masks:
+        segmentation_root = case_directory / segmentation_relative
+        segmentation_masks = sorted(segmentation_root.glob("**/*.nii.gz"))
+        if not segmentation_masks:
             raise ArtifactVerificationError
-        mask_names = {path.name for path in raw_masks}
+        relative_mask_paths = {
+            path.name: path.relative_to(case_directory).as_posix()
+            for path in segmentation_masks
+        }
+        if len(relative_mask_paths) != len(segmentation_masks):
+            raise ArtifactVerificationError
+        mask_names = set(relative_mask_paths)
         stats_names = {
             item.get("name")
             for item in masks
@@ -619,19 +722,29 @@ def _verify_and_manifest_case(
         }
         if not mask_names.intersection(valid_nonempty_names):
             raise ArtifactVerificationError
-        mask_stats["mask_dir"] = "segmentations/raw_totalseg"
+        mask_stats["mask_dir"] = segmentation_relative.as_posix()
         for item in masks:
-            item["path"] = (
-                Path("segmentations") / "raw_totalseg" / str(item["name"])
-            ).as_posix()
+            name = str(item["name"])
+            item["path"] = relative_mask_paths[name]
         required_files["mask_stats"].write_text(
             json.dumps(mask_stats, ensure_ascii=False, indent=2, sort_keys=True)
             + "\n",
             encoding="utf-8",
         )
 
+        supporting_files = (
+            sorted(segmentation_root.glob("*.labels.json"))
+            if expected_backend == "dentalsegmentator"
+            else []
+        )
+        if expected_backend == "dentalsegmentator" and not supporting_files:
+            raise ArtifactVerificationError
         manifest_entries = []
-        for path in [*required_files.values(), *raw_masks]:
+        for path in [
+            *required_files.values(),
+            *segmentation_masks,
+            *supporting_files,
+        ]:
             relative_path = path.relative_to(case_directory).as_posix()
             manifest_entries.append(
                 {
@@ -667,7 +780,7 @@ def _verify_and_manifest_case(
         {"kind": "report", "relative_path": "README_OUTPUT.md"},
         {
             "kind": "segmentation_directory",
-            "relative_path": "segmentations/raw_totalseg",
+            "relative_path": segmentation_relative.as_posix(),
         },
         {
             "kind": "offline_preview",

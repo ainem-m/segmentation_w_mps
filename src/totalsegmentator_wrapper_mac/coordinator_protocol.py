@@ -11,10 +11,12 @@ from typing import Any, TextIO
 PROTOCOL_VERSION = 1
 CAPABILITIES_OPERATION = "capabilities"
 RUN_NIFTI_TOTALSEG_OPERATION = "run_nifti_totalsegmentator"
+RUN_NIFTI_DENTALSEG_OPERATION = "run_nifti_dentalsegmentator"
 CANCEL_CONTROL = "cancel"
 SUPPORTED_OPERATIONS = frozenset(
     {
         CAPABILITIES_OPERATION,
+        RUN_NIFTI_DENTALSEG_OPERATION,
         RUN_NIFTI_TOTALSEG_OPERATION,
     }
 )
@@ -217,12 +219,23 @@ def parse_coordinator_request(payload: Any) -> CoordinatorRequest:
         code="options_invalid",
         name="options",
     )
-    robust_crop = _optional_bool(options, "robust_crop", default=True)
+    robust_crop = _optional_bool(
+        options,
+        "robust_crop",
+        default=operation == RUN_NIFTI_TOTALSEG_OPERATION,
+    )
     higher_order_resampling = _optional_bool(
         options,
         "higher_order_resampling",
         default=False,
     )
+    if operation == RUN_NIFTI_DENTALSEG_OPERATION and (
+        robust_crop or higher_order_resampling
+    ):
+        raise CoordinatorProtocolError(
+            "options_unsupported",
+            "The selected coordinator operation does not support these options.",
+        )
 
     return CoordinatorRequest(
         protocol_version=protocol_version,

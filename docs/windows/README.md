@@ -30,6 +30,7 @@ Windows coordinator vertical slice: Windows 10 engineering pass; Windows 11 unve
 Windows DICOM native build: Windows 10 engineering pass; Windows 11 and cross-host semantic parity unverified
 Windows WPF coordinator shell: Windows 10 engineering pass; accessibility/clean Windows 11 install unverified
 Windows WPF clean-DICOM intake: Windows 10 engineering pass; Windows 11, rescue, and clean packaging unverified
+Windows WPF DentalSegmentator slice: Windows 10 engineering pass; Windows 11, model distribution, Individual Teeth, and ToothSeg unverified
 Windows installer/signing: unverified
 ```
 
@@ -50,6 +51,7 @@ the verified NIfTI to the unchanged coordinator only after an explicit Run
 action. It does not add DICOM to protocol v1 and does not implement
 secondary-capture rescue.
 
-Do not start DICOM rescue, DentalSegmentator, ToothSeg, AMD, ARM64, or a
+Do not start DICOM rescue, Individual Teeth, ToothSeg, AMD, ARM64, or a
 production updater until the spike gates in the documents above have been
-evaluated.
+evaluated. The bounded DentalSegmentator slice is engineering evidence only;
+its production model-distribution path remains unverified.

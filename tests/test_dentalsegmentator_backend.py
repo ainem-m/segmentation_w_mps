@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import sys
 import tempfile
@@ -13,7 +14,10 @@ import nibabel as nib
 import numpy as np
 
 from totalsegmentator_wrapper_mac.device import DeviceCheck
-from totalsegmentator_wrapper_mac.runner_totalseg import run_totalsegmentator
+from totalsegmentator_wrapper_mac.runner_totalseg import (
+    nnunet_device_argument,
+    run_totalsegmentator,
+)
 from totalsegmentator_wrapper_mac.surface_preview import (
     resolve_surface_preview_input,
     run_surface_preview,
@@ -22,6 +26,58 @@ from totalsegmentator_wrapper_mac.surface_preview import (
 
 
 class DentalSegmentatorBackendTests(unittest.TestCase):
+    def test_nnunet_cuda_device_maps_selected_visible_index(self) -> None:
+        env = {"CUDA_VISIBLE_DEVICES": "gpu-a,gpu-b"}
+
+        argument = nnunet_device_argument("cuda:1", env)
+
+        self.assertEqual(argument, "cuda")
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "gpu-b")
+
+    def test_dentalsegmentator_child_uses_existing_cancel_and_event_hooks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.nii.gz"
+            nib.save(
+                nib.Nifti1Image(
+                    np.zeros((8, 8, 8), dtype=np.int16),
+                    np.eye(4),
+                ),
+                str(input_path),
+            )
+            should_cancel = lambda: False
+            event_sink = lambda _name, _event: None
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg."
+                "_run_command_streamed",
+                return_value=(1, 0.0, "", "failed"),
+            ) as run_child:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    backend="dentalsegmentator",
+                    task="craniofacial_structures",
+                    requested_device="cpu",
+                    dentalseg_bin="nnUNetv2_predict",
+                    dentalseg_nnunet_results=root / "nnUNet_results",
+                    copy_input=False,
+                    skip_device_check=True,
+                    should_cancel=should_cancel,
+                    event_sink=event_sink,
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIs(
+                run_child.call_args.kwargs["should_cancel"],
+                should_cancel,
+            )
+            self.assertIs(
+                run_child.call_args.kwargs["event_sink"],
+                event_sink,
+            )
+
     def test_dentalsegmentator_backend_runs_fake_nnunet_and_writes_labelmap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -87,6 +143,79 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
             self.assertEqual(groups["jaws"], [1, 2])
             self.assertEqual(groups["dental_hard_tissue"], [3, 4])
             self.assertTrue((case_dir / "surface_preview" / "index.html").exists())
+
+    def test_dentalsegmentator_backend_runs_fixed_cuda_without_cpu_fallback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.nii.gz"
+            nib.save(
+                nib.Nifti1Image(
+                    np.zeros((24, 24, 24), dtype=np.int16),
+                    np.eye(4),
+                ),
+                str(input_path),
+            )
+            fake_nnunet = _write_fake_nnunet_predict(
+                root / "fake_nnunet.py"
+            )
+            device_check = DeviceCheck(
+                status="pass",
+                requested_device="cuda:0",
+                actual_device="cuda:0",
+                fallback_reason=None,
+                python=sys.version,
+                platform="test",
+                machine="AMD64",
+                torch_version="test",
+                mps_built=None,
+                mps_available=None,
+                convtranspose3d_fp32="pass",
+                elapsed_seconds=0.0,
+                error=None,
+                cuda_build="test",
+                cuda_available=True,
+                cuda_device_count=1,
+                device_index=0,
+            )
+
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    backend="dentalsegmentator",
+                    task="craniofacial_structures",
+                    requested_device="cuda:0",
+                    dentalseg_bin=str(fake_nnunet),
+                    dentalseg_nnunet_results=(
+                        root / "nnUNet_results"
+                    ),
+                    copy_input=False,
+                    prevalidated_device_check=device_check,
+                )
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(result.actual_device, "cuda:0")
+            self.assertIsNone(result.fallback_reason)
+            case_dir = root / "case"
+            run_log = (case_dir / "logs" / "run.log").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("-device cuda", run_log)
+            benchmark = json.loads(
+                (case_dir / "logs" / "benchmark.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                benchmark["dentalsegmentator"]["cuda_device_index"],
+                0,
+            )
+            self.assertTrue(
+                (case_dir / "logs" / "mask_stats.json").is_file()
+            )
 
     def test_dentalsegmentator_backend_fails_fast_without_nnunet_results_or_model_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

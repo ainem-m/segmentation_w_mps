@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import stat
 import sys
 import tempfile
@@ -16,10 +17,23 @@ from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
     download_with_md5,
     file_md5,
     install_dentalsegmentator_model,
+    resolve_installer,
 )
 
 
 class DentalSegmentatorSetupTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.name == "nt",
+        "Windows Scripts layout only",
+    )
+    def test_default_installer_resolves_windows_scripts_executable(
+        self,
+    ) -> None:
+        installer = resolve_installer(None)
+
+        self.assertEqual(installer.parent.name, "Scripts")
+        self.assertEqual(installer.suffix.lower(), ".exe")
+
     def test_downloads_verifies_and_installs_model_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

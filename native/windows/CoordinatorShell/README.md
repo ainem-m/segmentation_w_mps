@@ -14,9 +14,10 @@ The visual and wording references are:
 
 The slice intentionally contains one WPF window and one coordinator-specific
 process client. It has no external UI framework, service, dependency resolver,
-installer, updater, extra model, or embedded browser. DICOM intake is limited
-to the existing native audit and `convert-clean` path; rescue conversion and
-coordinator protocol changes are outside this slice.
+installer, updater, or embedded browser. DICOM intake is limited to the
+existing native audit and `convert-clean` path; rescue conversion is outside
+this slice. The only additional model enabled here is the fixed
+DentalSegmentator five-label path.
 
 The shell starts `tswm-process-supervisor supervise --interactive-cancel`.
 The supervisor owns the coordinator Job Object. The shell reads coordinator
@@ -33,6 +34,7 @@ runtime/python/Scripts/totalsegmentator-wrapper-coordinator.exe
 runtime/native/totalsegmentator-wrapper-dicom-normalizer.exe
 runtime/native/dcm2niix.exe
 models/totalseg-home/
+models/dentalseg/
 sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz
 ```
 
@@ -45,9 +47,11 @@ An engineering run may pass one absolute JSON path:
 The JSON keys are `supervisor_path`, `coordinator_path`,
 `coordinator_working_directory`, `bundled_sample_path`, `output_root`, and
 `totalseg_home`. Optional `dicom_normalizer_path` and `dcm2niix_path` keys
-override the two app-private native defaults above. Existing NIfTI-only
-engineering configurations remain valid. This configuration is for spike
-evidence only and is not a dependency installation mechanism.
+override the two app-private native defaults above. Optional
+`dentalseg_model_root` overrides the app-private DentalSegmentator model root.
+Existing NIfTI-only engineering configurations remain valid. This
+configuration is for spike evidence only and is not a dependency installation
+mechanism.
 
 `DicomIntakeSession` audits a selected folder and exposes only series classified
 as `original_ct_geometry_ok`, `convert_clean`, and requiring no external tool.
@@ -72,6 +76,7 @@ Focused verification modes:
 --evidence-run-sample <absolute-evidence-json> --engineering-config <path>
 --evidence-cancel-sample <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dicom <absolute-dicom-folder> <absolute-evidence-json> --engineering-config <path>
+--evidence-run-dentalseg <absolute-evidence-json> --engineering-config <path>
 ```
 
 `--evidence-run-sample` uses the same runtime check, request builder,
@@ -85,3 +90,9 @@ then uses the same stop-request method as the `停止` button.
 implementation, verifies that no coordinator started during intake, and then
 explicitly invokes the unchanged strict-CUDA NIfTI run. Its evidence JSON
 contains no input path, series key/UID, description, or native process output.
+
+`--evidence-run-dentalseg` uses the same visible fixed-model selection,
+app-private ready-marker gate, strict `cuda:0` policy, Job Object supervisor,
+JSONL parser, promotion, and artifact verification as the interactive flow.
+Individual Teeth and ToothSeg remain visible comparison references only and
+are not selectable.

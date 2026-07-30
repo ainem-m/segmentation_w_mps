@@ -17,7 +17,8 @@ public partial class App : Application
             if (options.CapturePath is not null
                 || options.EvidenceRunPath is not null
                 || options.EvidenceCancelPath is not null
-                || options.EvidenceDicomPath is not null)
+                || options.EvidenceDicomPath is not null
+                || options.EvidenceDentalSegmentatorPath is not null)
             {
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
             }
@@ -61,7 +62,8 @@ public partial class App : Application
             if (options.CapturePath is not null
                 || options.EvidenceRunPath is not null
                 || options.EvidenceCancelPath is not null
-                || options.EvidenceDicomPath is not null)
+                || options.EvidenceDicomPath is not null
+                || options.EvidenceDentalSegmentatorPath is not null)
             {
                 TextOptions.SetTextRenderingMode(
                     mainWindow,
@@ -103,6 +105,26 @@ public partial class App : Application
                     await CaptureAfterRenderAsync(
                         mainWindow,
                         Path.Combine(parent, "wpf-real-cancel-result.png"));
+                }
+                Shutdown(passed ? 0 : 1);
+                return;
+            }
+            if (options.EvidenceDentalSegmentatorPath is not null)
+            {
+                var passed =
+                    await mainWindow
+                        .RunEvidenceDentalSegmentatorAsync(
+                            options.EvidenceDentalSegmentatorPath);
+                var parent = Path.GetDirectoryName(
+                    Path.GetFullPath(
+                        options.EvidenceDentalSegmentatorPath));
+                if (parent is not null)
+                {
+                    await CaptureAfterRenderAsync(
+                        mainWindow,
+                        Path.Combine(
+                            parent,
+                            "wpf-dentalseg-result.png"));
                 }
                 Shutdown(passed ? 0 : 1);
                 return;
@@ -173,6 +195,7 @@ public partial class App : Application
         string? ContractEvidencePath,
         string? EvidenceRunPath,
         string? EvidenceCancelPath,
+        string? EvidenceDentalSegmentatorPath,
         string? EvidenceDicomFolder,
         string? EvidenceDicomPath)
     {
@@ -184,6 +207,7 @@ public partial class App : Application
             string? contractEvidencePath = null;
             string? evidenceRunPath = null;
             string? evidenceCancelPath = null;
+            string? evidenceDentalSegmentatorPath = null;
             string? evidenceDicomFolder = null;
             string? evidenceDicomPath = null;
             var contractSelfTest = false;
@@ -255,6 +279,19 @@ public partial class App : Application
                                 "The cancellation evidence path must be absolute.");
                         }
                         break;
+                    case "--evidence-run-dentalseg":
+                        evidenceDentalSegmentatorPath =
+                            RequiredValue(
+                                args,
+                                ref index,
+                                "--evidence-run-dentalseg");
+                        if (!Path.IsPathFullyQualified(
+                                evidenceDentalSegmentatorPath))
+                        {
+                            throw new ArgumentException(
+                                "The DentalSegmentator evidence path must be absolute.");
+                        }
+                        break;
                     case "--evidence-run-dicom":
                         evidenceDicomFolder = RequiredValue(
                             args,
@@ -283,6 +320,7 @@ public partial class App : Application
                     capturePath,
                     evidenceRunPath,
                     evidenceCancelPath,
+                    evidenceDentalSegmentatorPath,
                     evidenceDicomPath,
                 }.Count(value => value is not null) > 1)
             {
@@ -293,6 +331,7 @@ public partial class App : Application
                 && (capturePath is not null
                     || evidenceRunPath is not null
                     || evidenceCancelPath is not null
+                    || evidenceDentalSegmentatorPath is not null
                     || evidenceDicomPath is not null))
             {
                 throw new ArgumentException(
@@ -306,6 +345,7 @@ public partial class App : Application
                 contractEvidencePath,
                 evidenceRunPath,
                 evidenceCancelPath,
+                evidenceDentalSegmentatorPath,
                 evidenceDicomFolder,
                 evidenceDicomPath);
         }

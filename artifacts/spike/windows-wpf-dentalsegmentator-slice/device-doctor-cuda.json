@@ -1,0 +1,15 @@
+{
+  "schema": "strict_cuda_tensor_smoke.v1",
+  "status": "pass",
+  "selected_device": "cuda:0",
+  "device_name": "NVIDIA GeForce RTX 2060",
+  "torch_version": "2.11.0+cu126",
+  "cuda_build": "12.6",
+  "conv3d": true,
+  "normalization": true,
+  "activation": true,
+  "conv_transpose3d": true,
+  "synchronized": true,
+  "finite_output": true,
+  "output_shape": [1, 2, 16, 16, 16]
+}

@@ -22,21 +22,32 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('level="asInvoker"', manifest)
         self.assertIn("PerMonitorV2", manifest)
         self.assertIn("longPathAware", manifest)
+        self.assertIn(
+            r"resources\model_comparison\*.png",
+            project,
+        )
+        self.assertIn("ASSET_PROVENANCE.json", project)
 
     def test_shell_uses_supervisor_protocol_v1_and_strict_cuda_zero(self) -> None:
         session = (SHELL / "CoordinatorSession.cs").read_text(encoding="utf-8")
+        profiles = (SHELL / "SegmentationProfile.cs").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn('FileName = _configuration.SupervisorPath', session)
         self.assertIn('"--interactive-cancel"', session)
         self.assertIn('"12000"', session)
         self.assertIn("StandardOutputEncoding = new UTF8Encoding(false)", session)
         self.assertIn('protocol_version = 1', session)
-        self.assertIn('operation = "run_nifti_totalsegmentator"', session)
+        self.assertIn("operation = profile.OperationName()", session)
+        self.assertIn('"run_nifti_totalsegmentator"', profiles)
+        self.assertIn('"run_nifti_dentalsegmentator"', profiles)
         self.assertIn('mode = "cuda_required"', session)
         self.assertIn('index = 0', session)
         self.assertNotIn("dicom", session.lower())
         self.assertNotIn('mode = "auto"', session)
         self.assertNotIn('mode = "cpu"', session)
+        self.assertIn('"TSWM_DENTALSEG_MODEL_ROOT"', session)
         self.assertIn('await process.StandardInput.WriteLineAsync("cancel")', session)
         self.assertIn(
             'terminal.EventName == "operation_cancelled"',
@@ -138,6 +149,12 @@ class WindowsWpfContractTests(unittest.TestCase):
             "使用する撮影を変更",
             "この撮影を使う",
             "撮影選択を閉じる",
+            "標準モデルを選ぶ",
+            "その他のモデルを比較",
+            "作成方法の比較を閉じる",
+            "通常のTotalSegmentatorを選ぶ",
+            "DentalSegmentatorを選ぶ",
+            "個別歯ベータの対応状況を見る",
             "Sampleで3Dプレビューを作る",
             "停止",
             "3Dプレビューを開く",
@@ -155,6 +172,12 @@ class WindowsWpfContractTests(unittest.TestCase):
             "最初の候補を選択しています。別の撮影を使う場合だけ変更してください。",
             "この撮影を使う",
             "閉じる",
+            "作成方法を比較",
+            "通常（TotalSegmentator）",
+            "DentalSegmentator",
+            "個別歯ベータ",
+            "高精細歯（ToothSeg）",
+            "上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。",
         )
         for label in (*automation_names, *visible_copy):
             with self.subTest(label=label):
@@ -166,7 +189,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 17)
+        self.assertEqual(len(buttons), 23)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
@@ -211,6 +234,22 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"dicom_normalizer_path"', configuration)
         self.assertIn('"dcm2niix_path"', configuration)
         self.assertIn("CheckDicomRuntime", configuration)
+        self.assertIn(
+            "CheckDentalSegmentatorRuntime",
+            configuration,
+        )
+        self.assertIn(
+            '".dentalsegmentator_model_ready.json"',
+            configuration,
+        )
+        self.assertIn(
+            '"b71cd5230168d28a4f71b078265b76be"',
+            configuration,
+        )
+        self.assertIn(
+            '"dentalseg_model_root"',
+            configuration,
+        )
         for safe_component in (
             "Windowsの処理管理機能",
             "3Dプレビュー作成機能",
@@ -229,6 +268,59 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("dynamicLabelsPassed", code)
         self.assertIn("dynamic_labels = ui.DynamicLabels", app)
         self.assertIn("button_count = ui.ButtonCount", app)
+
+    def test_dentalsegmentator_is_fixed_allowlisted_and_never_falls_back(
+        self,
+    ) -> None:
+        models = (SHELL / "MainWindow.Models.cs").read_text(
+            encoding="utf-8"
+        )
+        coordinator = (
+            ROOT / "src" / "totalsegmentator_wrapper_mac" / "coordinator.py"
+        ).read_text(encoding="utf-8")
+        protocol = (
+            ROOT
+            / "src"
+            / "totalsegmentator_wrapper_mac"
+            / "coordinator_protocol.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "SegmentationProfile.DentalSegmentator",
+            models,
+        )
+        self.assertIn(
+            "CheckDentalSegmentatorRuntime",
+            models,
+        )
+        self.assertIn(
+            '"run_nifti_dentalsegmentator"',
+            protocol,
+        )
+        self.assertIn(
+            '"backend": backend',
+            coordinator,
+        )
+        self.assertIn(
+            '"dentalseg_folds": ("0",)',
+            coordinator,
+        )
+        self.assertIn(
+            '"dentalseg_disable_tta": True',
+            coordinator,
+        )
+        self.assertIn(
+            'code="dentalseg_prepare_required"',
+            coordinator,
+        )
+        self.assertNotIn(
+            '"backend": request',
+            coordinator,
+        )
+        self.assertNotIn(
+            '"task": request',
+            coordinator,
+        )
 
     def test_interactive_cancel_records_typed_terminal_and_exit_code(self) -> None:
         supervisor = SUPERVISOR.read_text(encoding="utf-8")

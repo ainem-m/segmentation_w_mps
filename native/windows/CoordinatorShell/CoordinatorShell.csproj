@@ -17,5 +17,10 @@
              Link="ProcessSupervisor\JobProcess.cs" />
     <Compile Include="..\ProcessSupervisor\NativeMethods.cs"
              Link="ProcessSupervisor\NativeMethods.cs" />
+    <Resource Include="..\..\..\resources\model_comparison\*.png"
+              Link="model_comparison\%(Filename)%(Extension)" />
+    <Content Include="..\..\..\resources\model_comparison\ASSET_PROVENANCE.json"
+             Link="model_comparison\ASSET_PROVENANCE.json"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

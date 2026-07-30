@@ -396,7 +396,52 @@
               </StackPanel>
             </Border>
             <TextBlock Text="作成する3Dプレビュー" Style="{StaticResource SectionTitleStyle}" />
+            <Grid Margin="0,0,0,12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Button
+                  x:Name="StandardModelCardButton"
+                  Grid.Column="0"
+                  Style="{StaticResource CardButtonStyle}"
+                  MinHeight="150"
+                  Click="StandardModelCardButton_Click"
+                  TabIndex="7"
+                  automation:AutomationProperties.Name="標準モデルを選ぶ">
+                <StackPanel>
+                  <TextBlock x:Name="StandardModelCardTitle" Text="✓  標準モデル" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="TotalSegmentator" FontSize="17" FontWeight="SemiBold" Margin="0,10,0,6" />
+                  <TextBlock Text="顎骨と歯列をまとめて作成します。最初におすすめの方法です。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" />
+                  <TextBlock Text="おすすめ" Margin="0,12,0,0" Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" />
+                </StackPanel>
+              </Button>
+              <Button
+                  x:Name="OtherModelsCardButton"
+                  Grid.Column="2"
+                  Style="{StaticResource CardButtonStyle}"
+                  MinHeight="150"
+                  Click="OtherModelsCardButton_Click"
+                  TabIndex="8"
+                  automation:AutomationProperties.Name="その他のモデルを比較">
+                <StackPanel>
+                  <TextBlock x:Name="OtherModelsCardTitle" Text="その他のモデル" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock x:Name="OtherModelsCardName" Text="比較して選ぶ" FontSize="17" FontWeight="SemiBold" Margin="0,10,0,6" />
+                  <TextBlock x:Name="OtherModelsCardDetail" Text="結果画像と処理内容を見ながら、用途に合う方法を選べます。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Button>
+            </Grid>
+            <TextBlock
+                x:Name="ModelSelectionMessage"
+                Visibility="Collapsed"
+                TextWrapping="Wrap"
+                Margin="0,0,0,12"
+                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                automation:AutomationProperties.Name="追加モデルの状態" />
             <Border
+                x:Name="ModelComparisonPanel"
+                Visibility="Collapsed"
                 Padding="18"
                 Margin="0,0,0,18"
                 BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
@@ -404,9 +449,87 @@
                 CornerRadius="8"
                 Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
               <StackPanel>
-                <TextBlock Text="✓  標準モデル" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="TotalSegmentator" FontSize="17" FontWeight="SemiBold" Margin="0,10,0,6" />
-                <TextBlock Text="顎骨と歯列をまとめて作成します。最初におすすめの方法です。" Style="{StaticResource MutedTextStyle}" />
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="作成方法を比較" FontSize="22" FontWeight="SemiBold" />
+                    <TextBlock Text="通常はTotalSegmentatorがおすすめです。" Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <Button
+                      x:Name="CloseModelComparisonButton"
+                      Grid.Column="1"
+                      Content="閉じる"
+                      Click="CloseModelComparisonButton_Click"
+                      TabIndex="9"
+                      automation:AutomationProperties.Name="作成方法の比較を閉じる" />
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="12" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <Border Grid.Column="0" Padding="12" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="7">
+                    <StackPanel>
+                      <TextBlock Text="通常（TotalSegmentator）" FontSize="17" FontWeight="SemiBold" />
+                      <Image Source="/model_comparison/totalseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="通常のTotalSegmentatorによる3D分割結果" />
+                      <TextBlock Text="顎骨と歯列をまとめて作成します。比較的速く、最初に試す方法です。" TextWrapping="Wrap" />
+                      <Button
+                          x:Name="SelectStandardModelButton"
+                          Content="この方法を選ぶ"
+                          Click="SelectStandardModelButton_Click"
+                          Margin="0,10,0,0"
+                          TabIndex="10"
+                          automation:AutomationProperties.Name="通常のTotalSegmentatorを選ぶ" />
+                    </StackPanel>
+                  </Border>
+                  <Border Grid.Column="2" Padding="12" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="7">
+                    <StackPanel>
+                      <TextBlock Text="DentalSegmentator" FontSize="17" FontWeight="SemiBold" />
+                      <Image Source="/model_comparison/dentalseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="DentalSegmentatorによる3D分割結果" />
+                      <TextBlock Text="上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。" TextWrapping="Wrap" />
+                      <TextBlock Text="実験的。検証済みの追加モデルが必要です。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <Button
+                          x:Name="SelectDentalSegmentatorButton"
+                          Content="この方法を選ぶ"
+                          Click="SelectDentalSegmentatorButton_Click"
+                          Margin="0,10,0,0"
+                          TabIndex="11"
+                          automation:AutomationProperties.Name="DentalSegmentatorを選ぶ" />
+                    </StackPanel>
+                  </Border>
+                  <Border Grid.Row="2" Grid.Column="0" Padding="12" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="7">
+                    <StackPanel>
+                      <TextBlock Text="個別歯ベータ" FontSize="17" FontWeight="SemiBold" />
+                      <Image Source="/model_comparison/individual.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="個別歯ベータによる3D分割結果" />
+                      <TextBlock Text="TotalSegmentatorの旧個別歯経路で、歯を1本ずつ表示します。" TextWrapping="Wrap" />
+                      <Button
+                          x:Name="IndividualTeethStatusButton"
+                          Content="対応状況を見る"
+                          Click="IndividualTeethStatusButton_Click"
+                          Margin="0,10,0,0"
+                          TabIndex="12"
+                          automation:AutomationProperties.Name="個別歯ベータの対応状況を見る" />
+                    </StackPanel>
+                  </Border>
+                  <Border Grid.Row="2" Grid.Column="2" Padding="12" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="7">
+                    <StackPanel>
+                      <TextBlock Text="高精細歯（ToothSeg）" FontSize="17" FontWeight="SemiBold" />
+                      <Image Source="/model_comparison/toothseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="高精細歯ToothSegによる3D分割結果" />
+                      <TextBlock Text="通常のTotalSegmentator完了後に追加する高精細推論です。" TextWrapping="Wrap" />
+                      <TextBlock Text="このWindows工程ではUNVERIFIEDです。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+                <TextBlock Text="Windowsでの処理時間はGPU、VRAM、CT範囲により変わるため、実測前の時間表示は行いません。" Style="{StaticResource MutedTextStyle}" Margin="0,12,0,0" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
             <TextBlock Text="GPU  NVIDIA CUDA (cuda:0)を必須として使用" Margin="0,0,0,8" FontWeight="SemiBold" />

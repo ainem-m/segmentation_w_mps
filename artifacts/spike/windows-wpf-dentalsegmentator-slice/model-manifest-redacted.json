@@ -1,0 +1,17 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_dentalsegmentator_model_evidence.v1",
+  "status": "ready",
+  "distribution_scope": "app-private engineering runtime",
+  "dataset_id": "112",
+  "dataset_name": "Dataset112_DentalSegmentator_v100",
+  "archive_name": "Dataset112_DentalSegmentator_v100.zip",
+  "size_bytes": 229747861,
+  "md5": "b71cd5230168d28a4f71b078265b76be",
+  "sha256": "bc5510cc93bc2100ab1faccb63512e09c1ca326c738b0a9939c074d82b38a4ac",
+  "license": "CC BY 4.0",
+  "doi": "10.5281/zenodo.10829675",
+  "fold": 0,
+  "tta_disabled": true,
+  "public_dependency_index_used": false,
+  "absolute_paths_included": false
+}

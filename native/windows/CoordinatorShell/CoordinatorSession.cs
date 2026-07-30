@@ -22,7 +22,10 @@ internal sealed class CoordinatorSession : IDisposable
 
     internal string? ActiveOperationId { get; private set; }
 
-    internal async Task<CoordinatorSessionResult> RunAsync(string inputPath)
+    internal async Task<CoordinatorSessionResult> RunAsync(
+        string inputPath,
+        SegmentationProfile profile =
+            SegmentationProfile.TotalSegmentator)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         lock (_gate)
@@ -65,7 +68,7 @@ internal sealed class CoordinatorSession : IDisposable
                 {
                     protocol_version = 1,
                     operation_id = operationId,
-                    operation = "run_nifti_totalsegmentator",
+                    operation = profile.OperationName(),
                     input = new
                     {
                         kind = "nifti",
@@ -79,7 +82,9 @@ internal sealed class CoordinatorSession : IDisposable
                     },
                     options = new
                     {
-                        robust_crop = true,
+                        robust_crop =
+                            profile
+                                == SegmentationProfile.TotalSegmentator,
                         higher_order_resampling = false,
                     },
                 }),
@@ -365,6 +370,8 @@ internal sealed class CoordinatorSession : IDisposable
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
         startInfo.Environment["TOTALSEG_HOME_DIR"] =
             _configuration.TotalSegmentatorHome;
+        startInfo.Environment["TSWM_DENTALSEG_MODEL_ROOT"] =
+            _configuration.DentalSegmentatorModelRoot;
         startInfo.Environment["PYTHONNOUSERSITE"] = "1";
         startInfo.Environment["PYTHONUTF8"] = "1";
         return Process.Start(startInfo)

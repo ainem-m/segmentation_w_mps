@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         };
         OutputDisplayName.Text =
             $"保存先: {Path.GetFileName(_configuration.OutputRoot)}";
+        InitializeModelSelection();
         SetScreen(ShellScreen.Setup, "待機中");
         if (previewScenario is not null)
         {
@@ -75,6 +76,16 @@ public partial class MainWindow : Window
             [ChangeDicomSeriesButton] = "使用する撮影を変更",
             [UseSelectedDicomSeriesButton] = "この撮影を使う",
             [CloseDicomSeriesButton] = "撮影選択を閉じる",
+            [StandardModelCardButton] = "標準モデルを選ぶ",
+            [OtherModelsCardButton] = "その他のモデルを比較",
+            [CloseModelComparisonButton] =
+                "作成方法の比較を閉じる",
+            [SelectStandardModelButton] =
+                "通常のTotalSegmentatorを選択中",
+            [SelectDentalSegmentatorButton] =
+                "DentalSegmentatorを選ぶ",
+            [IndividualTeethStatusButton] =
+                "個別歯ベータの対応状況を見る",
             [RunButton] = "Sampleで3Dプレビューを作る",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
@@ -129,13 +140,32 @@ public partial class MainWindow : Window
             && AutomationProperties.GetName(ReturnToInputButton)
                 == "別のCTを選ぶ";
         SetReturnToInputButtonForDicomFailure(dicomFailure: false);
+        SetSelectedSegmentationProfile(
+            SegmentationProfile.DentalSegmentator);
+        var dentalModelLabelPassed =
+            Equals(
+                OtherModelsCardName.Text,
+                "選択中：DentalSegmentator（実験的）")
+            && Equals(
+                SelectDentalSegmentatorButton.Content,
+                "選択中")
+            && AutomationProperties.GetName(
+                    SelectDentalSegmentatorButton)
+                == "DentalSegmentatorを選択中"
+            && AutomationProperties.GetHelpText(RunButton)
+                .Contains(
+                    "DentalSegmentator",
+                    StringComparison.Ordinal);
+        SetSelectedSegmentationProfile(
+            SegmentationProfile.TotalSegmentator);
         var dynamicLabelsPassed =
             ownInputLabelPassed
             && detailsExpandedLabelPassed
             && stopRequestedLabelPassed
             && cancellationCopyLabelPassed
             && noInputLabelPassed
-            && dicomRecoveryLabelPassed;
+            && dicomRecoveryLabelPassed
+            && dentalModelLabelPassed;
         var systemColorsPassed =
             Equals(PrepareButton.Background, SystemColors.HighlightBrush)
             && Equals(Background, SystemColors.WindowBrush);
@@ -547,6 +577,7 @@ public partial class MainWindow : Window
     {
         _inputPath = null;
         ClearDicomSelection();
+        ResetModelSelection();
         SetScreen(ShellScreen.Start, "準備済み");
     }
 
@@ -613,6 +644,15 @@ public partial class MainWindow : Window
                 runtime.Message);
             return;
         }
+        var modelRuntime = CheckSelectedModelRuntime();
+        if (!modelRuntime.Passed)
+        {
+            SetHostFailure(
+                modelRuntime.ErrorCode
+                    ?? "dentalseg_prepare_required",
+                modelRuntime.Message);
+            return;
+        }
 
         _session?.Dispose();
         _session = new CoordinatorSession(_configuration);
@@ -632,7 +672,8 @@ public partial class MainWindow : Window
         RunningDetail.Text = "production coordinatorを開始しています。";
         OverallProgressText.Text = "全体: 工程を確認中";
         SubProgressText.Text = "処理を継続しています。";
-        DeviceText.Text = "使用機能: TotalSegmentator / strict CUDA確認中";
+        DeviceText.Text =
+            $"使用機能: {SelectedModelDisplayName} / strict CUDA確認中";
         RunningOutputText.Text = "保存先: 新しいcase";
         _runStartedUtc = DateTime.UtcNow;
         UpdateElapsed();
@@ -641,7 +682,9 @@ public partial class MainWindow : Window
 
         try
         {
-            _lastResult = await _session.RunAsync(_inputPath);
+            _lastResult = await _session.RunAsync(
+                _inputPath,
+                _selectedSegmentationProfile);
         }
         catch (Exception exception) when (
             exception is IOException
@@ -708,7 +751,7 @@ public partial class MainWindow : Window
                 && coordinatorEvent.ResolvedDevice == "cuda:0"
                 && coordinatorEvent.FallbackAllowed == false
                 && coordinatorEvent.FallbackOccurred == false
-                    ? "使用機能: TotalSegmentator / NVIDIA CUDA (cuda:0)"
+                    ? $"使用機能: {SelectedModelDisplayName} / NVIDIA CUDA (cuda:0)"
                     : "strict CUDAの確認に失敗しました。CPUには切り替えません。";
         }
         else if (coordinatorEvent.EventName == "phase_started")
@@ -716,7 +759,8 @@ public partial class MainWindow : Window
             var label = coordinatorEvent.Label
                 ?? StageLabel(coordinatorEvent.StageId);
             RunningTitle.Text = label;
-            RunningDetail.Text = "TotalSegmentatorでCTデータを処理しています。";
+            RunningDetail.Text =
+                $"{SelectedModelDisplayName}でCTデータを処理しています。";
             if (coordinatorEvent.StageIndex is { } index
                 && coordinatorEvent.StageTotal is { } total)
             {
@@ -765,8 +809,8 @@ public partial class MainWindow : Window
             ResultTitle.Text = "3Dプレビューを作成しました";
             ResultReason.Text =
                 _selectedDicomCandidate is null
-                    ? "strict CUDAで処理し、保存結果とoffline previewを検証しました。"
-                    : $"使用した撮影: {_selectedDicomCandidate.DisplayTitle}。strict CUDAで処理し、保存結果とoffline previewを検証しました。";
+                    ? $"{SelectedModelDisplayName}をstrict CUDAで処理し、保存結果とoffline previewを検証しました。"
+                    : $"使用した撮影: {_selectedDicomCandidate.DisplayTitle}。{SelectedModelDisplayName}をstrict CUDAで処理し、保存結果とoffline previewを検証しました。";
             ResultErrorCode.Visibility = Visibility.Collapsed;
             OpenPreviewButton.Visibility = Visibility.Visible;
             OpenOutputButton.Visibility = Visibility.Visible;
@@ -971,6 +1015,11 @@ public partial class MainWindow : Window
             case "dicom-series":
                 ApplyDicomPreviewScenario(scenario);
                 break;
+            case "model-comparison":
+            case "input-dentalseg":
+            case "running-dentalseg":
+                ApplyModelPreviewScenario(scenario);
+                break;
             default:
                 throw new ArgumentException(
                     "The UI preview scenario is not supported.");
@@ -991,6 +1040,7 @@ public partial class MainWindow : Window
         {
             "prepare" => "実行準備",
             "segment" => "顎顔面を抽出中",
+            "predict" => "DentalSegmentatorで推論中",
             "finalize" => "結果を整理中",
             "preview" => "3D表示・結果情報を作成中",
             "Resampling" => "入力を調整中",
@@ -1014,6 +1064,10 @@ public partial class MainWindow : Window
             "artifact_verification_failed"
                 or "host_completion_verification_failed" =>
                     "保存結果の検証を完了できませんでした。final directoryへ確定していません。",
+            "dentalseg_prepare_required" =>
+                    "検証済みのapp-private DentalSegmentatorモデルを確認できませんでした。",
+            "dentalseg_failed" =>
+                    "DentalSegmentator処理を完了できませんでした。別モデルやCPUには切り替えていません。",
             _ =>
                 "Windows hostで処理状態を確認できませんでした。詳細情報を確認してください。",
         };

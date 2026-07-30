@@ -310,9 +310,20 @@ def resolve_installer(installer: Path | None) -> Path:
         if not resolved.exists():
             raise FileNotFoundError(f"nnU-Net installer not found: {resolved}")
         return resolved
-    candidate = Path(sys.executable).parent / "nnUNetv2_install_pretrained_model_from_zip"
-    if candidate.exists():
-        return candidate
+    executable_root = Path(sys.executable).parent
+    candidates = [
+        executable_root / "nnUNetv2_install_pretrained_model_from_zip",
+    ]
+    if os.name == "nt":
+        candidates.insert(
+            0,
+            executable_root
+            / "Scripts"
+            / "nnUNetv2_install_pretrained_model_from_zip.exe",
+        )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     found = shutil.which("nnUNetv2_install_pretrained_model_from_zip")
     if found:
         return Path(found)

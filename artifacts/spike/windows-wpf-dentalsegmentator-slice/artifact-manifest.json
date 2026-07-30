@@ -1,0 +1,57 @@
+{
+  "artifacts": [
+    {
+      "relative_path": "README_OUTPUT.md",
+      "sha256": "43cc9ec527f3a30a793912bb45777e9d33752e5c6d7e082f6f71e0c3f1212ea8",
+      "size_bytes": 1395
+    },
+    {
+      "relative_path": "logs/run.log",
+      "sha256": "cc116a921fb57a69f0d449eafc8cd021eea74f58d0bddd55d7d93a60feb8b977",
+      "size_bytes": 5968
+    },
+    {
+      "relative_path": "logs/benchmark.json",
+      "sha256": "3a55a7e6bdca0c60d9f93595ccf1cdac77ba3b10ef0b349cf67a93ecd0afa026",
+      "size_bytes": 5729
+    },
+    {
+      "relative_path": "logs/environment.json",
+      "sha256": "a78a7af143354a697ef59f98279c38a20037d09eb57424c00ba6040eeab16692",
+      "size_bytes": 607
+    },
+    {
+      "relative_path": "logs/mask_stats.json",
+      "sha256": "3b59b0ea7508287b7528c8292ee3658ea0dbea6bb437bd83e53bc7181ee5f41f",
+      "size_bytes": 891
+    },
+    {
+      "relative_path": "surface_preview/index.html",
+      "sha256": "b86b669cc33302531f5e46a922a116b79b63539757e881bac2113fddd2e9e874",
+      "size_bytes": 10208
+    },
+    {
+      "relative_path": "run-manifest.json",
+      "sha256": "7287dbb3670f700f2908d997fbb815414328eb23a16e74c270a14e85962e6530",
+      "size_bytes": 848
+    },
+    {
+      "relative_path": "segmentations/dentalsegmentator/dentalsegmentator_multilabel.nii.gz",
+      "sha256": "1333a5413eb88dae6684a094d4dc2fcf66eebeeaa8adcce3f66508a5b35b9835",
+      "size_bytes": 132290
+    },
+    {
+      "relative_path": "segmentations/dentalsegmentator/nnunet_predictions/case.nii.gz",
+      "sha256": "1333a5413eb88dae6684a094d4dc2fcf66eebeeaa8adcce3f66508a5b35b9835",
+      "size_bytes": 132290
+    },
+    {
+      "relative_path": "segmentations/dentalsegmentator/dentalsegmentator_multilabel.nii.gz.labels.json",
+      "sha256": "b080f0e5f16dcf673a26b0b4aa6f6ce90326bd268073d07d8f8bb910b60156d2",
+      "size_bytes": 228
+    }
+  ],
+  "operation_id": "6553a967-7a18-4a42-ac1d-16dcb252a421",
+  "protocol_version": 1,
+  "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1"
+}

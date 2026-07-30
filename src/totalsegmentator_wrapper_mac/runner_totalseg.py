@@ -219,9 +219,18 @@ def sanitized_command(command: list[str], input_path: Path, output_dir: Path) ->
 def resolve_totalseg_executable(totalseg_bin: str) -> str:
     if os.sep in totalseg_bin or (os.altsep and os.altsep in totalseg_bin):
         return totalseg_bin
-    executable_candidate = Path(sys.executable).parent / totalseg_bin
-    if executable_candidate.exists():
-        return str(executable_candidate)
+    executable_root = Path(sys.executable).parent
+    candidate_names = [totalseg_bin]
+    if os.name == "nt" and Path(totalseg_bin).suffix.lower() != ".exe":
+        candidate_names.insert(0, f"{totalseg_bin}.exe")
+    candidate_roots = [executable_root]
+    if os.name == "nt":
+        candidate_roots.insert(0, executable_root / "Scripts")
+    for root in candidate_roots:
+        for candidate_name in candidate_names:
+            executable_candidate = root / candidate_name
+            if executable_candidate.exists():
+                return str(executable_candidate)
     found = shutil.which(totalseg_bin)
     return found or totalseg_bin
 
@@ -233,6 +242,29 @@ def totalseg_device_argument(actual_device: str) -> str:
             raise ValueError(f"Invalid resolved CUDA device: {actual_device!r}")
         return f"gpu:{index}"
     return actual_device
+
+
+def nnunet_device_argument(actual_device: str, env: dict[str, str]) -> str:
+    if actual_device in {"cpu", "mps"}:
+        return actual_device
+    if not actual_device.startswith("cuda:"):
+        raise ValueError(f"Unsupported nnU-Net device: {actual_device!r}")
+    raw_index = actual_device.removeprefix("cuda:")
+    if not raw_index.isdigit():
+        raise ValueError(f"Invalid resolved CUDA device: {actual_device!r}")
+    index = int(raw_index)
+    visible = env.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        selected = raw_index
+    else:
+        entries = [entry.strip() for entry in visible.split(",") if entry.strip()]
+        if index >= len(entries):
+            raise ValueError(
+                f"Resolved CUDA device is outside CUDA_VISIBLE_DEVICES: {actual_device!r}"
+            )
+        selected = entries[index]
+    env["CUDA_VISIBLE_DEVICES"] = selected
+    return "cuda"
 
 
 def executable_command(executable: str) -> list[str]:
@@ -572,6 +604,8 @@ def run_totalsegmentator(
             dentalseg_timeout_sec=dentalseg_timeout_sec,
             execution_profile=execution_profile,
             emit_run_stages=emit_run_stages,
+            event_sink=event_sink,
+            should_cancel=should_cancel,
         )
 
     if backend == "toothseg":
@@ -1400,6 +1434,8 @@ def _run_dentalsegmentator(
     dentalseg_timeout_sec: int,
     execution_profile: str | None,
     emit_run_stages: bool,
+    event_sink: RunEventSink | None,
+    should_cancel: ShouldCancel | None,
 ) -> TotalSegRunResult:
     start = time.perf_counter()
     extra: dict[str, Any] = {
@@ -1425,12 +1461,15 @@ def _run_dentalsegmentator(
         }
     }
     try:
+        _raise_if_cancelled(should_cancel)
         if task != "craniofacial_structures":
             raise ValueError(
                 "DentalSegmentator backend supports the arch/jaw preview path only; "
                 "it does not provide individual tooth labels."
             )
-        if device_check.actual_device not in {"cpu", "mps"}:
+        if device_check.actual_device not in {"cpu", "mps"} and not str(
+            device_check.actual_device
+        ).startswith("cuda:"):
             raise RuntimeError(f"Unsupported DentalSegmentator device: {device_check.actual_device!r}")
         if requested_device == "auto" and device_check.actual_device == "cpu":
             raise RuntimeError(
@@ -1451,10 +1490,18 @@ def _run_dentalsegmentator(
             nnunet_results=dentalseg_nnunet_results,
             require_results=dentalseg_model_dir is None,
         )
+        nnunet_device = nnunet_device_argument(
+            str(device_check.actual_device),
+            env,
+        )
         extra["dentalsegmentator"]["nnunet_env"] = {
             key: env.get(key)
             for key in ("nnUNet_raw", "nnUNet_preprocessed", "nnUNet_results")
         }
+        if str(device_check.actual_device).startswith("cuda:"):
+            extra["dentalsegmentator"]["cuda_device_index"] = int(
+                str(device_check.actual_device).removeprefix("cuda:")
+            )
         if dentalseg_model_zip is not None:
             install_command = _dentalseg_install_command(dentalseg_model_zip)
             extra["dentalsegmentator"]["install_command"] = _sanitize_dentalseg_command(
@@ -1471,6 +1518,8 @@ def _run_dentalsegmentator(
                 progress_route="dentalsegmentator",
                 progress_stage_id="prepare",
                 progress_scope="subtask",
+                event_sink=event_sink,
+                should_cancel=should_cancel,
             )
             extra["dentalsegmentator"]["install"] = {
                 "returncode": install_returncode,
@@ -1493,7 +1542,7 @@ def _run_dentalsegmentator(
             trainer=dentalseg_trainer,
             plans=dentalseg_plans,
             folds=dentalseg_folds,
-            device=str(device_check.actual_device),
+            device=nnunet_device,
             disable_tta=dentalseg_disable_tta,
             not_on_device=dentalseg_not_on_device,
             npp=dentalseg_npp,
@@ -1502,7 +1551,12 @@ def _run_dentalsegmentator(
         safe_command = _sanitize_dentalseg_command(command, case=case)
         extra["dentalsegmentator"]["command"] = safe_command
         if emit_run_stages:
-            _emit_run_stage("dentalsegmentator", 2, log_path=case.run_log_path)
+            _emit_run_stage(
+                "dentalsegmentator",
+                2,
+                log_path=case.run_log_path,
+                event_sink=event_sink,
+            )
         returncode, child_elapsed, stdout, stderr = _run_command_streamed(
             command=command,
             env=env,
@@ -1513,15 +1567,31 @@ def _run_dentalsegmentator(
             progress_route="dentalsegmentator",
             progress_stage_id="predict",
             progress_scope="stage",
+            event_sink=event_sink,
+            should_cancel=should_cancel,
         )
+        _raise_if_cancelled(should_cancel)
         total_elapsed = time.perf_counter() - start
         extra["dentalsegmentator"]["child_elapsed_seconds"] = child_elapsed
         if returncode == 0:
             if emit_run_stages:
-                _emit_run_stage("dentalsegmentator", 3, log_path=case.run_log_path)
+                _emit_run_stage(
+                    "dentalsegmentator",
+                    3,
+                    log_path=case.run_log_path,
+                    event_sink=event_sink,
+                )
             validation = _finalize_dentalseg_output(case=case)
+            _raise_if_cancelled(should_cancel)
             extra["dentalsegmentator"]["validation"] = validation
             extra["dentalsegmentator"]["output_labelmap"] = str(case.dentalseg_multilabel_path)
+            write_json(
+                case.mask_stats_path,
+                collect_mask_stats(
+                    case.root / "segmentations",
+                    recursive=True,
+                ),
+            )
         else:
             extra["dentalsegmentator"]["error"] = stderr[-2000:] or stdout[-2000:]
         result = TotalSegRunResult(
