@@ -147,6 +147,8 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
 
         self.assertIn("convert_clean_metadata.json", intake)
+        self.assertIn('"mpr_preview"', intake)
+        self.assertIn("DicomMprPreview", intake)
         self.assertIn('"product_boundary"', intake)
         self.assertIn('"segmentation_started"', intake)
         self.assertIn('"secondary_capture_rescue"', intake)
@@ -182,6 +184,9 @@ class WindowsWpfContractTests(unittest.TestCase):
             "使用する撮影を変更",
             "この撮影を使う",
             "撮影選択を閉じる",
+            "同じフォルダのほかの撮影を見る",
+            "表示中の撮影で3Dプレビュー作成へ進む",
+            "CT画像確認から別のDICOMフォルダを選ぶ",
             "形状候補の理由を見る",
             "形状確認から別のCTを選ぶ",
             "推定形状に戻す",
@@ -212,6 +217,12 @@ class WindowsWpfContractTests(unittest.TestCase):
             "使用する撮影を変更",
             "最初の候補を選択しています。別の撮影を使う場合だけ変更してください。",
             "この撮影を使う",
+            "歯や顎など、確認したい範囲が3枚に写っていることを確認してください。",
+            "同じフォルダのほかの撮影を見る",
+            "上から",
+            "正面から",
+            "横から",
+            "表示中の撮影で3Dプレビュー作成へ進む",
             "閉じる",
             "作成方法を比較",
             "通常（TotalSegmentator）",
@@ -230,6 +241,11 @@ class WindowsWpfContractTests(unittest.TestCase):
         for label in (*automation_names, *visible_copy):
             with self.subTest(label=label):
                 self.assertIn(label, xaml)
+        self.assertIn('"CT画像を確認"', code)
+        self.assertIn(
+            '"歯や顎が3枚とも見えていれば、このCTを使えます。"',
+            code,
+        )
         root = ET.fromstring(xaml)
         presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         automation = (
@@ -237,7 +253,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 31)
+        self.assertEqual(len(buttons), 34)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(

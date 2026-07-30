@@ -11,12 +11,12 @@ Date: 2026-07-31
 | unknown／known progress表示 | PASS | 07、15のWPF capture |
 | 成功／失敗から別CTへ移動 | PASS | 09、10のWPF capture |
 | 成功後に同一入力を再実行 | PASS | 09のWPF capture、`RerunButton_Click` |
-| fake CT／mock inferenceを成功扱いしない | PASS | 08をUNVERIFIEDとして維持 |
+| clean DICOMから実MPRを生成・検証して表示 | PASS | MSVC Release build、`dicom_normalizer_synthetic` CTest、08 capture |
+| fake CT／mock inferenceを成功扱いしない | PASS | 固定captureは画像を埋めず、primary pathは検証済みPGMのみを読込 |
 | public indexや追加model取得を開始しない | PASS | 12、13を配布設計差として維持 |
-| 31 buttonのAutomation nameとfocus | PASS | `ui-contract.json` |
+| 34 buttonのAutomation nameとfocus | PASS | `ui-contract.json` |
 | DICOM rescue同色slider連動 | PASS | `rescue_sliders_linked=true` |
 | Windows 11 | UNVERIFIED | 別機検証 |
 | installer／signing／update | UNVERIFIED | 範囲外 |
 
 Blocking FAIL: 0
-

@@ -97,7 +97,8 @@ This path:
 - accepts only original_ct_geometry_ok series
 - isolates selected DICOM files with safe sequential filenames
 - runs dcm2niix with uncompressed NIfTI output
-- writes convert_clean_metadata.json with provenance
+- writes convert_clean_metadata.json with provenance and three verified
+  midpoint MPR previews (`axial`, `coronal`, `sagittal`)
 - never starts segmentation
 ```
 

@@ -18,6 +18,7 @@ internal enum ShellScreen
     Setup,
     Start,
     Input,
+    DicomPreview,
     DicomRescue,
     Running,
     Result,
@@ -79,6 +80,12 @@ public partial class MainWindow : Window
             [ChangeDicomSeriesButton] = "使用する撮影を変更",
             [UseSelectedDicomSeriesButton] = "この撮影を使う",
             [CloseDicomSeriesButton] = "撮影選択を閉じる",
+            [ViewOtherDicomSeriesButton] =
+                "同じフォルダのほかの撮影を見る",
+            [UseDisplayedDicomPreviewButton] =
+                "表示中の撮影で3Dプレビュー作成へ進む",
+            [ChooseAnotherDicomFolderFromPreviewButton] =
+                "CT画像確認から別のDICOMフォルダを選ぶ",
             [ShowRescueReasonButton] = "形状候補の理由を見る",
             [ChooseAnotherCtFromRescueButton] =
                 "形状確認から別のCTを選ぶ",
@@ -959,6 +966,10 @@ public partial class MainWindow : Window
             screen == ShellScreen.Input
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        DicomPreviewPanel.Visibility =
+            screen == ShellScreen.DicomPreview
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         DicomRescuePanel.Visibility =
             screen == ShellScreen.DicomRescue
                 ? Visibility.Visible
@@ -982,6 +993,9 @@ public partial class MainWindow : Window
             ShellScreen.Input => (
                 "入力と作成内容",
                 "入力を確認し、作成する3Dプレビューを確認します。"),
+            ShellScreen.DicomPreview => (
+                "CT画像を確認",
+                "歯や顎が3枚とも見えていれば、このCTを使えます。"),
             ShellScreen.DicomRescue => (
                 "形状を確認",
                 "三方向の断面を見ながら、形が自然に見える寸法を確認します。"),
@@ -1006,6 +1020,7 @@ public partial class MainWindow : Window
         {
             ShellScreen.Start => 1,
             ShellScreen.Input => 2,
+            ShellScreen.DicomPreview => 2,
             ShellScreen.DicomRescue => 2,
             ShellScreen.Running => 3,
             ShellScreen.Result => 4,
@@ -1043,6 +1058,8 @@ public partial class MainWindow : Window
                 InputSourceChoicePanel.Visibility == Visibility.Visible =>
                     ChooseNiftiButton.Focus(),
             ShellScreen.Input => RunButton.Focus(),
+            ShellScreen.DicomPreview =>
+                UseDisplayedDicomPreviewButton.Focus(),
             ShellScreen.DicomRescue =>
                 ShowRescueReasonButton.Focus(),
             ShellScreen.Running => StopButton.Focus(),
@@ -1113,6 +1130,7 @@ public partial class MainWindow : Window
                 break;
             case "dicom-input":
             case "dicom-series":
+            case "dicom-preview":
             case "dicom-rescue":
                 ApplyDicomPreviewScenario(scenario);
                 break;

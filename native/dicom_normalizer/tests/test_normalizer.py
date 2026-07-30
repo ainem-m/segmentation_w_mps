@@ -953,6 +953,16 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
         assert proc.returncode == 0, proc.stderr
         clean_meta = json.loads((clean_out / "convert_clean_metadata.json").read_text(encoding="utf-8"))
         assert clean_meta["status"] == "success"
+        assert len(clean_meta["outputs"]["mpr_preview"]) == 3
+        assert {item["plane"] for item in clean_meta["outputs"]["mpr_preview"]} == {
+            "axial",
+            "coronal",
+            "sagittal",
+        }
+        for item in clean_meta["outputs"]["mpr_preview"]:
+            assert Path(item["path"]).is_file()
+            assert item["width"] > 0
+            assert item["height"] > 0
 
         for index in range(32):
             write_dicom(
@@ -977,6 +987,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
         assert proc.returncode == 0, proc.stderr
         clean_key_meta = json.loads((clean_key_out / "convert_clean_metadata.json").read_text(encoding="utf-8"))
         assert clean_key_meta["status"] == "success"
+        assert len(clean_key_meta["outputs"]["mpr_preview"]) == 3
         assert clean_key_meta["selected_series"]["series_number"] is None
         assert clean_key_meta["selected_series"]["series_instance_uid"] == "1.2.3.convert.keyonly"
 

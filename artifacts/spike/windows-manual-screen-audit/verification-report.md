@@ -24,7 +24,7 @@ public indexから追加依存を取得することは行っていない。
 | 05 | CT選択済み（旧） | UNVERIFIED | manual manifestで未使用。現行03の2カード構成へ統合済み。 |
 | 06 | DICOM撮影選択 | PASS | 最初の候補、撮影名、枚数、`この撮影を使う`、`閉じる`を確認。Windowsは同一画面内のfocus panelでありMacのsheetとは外観が異なる。 |
 | 07 | 通常処理中 | PASS | 工程、全体の進捗範囲、未知の工程進捗、経過時間、使用機能、保存先、停止を表示。固定previewをmanualのunknown-progress状態へ修正。 |
-| 08 | CT画像確認 | UNVERIFIED | 現Windows clean DICOM経路は検証済みNIfTIを生成するが三方向PGMを生成しない。fake画像を表示せず、実MPR生成・検証を次工程とする。 |
+| 08 | CT画像確認 | PASS | clean DICOMから実NIfTIの三方向PGMを生成し、path・非空file・寸法・planeを.NET側で検証してから表示する画面を追加。上／正面／横、同一folderの別撮影、別folder、表示中撮影の確定を確認。固定UI captureはfake画像を埋めず黒枠とし、primary pathだけが検証済みPGMを表示する。 |
 | 09 | 成功結果 | PASS | 3D preview、結果folder、safe詳細、入力へ戻る、別CT、再実行、最初へ戻るを確認。別CTと同一入力再実行を追加。Slicer export、保存file一覧、preview再生成はUNVERIFIED。 |
 | 10 | 失敗結果 | PASS | safe reason/error code、copy、safe詳細、入力へ戻る、別CT、最初へ戻るを確認。別CT操作を追加。 |
 | 11 | 詳細ログ（旧） | UNVERIFIED | manual manifestで未使用。Windowsは絶対pathやraw outputを表示しないsafe protocol event summaryを採用し、外部共有向けのログmodalは実装しない。 |
@@ -41,11 +41,13 @@ public indexから追加依存を取得することは行っていない。
 - 通常処理の固定previewをunknown-progress表示へ修正。
 - ToothSeg固定previewへknown progress、step、ETAを追加。
 - DICOM rescueの6本連動slider修正を再確認。
-- WPF automation nameとbutton contractを31 buttonへ更新。
+- clean DICOM変換へ、既存NIfTI readerを再利用した三方向PGM生成を追加。
+- CT画像確認画面と、確認後にだけ変換NIfTIを入力へ確定する操作を追加。
+- WPF automation nameとbutton contractを34 buttonへ更新。
 
 ## Deliberately unverified
 
-- clean DICOM／viewer export用の実MPR生成とCT画像確認画面
+- viewer export
 - DICOM rescueのorientation、rotation、slice reversal、crop
 - DICOM rescue確認後のstrict CUDA segmentation接続
 - 3D Slicer export、保存file一覧、preview再生成
@@ -53,5 +55,14 @@ public indexから追加依存を取得することは行っていない。
 - installer、signing、update／rollback
 - Windows 11
 
-Blocking FAIL: 0
+## Verification
 
+- .NET Release build: PASS（0 warnings / 0 errors）
+- WPF contract self-test: PASS（34 buttons）
+- Windows WPF contract tests: PASS（10/10）
+- Python全テスト: PASS（300、skip 3）
+- MSVC Release native build: PASS
+- `dicom_normalizer_synthetic` CTest: PASS（実dcm2niix、synthetic DICOM）
+- `git diff --check`: PASS
+
+Blocking FAIL: 0

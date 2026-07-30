@@ -573,6 +573,82 @@
           </StackPanel>
         </ScrollViewer>
 
+        <ScrollViewer x:Name="DicomPreviewPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <Grid Margin="0,0,0,12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock
+                  x:Name="DicomPreviewSeriesText"
+                  Text="表示中の撮影を確認しています。"
+                  Style="{StaticResource MutedTextStyle}"
+                  VerticalAlignment="Center" />
+              <Button
+                  x:Name="ViewOtherDicomSeriesButton"
+                  Grid.Column="1"
+                  Content="同じフォルダのほかの撮影を見る"
+                  Click="ViewOtherDicomSeriesButton_Click"
+                  Visibility="Collapsed"
+                  automation:AutomationProperties.Name="同じフォルダのほかの撮影を見る" />
+            </Grid>
+            <TextBlock
+                x:Name="DicomPreviewInstructionText"
+                Text="歯や顎など、確認したい範囲が3枚に写っていることを確認してください。"
+                Margin="0,0,0,14"
+                FontWeight="SemiBold"
+                TextWrapping="Wrap" />
+            <Grid Margin="0,0,0,14">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                  <TextBlock Text="上から" FontWeight="SemiBold" Margin="0,0,0,8" />
+                  <Border Height="245" Background="Black" CornerRadius="6">
+                    <Image x:Name="DicomPreviewAxialImage" Stretch="Uniform" />
+                  </Border>
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="2" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                  <TextBlock Text="正面から" FontWeight="SemiBold" Margin="0,0,0,8" />
+                  <Border Height="245" Background="Black" CornerRadius="6">
+                    <Image x:Name="DicomPreviewCoronalImage" Stretch="Uniform" />
+                  </Border>
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="4" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                  <TextBlock Text="横から" FontWeight="SemiBold" Margin="0,0,0,8" />
+                  <Border Height="245" Background="Black" CornerRadius="6">
+                    <Image x:Name="DicomPreviewSagittalImage" Stretch="Uniform" />
+                  </Border>
+                </StackPanel>
+              </Border>
+            </Grid>
+            <Button
+                x:Name="UseDisplayedDicomPreviewButton"
+                Content="表示中の撮影で3Dプレビュー作成へ進む"
+                Style="{StaticResource PrimaryButtonStyle}"
+                Click="UseDisplayedDicomPreviewButton_Click"
+                Margin="0,0,0,14"
+                automation:AutomationProperties.Name="表示中の撮影で3Dプレビュー作成へ進む"
+                automation:AutomationProperties.HelpText="検証済みの変換NIfTIを入力として確定します。AI推論はまだ開始しません。" />
+            <Button
+                x:Name="ChooseAnotherDicomFolderFromPreviewButton"
+                Content="別のDICOMフォルダを選ぶ"
+                HorizontalAlignment="Left"
+                Click="ChooseAnotherDicomFolderFromPreviewButton_Click"
+                automation:AutomationProperties.Name="CT画像確認から別のDICOMフォルダを選ぶ" />
+          </StackPanel>
+        </ScrollViewer>
+
         <ScrollViewer x:Name="DicomRescuePanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
           <StackPanel>
             <Border

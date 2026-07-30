@@ -393,7 +393,8 @@ internal sealed class DicomIntakeSession : IDisposable
                 audit.WorkspaceDirectory,
                 verified.NiftiPath,
                 manifestPath,
-                selectionBasis);
+                selectionBasis,
+                verified.Previews);
         }
         finally
         {
@@ -1050,9 +1051,16 @@ internal sealed class DicomIntakeSession : IDisposable
                 "The normalized NIfTI provenance is invalid.");
         }
 
+        var previewRoot = Path.GetFullPath(
+            Path.Combine(conversionDirectory, "mpr_preview"));
+        var previews = ReadVerifiedMprPreviews(
+            RequireArray(outputs, "mpr_preview"),
+            previewRoot);
+
         return new VerifiedConversion(
             niftiFiles[0],
-            dcm2niixExitCode);
+            dcm2niixExitCode,
+            previews);
     }
 
     private static VerifiedRescue VerifyRescue(
@@ -1145,17 +1153,28 @@ internal sealed class DicomIntakeSession : IDisposable
         RequireTrue(mpr, "written");
         var previewRoot = Path.GetFullPath(
             Path.Combine(rescueDirectory, "mpr_preview"));
-        var previews = new List<DicomRescuePreview>();
-        foreach (var item in RequireArray(
-                     mpr,
-                     "previews").EnumerateArray())
+        var previews = ReadVerifiedMprPreviews(
+            RequireArray(mpr, "previews"),
+            previewRoot);
+        return new VerifiedRescue(
+            patchedNifti,
+            previews);
+    }
+
+    private static IReadOnlyList<DicomMprPreview>
+        ReadVerifiedMprPreviews(
+            JsonElement previewArray,
+            string previewRoot)
+    {
+        var previews = new List<DicomMprPreview>();
+        foreach (var item in previewArray.EnumerateArray())
         {
             var plane = RequireNonEmptyString(item, "plane");
             if (plane is not ("axial" or "coronal" or "sagittal")
                 || previews.Any(existing => existing.Plane == plane))
             {
                 throw new InvalidDataException(
-                    "A rescue preview plane is invalid.");
+                    "An MPR preview plane is invalid.");
             }
             var path = Path.GetFullPath(
                 RequireNonEmptyString(item, "path"));
@@ -1166,10 +1185,10 @@ internal sealed class DicomIntakeSession : IDisposable
                 || new FileInfo(path).Length <= 0)
             {
                 throw new InvalidDataException(
-                    "A rescue preview image is invalid.");
+                    "An MPR preview image is invalid.");
             }
             previews.Add(
-                new DicomRescuePreview(
+                new DicomMprPreview(
                     plane,
                     path,
                     width,
@@ -1179,11 +1198,9 @@ internal sealed class DicomIntakeSession : IDisposable
         if (previews.Count != 3)
         {
             throw new InvalidDataException(
-                "Three rescue preview images are required.");
+                "Three MPR preview images are required.");
         }
-        return new VerifiedRescue(
-            patchedNifti,
-            previews);
+        return previews;
     }
 
     private static bool Dcm2niixTimedOut(string metadataPath)
@@ -1593,11 +1610,12 @@ internal sealed class DicomIntakeSession : IDisposable
 
     private sealed record VerifiedConversion(
         string NiftiPath,
-        int Dcm2niixExitCode);
+        int Dcm2niixExitCode,
+        IReadOnlyList<DicomMprPreview> Previews);
 
     private sealed record VerifiedRescue(
         string PatchedNiftiPath,
-        IReadOnlyList<DicomRescuePreview> Previews);
+        IReadOnlyList<DicomMprPreview> Previews);
 
     private sealed record ParsedDicomAudit(
         IReadOnlyList<DicomCleanCandidate> CleanCandidates,
@@ -1686,7 +1704,7 @@ internal sealed record DicomSpacing(
                 System.Globalization.CultureInfo.InvariantCulture)));
 }
 
-internal sealed record DicomRescuePreview(
+internal sealed record DicomMprPreview(
     string Plane,
     string Path,
     int Width,
@@ -1749,7 +1767,7 @@ internal sealed record DicomRescueResult(
     string? WorkspaceDirectory,
     string? NiftiPath,
     string? ManifestPath,
-    IReadOnlyList<DicomRescuePreview> Previews,
+    IReadOnlyList<DicomMprPreview> Previews,
     string? ErrorCode,
     string? SafeMessage)
 {
@@ -1758,7 +1776,7 @@ internal sealed record DicomRescueResult(
         string workspaceDirectory,
         string niftiPath,
         string manifestPath,
-        IReadOnlyList<DicomRescuePreview> previews)
+        IReadOnlyList<DicomMprPreview> previews)
     {
         return new DicomRescueResult(
             true,
@@ -1783,7 +1801,7 @@ internal sealed record DicomRescueResult(
             workspaceDirectory,
             null,
             null,
-            Array.Empty<DicomRescuePreview>(),
+            Array.Empty<DicomMprPreview>(),
             errorCode,
             safeMessage);
     }
@@ -1796,6 +1814,7 @@ internal sealed record DicomConversionResult(
     string? NiftiPath,
     string? ManifestPath,
     string? SelectionBasis,
+    IReadOnlyList<DicomMprPreview> Previews,
     string? ErrorCode,
     string? SafeMessage)
 {
@@ -1804,7 +1823,8 @@ internal sealed record DicomConversionResult(
         string workspaceDirectory,
         string niftiPath,
         string manifestPath,
-        string selectionBasis)
+        string selectionBasis,
+        IReadOnlyList<DicomMprPreview> previews)
     {
         return new DicomConversionResult(
             true,
@@ -1813,6 +1833,7 @@ internal sealed record DicomConversionResult(
             niftiPath,
             manifestPath,
             selectionBasis,
+            previews,
             null,
             null);
     }
@@ -1830,6 +1851,7 @@ internal sealed record DicomConversionResult(
             null,
             null,
             null,
+            Array.Empty<DicomMprPreview>(),
             errorCode,
             safeMessage);
     }

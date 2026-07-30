@@ -18,6 +18,7 @@ public partial class MainWindow
     private bool _dicomOperationActive;
     private bool _dicomStopRequested;
     private bool _synchronizingRescueSpacingControls;
+    private bool _returnToDicomPreviewOnSeriesClose;
 
     private void BeginOwnDataSelection(bool clearExistingInput)
     {
@@ -84,6 +85,7 @@ public partial class MainWindow
         {
             return;
         }
+        _returnToDicomPreviewOnSeriesClose = false;
         DicomSeriesSelectionPanel.Visibility = Visibility.Collapsed;
         await ConvertDicomCandidateAsync(
             candidate,
@@ -96,7 +98,52 @@ public partial class MainWindow
     {
         DicomSeriesListBox.SelectedItem = _selectedDicomCandidate;
         DicomSeriesSelectionPanel.Visibility = Visibility.Collapsed;
+        if (_returnToDicomPreviewOnSeriesClose
+            && _lastDicomConversion is not null
+            && _selectedDicomCandidate is not null)
+        {
+            _returnToDicomPreviewOnSeriesClose = false;
+            ShowDicomPreview(
+                _lastDicomConversion,
+                _selectedDicomCandidate);
+            return;
+        }
         ChangeDicomSeriesButton.Focus();
+    }
+
+    private void ViewOtherDicomSeriesButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_dicomAudit is null
+            || _selectedDicomCandidate is null
+            || _dicomAudit.Candidates.Count <= 1)
+        {
+            return;
+        }
+        _returnToDicomPreviewOnSeriesClose = true;
+        SetScreen(
+            ShellScreen.Input,
+            "使用する撮影を確認");
+        DicomSeriesListBox.ItemsSource = _dicomAudit.Candidates;
+        DicomSeriesListBox.SelectedItem = _selectedDicomCandidate;
+        DicomSeriesSelectionPanel.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(DicomSeriesListBox.Focus);
+    }
+
+    private void UseDisplayedDicomPreviewButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        CommitDicomConversion();
+    }
+
+    private void ChooseAnotherDicomFolderFromPreviewButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        _returnToDicomPreviewOnSeriesClose = false;
+        ChooseDicomFolderButton_Click(sender, e);
     }
 
     private void ShowRescueReasonButton_Click(
@@ -454,7 +501,7 @@ public partial class MainWindow
     }
 
     private void ShowRescuePreviews(
-        IReadOnlyList<DicomRescuePreview> previews)
+        IReadOnlyList<DicomMprPreview> previews)
     {
         RescueAxialImage.Source = LoadVerifiedPreview(
             previews.Single(item => item.Plane == "axial"));
@@ -465,7 +512,7 @@ public partial class MainWindow
     }
 
     private static System.Windows.Media.Imaging.BitmapSource
-        LoadVerifiedPreview(DicomRescuePreview preview)
+        LoadVerifiedPreview(DicomMprPreview preview)
     {
         var image = PgmBitmapLoader.Load(preview.Path);
         if (image.PixelWidth != preview.Width
@@ -638,6 +685,81 @@ public partial class MainWindow
         _lastDicomFailure = null;
         _lastDicomConversion = conversion;
         _selectedDicomCandidate = candidate;
+        AddSafeDicomEvent(
+            "conversion_completed",
+            conversion.OperationId,
+            $"selection_basis={conversion.SelectionBasis}");
+        return ShowDicomPreview(conversion, candidate);
+    }
+
+    private bool ShowDicomPreview(
+        DicomConversionResult conversion,
+        DicomCleanCandidate candidate)
+    {
+        if (conversion.Previews.Count != 3)
+        {
+            ShowDicomFailure(
+                "dicom_mpr_preview_invalid",
+                "CTの三方向画像を確認できませんでした。",
+                conversion.OperationId,
+                stage: "preview");
+            return false;
+        }
+        try
+        {
+            DicomPreviewAxialImage.Source = LoadVerifiedPreview(
+                conversion.Previews.Single(
+                    item => item.Plane == "axial"));
+            DicomPreviewCoronalImage.Source = LoadVerifiedPreview(
+                conversion.Previews.Single(
+                    item => item.Plane == "coronal"));
+            DicomPreviewSagittalImage.Source = LoadVerifiedPreview(
+                conversion.Previews.Single(
+                    item => item.Plane == "sagittal"));
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or ArgumentException
+                or OverflowException)
+        {
+            ShowDicomFailure(
+                "dicom_mpr_preview_invalid",
+                "CTの三方向画像を表示できませんでした。",
+                conversion.OperationId,
+                stage: "preview");
+            return false;
+        }
+        DicomPreviewSeriesText.Text =
+            _dicomAudit?.Candidates.Count > 1
+                ? $"複数の撮影データがあります。表示中: {candidate.DisplayTitle}"
+                : $"表示中: {candidate.DisplayTitle}";
+        ViewOtherDicomSeriesButton.Visibility =
+            _dicomAudit?.Candidates.Count > 1
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        AddSafeDicomEvent(
+            "dicom_preview_presented",
+            conversion.OperationId,
+            "preview_count=3");
+        SetScreen(
+            ShellScreen.DicomPreview,
+            "CT画像を確認");
+        return true;
+    }
+
+    private bool CommitDicomConversion()
+    {
+        var conversion = _lastDicomConversion;
+        var candidate = _selectedDicomCandidate;
+        if (_dicomAudit is null
+            || conversion is null
+            || candidate is null
+            || string.IsNullOrWhiteSpace(conversion.NiftiPath))
+        {
+            return false;
+        }
         _inputPath = conversion.NiftiPath;
         InputDisplayName.Text = "DICOM CT（取り込み済み）";
         SetInputButtonsForSample(sampleSelected: false);
@@ -654,9 +776,9 @@ public partial class MainWindow
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         AddSafeDicomEvent(
-            "conversion_completed",
+            "dicom_preview_confirmed",
             conversion.OperationId,
-            $"selection_basis={conversion.SelectionBasis}");
+            "preview_count=3");
         SetReturnToInputButtonForDicomFailure(
             dicomFailure: false);
         SetScreen(
@@ -859,11 +981,15 @@ public partial class MainWindow
         _lastDicomFailure = null;
         _dicomOperationActive = false;
         _dicomStopRequested = false;
+        _returnToDicomPreviewOnSeriesClose = false;
         InputSourceChoicePanel.Visibility = Visibility.Collapsed;
         DicomSeriesSummaryPanel.Visibility = Visibility.Collapsed;
         DicomSeriesSelectionPanel.Visibility = Visibility.Collapsed;
         DicomSeriesListBox.ItemsSource = null;
         RescueCandidateComboBox.ItemsSource = null;
+        DicomPreviewAxialImage.Source = null;
+        DicomPreviewCoronalImage.Source = null;
+        DicomPreviewSagittalImage.Source = null;
         ClearRescuePreview();
         SetReturnToInputButtonForDicomFailure(
             dicomFailure: false);
@@ -957,6 +1083,34 @@ public partial class MainWindow
                     },
                     System.Windows.Threading.DispatcherPriority.ContextIdle);
                 break;
+            case "dicom-preview":
+                var previewCandidate = new DicomCleanCandidate(
+                    "preview-1",
+                    "preview",
+                    "preview-series-7",
+                    7,
+                    "Reconstructed volume",
+                    512,
+                    "original_ct_geometry_ok");
+                _dicomAudit = DicomAuditResult.Success(
+                    "preview",
+                    "preview-workspace",
+                    "preview-source",
+                    "preview-audit.json",
+                    new[] { previewCandidate },
+                    Array.Empty<DicomRescueCandidate>());
+                _selectedDicomCandidate = previewCandidate;
+                DicomPreviewAxialImage.Source = null;
+                DicomPreviewCoronalImage.Source = null;
+                DicomPreviewSagittalImage.Source = null;
+                DicomPreviewSeriesText.Text =
+                    "表示中: 撮影 7: Reconstructed volume";
+                ViewOtherDicomSeriesButton.Visibility =
+                    Visibility.Collapsed;
+                SetScreen(
+                    ShellScreen.DicomPreview,
+                    "UI PREVIEW・CT画像を確認");
+                break;
             case "dicom-rescue":
                 var rescueCandidate = new DicomRescueCandidate(
                     "preview-rescue-1",
@@ -997,7 +1151,16 @@ public partial class MainWindow
         var selected = _selectedDicomCandidate;
         var coordinatorWasNotStartedDuringIntake =
             _lastResult is null;
-        if (converted)
+        var previewVerified =
+            converted
+            && conversion?.Previews.Count == 3
+            && conversion.Previews.All(
+                preview => File.Exists(preview.Path)
+                    && new FileInfo(preview.Path).Length > 0);
+        var previewConfirmed =
+            previewVerified
+            && CommitDicomConversion();
+        if (previewConfirmed)
         {
             await StartRunAsync();
         }
@@ -1011,6 +1174,8 @@ public partial class MainWindow
             && new FileInfo(niftiPath).Length > 0;
         var passed =
             converted
+            && previewVerified
+            && previewConfirmed
             && coordinatorWasNotStartedDuringIntake
             && manifestExists
             && niftiExists
@@ -1046,9 +1211,14 @@ public partial class MainWindow
                     conversion?.SelectionBasis,
                 intake_manifest_exists = manifestExists,
                 normalized_nifti_nonempty = niftiExists,
+                mpr_preview_verified = previewVerified,
+                mpr_preview_count =
+                    conversion?.Previews.Count,
+                preview_confirmed_before_run =
+                    previewConfirmed,
                 coordinator_started_during_intake =
                     !coordinatorWasNotStartedDuringIntake,
-                explicit_run_invoked = converted,
+                explicit_run_invoked = previewConfirmed,
                 coordinator_operation_id =
                     result?.OperationId,
                 terminal_event = result?.TerminalEvent,

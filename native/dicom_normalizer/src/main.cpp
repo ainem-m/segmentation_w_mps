@@ -2942,6 +2942,7 @@ std::string convert_clean_metadata_json(
     const fs::path& dcm2niix_dir,
     const fs::path& dcm2niix_log,
     const fs::path& nifti,
+    const std::vector<MprPreviewInfo>& mpr_previews,
     int dcm2niix_returncode
 ) {
     std::ostringstream out;
@@ -2964,14 +2965,17 @@ std::string convert_clean_metadata_json(
     out << "    \"isolated_series_dir\": " << json_string(path_to_utf8(isolated_dir)) << ",\n";
     out << "    \"dcm2niix_dir\": " << json_string(path_to_utf8(dcm2niix_dir)) << ",\n";
     out << "    \"dcm2niix_log\": " << json_string(path_to_utf8(dcm2niix_log)) << ",\n";
-    out << "    \"nifti\": " << json_optional_string(path_to_utf8(nifti)) << "\n";
+    out << "    \"nifti\": " << json_optional_string(path_to_utf8(nifti)) << ",\n";
+    out << "    \"mpr_preview\": " << mpr_preview_info_array_json(mpr_previews, 4) << "\n";
     out << "  },\n";
     out << "  \"dcm2niix\": {\"returncode\": " << dcm2niix_returncode << "},\n";
     out << "  \"product_boundary\": {\n";
     out << "    \"segmentation_started\": false,\n";
     out << "    \"secondary_capture_rescue\": false\n";
     out << "  },\n";
-    out << "  \"status\": " << json_string(nifti.empty() ? "failed" : "success") << "\n";
+    out << "  \"status\": "
+        << json_string(!nifti.empty() && mpr_previews.size() == 3 ? "success" : "failed")
+        << "\n";
     out << "}\n";
     return out.str();
 }
@@ -3401,6 +3405,7 @@ int convert_clean(const Args& args) {
     const fs::path dcm2niix_dir = root / "dcm2niix";
     const fs::path dcm2niix_log = root / "logs" / "dcm2niix_clean.log";
     const fs::path metadata_path = root / "convert_clean_metadata.json";
+    const fs::path mpr_dir = root / "mpr_preview";
     isolate_series(*selected, isolated_dir);
 
     const fs::path dcm2niix = find_dcm2niix(args.dcm2niix);
@@ -3412,6 +3417,14 @@ int convert_clean(const Args& args) {
         "clean_raw",
         args.dcm2niix_timeout_seconds);
     const fs::path nifti = returncode == 0 ? find_first_nifti(dcm2niix_dir) : fs::path{};
+    std::vector<MprPreviewInfo> mpr_previews;
+    if (!nifti.empty()) {
+        try {
+            mpr_previews = write_nifti_mpr_pgm(nifti, mpr_dir);
+        } catch (...) {
+            mpr_previews.clear();
+        }
+    }
     write_text(
         metadata_path,
         convert_clean_metadata_json(
@@ -3422,10 +3435,11 @@ int convert_clean(const Args& args) {
             dcm2niix_dir,
             dcm2niix_log,
             nifti,
+            mpr_previews,
             returncode));
 
     std::cout << "wrote " << metadata_path << "\n";
-    if (!nifti.empty()) {
+    if (!nifti.empty() && mpr_previews.size() == 3) {
         std::cout << "nifti=" << nifti << "\n";
         return 0;
     }
