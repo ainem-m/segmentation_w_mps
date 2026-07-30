@@ -3,9 +3,9 @@
 Date: 2026-07-30
 
 This document describes the platform-neutral coordinator boundary implemented
-on the Windows spike branch. Runtime, strict CUDA, and cancellation have
-engineering evidence on the Windows 10 spike host. Windows 11, WPF integration,
-DICOM, and the installer remain unverified.
+on the Windows spike branch. Runtime, strict CUDA, normal completion, and
+cancellation have engineering evidence on the Windows 10 spike host. Windows
+11, WPF integration, DICOM, and the installer remain unverified.
 
 ## Entrypoint and transport
 
@@ -164,6 +164,10 @@ TotalSegmentator.
 The current implementation rejects an existing final or staging directory.
 Cross-process locking, Windows power-loss testing, disk-full testing, and
 atomicity under concurrent creation remain Windows-spike work.
+
+A real supervised Windows 10 run completed with one `operation_completed`
+terminal event, coordinator OS exit code 0, zero remaining Job members, and a
+verified staging-to-final promotion. Windows 11 remains unverified.
 
 ## Cancellation
 

@@ -25,14 +25,14 @@ clean Windows 11 x64 standard-user machine
 | Windows binary dependency closure | exact versions, hashes, no source builds | partial: exact binary-only closure passes on the Windows 10 engineering host; clean Windows 11 unverified |
 | Clean runtime import | import matrix on clean Windows | partial: app-private import matrix passes on the Windows 10 engineering host; clean Windows 11 unverified |
 | Strict CUDA doctor | structured result on selected GPU | partial: strict `cuda:0` doctor passes on the Windows 10 engineering host; Windows 11 unverified |
-| Real CUDA application run | run manifest proves requested/resolved CUDA | partial: real `craniofacial_structures` run proves strict CUDA on the Windows 10 engineering host; Windows 11 unverified |
+| Real CUDA application run | run manifest proves requested/resolved CUDA | partial: real `craniofacial_structures` run under the Job Object supervisor proves strict CUDA on the Windows 10 engineering host; Windows 11 unverified |
 | Negative CUDA test | hidden/invalid GPU fails without CPU run | partial: hidden GPU and invalid index fail without fallback on the Windows 10 engineering host; Windows 11 unverified |
 | Explicit CPU path | separate user-authorized CPU result | unverified: real TotalSegmentator CPU inference not run |
-| Coordinator protocol v1 | request/event/error contract tests | partial: real TotalSegmentator transport and typed cancel pass on the Windows 10 engineering host; Windows 11 unverified |
+| Coordinator protocol v1 | request/event/error contract tests | partial: real TotalSegmentator normal completion and typed cancel pass on the Windows 10 engineering host; Windows 11 unverified |
 | Existing CLI compatibility | current macOS CLI tests remain green | partial: Mac automated suite passes; Windows unverified |
 | Job Object containment | real child/grandchild membership evidence | partial: synthetic tree and real TotalSegmentator descendants pass on the Windows 10 engineering host; Windows 11 unverified |
 | Authoritative cancellation | no surviving inference/GPU processes | partial: model-load and `Predicting` cancellation leave zero Job/GPU survivors on the Windows 10 engineering host; Windows 11 unverified |
-| Staging commit | incomplete output never promoted | partial: real Windows 10 cancellation retains staging without final promotion; race/fault injection and Windows 11 remain unverified |
+| Staging commit | incomplete output never promoted | partial: real Windows 10 normal completion promotes verified output, while cancellation retains staging without final promotion; race/fault injection and Windows 11 remain unverified |
 | C++ helper MSVC build | reproducible configure/build log | unverified |
 | DICOM synthetic parity | Windows and macOS semantic comparison | unverified |
 | Japanese/long paths | runtime, coordinator and DICOM cases | unverified |

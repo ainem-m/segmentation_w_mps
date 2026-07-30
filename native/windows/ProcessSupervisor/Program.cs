@@ -93,11 +93,20 @@ internal static class Program
         var stderrPath = options.RequiredPath("stderr");
         var evidencePath = options.RequiredPath("evidence");
         var workingDirectory = options.RequiredPath("working-directory");
+        var normalCompletion = options.HasFlag("normal-completion");
         var grace = TimeSpan.FromMilliseconds(options.OptionalInt("grace-ms", 3000));
         var cancelAfter = options.OptionalInt("cancel-after-ms", -1);
         var cancelOnStage = options.Optional("cancel-on-stage");
         var cancelDelay = options.OptionalInt("cancel-delay-ms", 0);
-        if (cancelAfter < 0 && cancelOnStage is null)
+        if (normalCompletion
+            && (options.Optional("cancel-after-ms") is not null
+                || cancelOnStage is not null
+                || options.Optional("cancel-delay-ms") is not null))
+        {
+            throw new ArgumentException(
+                "--normal-completion cannot be combined with cancellation options.");
+        }
+        if (!normalCompletion && cancelAfter < 0 && cancelOnStage is null)
         {
             throw new ArgumentException(
                 "Either --cancel-after-ms or --cancel-on-stage is required.");
@@ -148,6 +157,7 @@ internal static class Program
         var stageReached = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         string? terminalEvent = null;
+        var terminalEventCount = 0;
         var stdoutTask = Task.Run(async () =>
         {
             while (await process.StandardOutput.ReadLineAsync() is { } line)
@@ -165,6 +175,7 @@ internal static class Program
                             or "operation_cancelled")
                         {
                             terminalEvent = eventName;
+                            terminalEventCount++;
                         }
                     }
                     if (cancelOnStage is not null && MatchesStage(root, cancelOnStage))
@@ -191,6 +202,73 @@ internal static class Program
 
         process.Resume();
         await process.StandardInput.WriteLineAsync(requestLine);
+        if (normalCompletion)
+        {
+            process.StandardInput.Close();
+            var observedProcessIds = new SortedSet<int>(process.ActiveProcessIds());
+            while (!process.WaitForExit(TimeSpan.FromMilliseconds(100)))
+            {
+                observedProcessIds.UnionWith(process.ActiveProcessIds());
+            }
+            observedProcessIds.UnionWith(process.ActiveProcessIds());
+            var coordinatorExitCode = process.ExitCode;
+            var membersAfterCompletion = await WaitForNoMembersAsync(process);
+            var cleanupTerminateJobCalled = membersAfterCompletion.Count > 0;
+            IReadOnlyList<int> membersAfterCleanup = membersAfterCompletion;
+            if (cleanupTerminateJobCalled)
+            {
+                process.Terminate(24);
+                membersAfterCleanup = await WaitForNoMembersAsync(process);
+            }
+            await Task.WhenAll(stdoutTask, stderrTask);
+
+            var normalFinalOutputExists = Directory.Exists(finalOutputPath);
+            var normalStagingExists = Directory.Exists(stagingPath);
+            var runManifestExists = File.Exists(
+                Path.Combine(finalOutputPath, "run-manifest.json"));
+            var artifactManifestExists = File.Exists(
+                Path.Combine(finalOutputPath, "artifact-manifest.json"));
+            var offlinePreviewExists = File.Exists(
+                Path.Combine(finalOutputPath, "surface_preview", "index.html"));
+            var normalCompletionPassed =
+                terminalEvent == "operation_completed"
+                && terminalEventCount == 1
+                && coordinatorExitCode == 0
+                && membersAfterCompletion.Count == 0
+                && normalFinalOutputExists
+                && !normalStagingExists
+                && runManifestExists
+                && artifactManifestExists
+                && offlinePreviewExists;
+            await WriteEvidenceAsync(
+                evidencePath,
+                new
+                {
+                    schema = EvidenceSchema,
+                    mode = "normal_completion",
+                    operation_id = operationId,
+                    status = normalCompletionPassed ? "pass" : "fail",
+                    kill_on_job_close = true,
+                    created_suspended = true,
+                    assigned_before_resume = true,
+                    graceful_cancel_sent = false,
+                    coordinator_os_exit_code = coordinatorExitCode,
+                    terminal_event = terminalEvent,
+                    terminal_event_count = terminalEventCount,
+                    observed_job_process_count = observedProcessIds.Count,
+                    observed_job_process_ids = observedProcessIds,
+                    active_processes_after = membersAfterCompletion.Count,
+                    cleanup_terminate_job_called = cleanupTerminateJobCalled,
+                    active_processes_after_cleanup = membersAfterCleanup.Count,
+                    no_survivors = membersAfterCleanup.Count == 0,
+                    final_output_promoted = normalFinalOutputExists,
+                    staging_exists = normalStagingExists,
+                    run_manifest_exists = runManifestExists,
+                    artifact_manifest_exists = artifactManifestExists,
+                    offline_preview_exists = offlinePreviewExists,
+                });
+            return normalCompletionPassed ? 0 : 1;
+        }
         if (cancelOnStage is not null)
         {
             await stageReached.Task.WaitAsync(TimeSpan.FromMinutes(5));
@@ -404,7 +482,7 @@ internal static class Program
                     throw new ArgumentException("An option name was expected.");
                 }
                 var name = argument[2..];
-                if (name == "root-control")
+                if (name is "root-control" or "normal-completion")
                 {
                     values[name] = null;
                     continue;

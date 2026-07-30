@@ -1,0 +1,15 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_gpu_process_verification.v1",
+  "operation_id": "cde5936e-e4a4-4508-b82f-c145d780d6ec",
+  "status": "pass",
+  "method": "nvidia-smi compute-app PID polling at 200 ms",
+  "observed_gpu_pids": [
+    20652,
+    21396
+  ],
+  "observed_gpu_pids_were_job_members": true,
+  "observed_gpu_pids_present_in_baseline": false,
+  "remaining_observed_gpu_pids_after_completion": [],
+  "remaining_observed_os_processes_after_completion": [],
+  "no_gpu_process_survivor": true
+}

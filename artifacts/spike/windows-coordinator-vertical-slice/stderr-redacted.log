@@ -1,0 +1,11 @@
+[normal completion]
+RUN_STAGE prepare
+RUN_STAGE segment
+RUN_PROGRESS Resampling
+RUN_PROGRESS Predicting
+RUN_PROGRESS Saving segmentations
+RUN_STAGE finalize
+RUN_STAGE preview
+TERMINAL operation_completed
+COORDINATOR_OS_EXIT 0
+Raw third-party output omitted.
