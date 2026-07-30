@@ -5,7 +5,7 @@ Date: 2026-07-31
 ## Scope
 
 Windows 10 x64 の WPF で、`secondary_capture_rescue_candidate` を
-clean CT と分離したまま、明示的な X/Y/Z スライダー確認から既存
+clean CT と分離したまま、三方向画像の端に置いた連動スライダー確認から既存
 `prepare-rescue` を実行し、pseudo-NIfTI と三方向 PGM を表示する
 manual-only slice を検証した。
 
@@ -35,7 +35,7 @@ Synthetic fixtureの画素は一様なため、3枚とも
 ## Checks
 
 - `dotnet build ... -c Release --no-restore`: PASS、警告0、エラー0
-- WPF contract self-test: PASS、28 buttons
+- WPF contract self-test: PASS、28 buttons、同色slider連動PASS
 - `tests.test_windows_wpf_contract`: 10 tests PASS
 - Python全テスト: 300 tests PASS、3 skipped
 - `git diff --check`: PASS
@@ -54,12 +54,14 @@ Native synthetic suiteを既存の前工程binaryへ向けた補助実行では�
 | --- | --- | --- |
 | `形状を確認` | `形状を確認` | PASS |
 | `理由を見る` / `理由を閉じる` | 同じ表示とAutomation名 | PASS |
-| 画像端のhandle | X/Y/Z slider | PASS（ユーザー指定により数値入力を廃止） |
+| 画像端のhandle | 三方向画像の横・縦に6本 | PASS |
+| 同色handleの連動 | 青=X、緑=Y、橙=Z | PASS（contract self-test） |
+| 推定値基準の対数scale | 25%〜400% | PASS |
 | `推定形状に戻す` | `推定形状に戻す` | PASS |
 | `別のCTを選ぶ` | `別のCTを選ぶ` | PASS |
-| `この形状で作成` | `この寸法で確認画像を作る` | intentional difference。推論を開始しないsliceのため |
+| `この形状で作成` | `この形状で確認画像を作る` | intentional difference。推論を開始しないsliceのため |
 | `画像の向きを修正` | なし | UNVERIFIED（次のtransform工程） |
-| drag handle連動、crop、rotation | なし | UNVERIFIED |
+| crop、rotation | なし | UNVERIFIED |
 
 ## Unverified
 

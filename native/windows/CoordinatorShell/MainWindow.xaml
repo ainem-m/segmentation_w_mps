@@ -575,11 +575,11 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                   <TextBlock
-                      Text="三方向の形が自然に見えるよう、X・Y・Zのスライダーを動かしてください。"
+                      Text="三方向の形が自然に見えるよう、画像の端を動かしてください。"
                       FontWeight="SemiBold"
                       TextWrapping="Wrap" />
                   <TextBlock
-                      Text="候補値は正確な寸法が確認できたことを意味しません。"
+                      Text="同じ色のハンドルは連動します。"
                       Style="{StaticResource MutedTextStyle}"
                       Margin="0,5,0,0" />
                 </StackPanel>
@@ -614,85 +614,6 @@
                 SelectionChanged="RescueCandidateComboBox_SelectionChanged"
                 Margin="0,0,0,16"
                 automation:AutomationProperties.Name="形状を確認する撮影" />
-            <TextBlock Text="形の比率をスライダーで調整（mm）" Style="{StaticResource SectionTitleStyle}" />
-            <Grid Margin="0,0,0,8">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="72" />
-              </Grid.ColumnDefinitions>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <TextBlock Grid.Row="0" Text="X" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
-              <Slider
-                  x:Name="RescueSpacingXSlider"
-                  Grid.Row="0"
-                  Grid.Column="1"
-                  Minimum="0.05"
-                  Maximum="10"
-                  Value="1"
-                  SmallChange="0.05"
-                  LargeChange="0.25"
-                  ValueChanged="RescueSpacingSlider_ValueChanged"
-                  automation:AutomationProperties.Name="X方向の寸法スライダー" />
-              <TextBlock
-                  x:Name="RescueSpacingXValueText"
-                  Grid.Row="0"
-                  Grid.Column="2"
-                  Text="1.0000"
-                  HorizontalAlignment="Right"
-                  VerticalAlignment="Center"
-                  FontFamily="Cascadia Mono, Consolas" />
-              <TextBlock Grid.Row="1" Text="Y" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
-              <Slider
-                  x:Name="RescueSpacingYSlider"
-                  Grid.Row="1"
-                  Grid.Column="1"
-                  Minimum="0.05"
-                  Maximum="10"
-                  Value="1"
-                  SmallChange="0.05"
-                  LargeChange="0.25"
-                  ValueChanged="RescueSpacingSlider_ValueChanged"
-                  automation:AutomationProperties.Name="Y方向の寸法スライダー" />
-              <TextBlock
-                  x:Name="RescueSpacingYValueText"
-                  Grid.Row="1"
-                  Grid.Column="2"
-                  Text="1.0000"
-                  HorizontalAlignment="Right"
-                  VerticalAlignment="Center"
-                  FontFamily="Cascadia Mono, Consolas" />
-              <TextBlock Grid.Row="2" Text="Z" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
-              <Slider
-                  x:Name="RescueSpacingZSlider"
-                  Grid.Row="2"
-                  Grid.Column="1"
-                  Minimum="0.05"
-                  Maximum="10"
-                  Value="1"
-                  SmallChange="0.05"
-                  LargeChange="0.25"
-                  ValueChanged="RescueSpacingSlider_ValueChanged"
-                  automation:AutomationProperties.Name="Z方向の寸法スライダー" />
-              <TextBlock
-                  x:Name="RescueSpacingZValueText"
-                  Grid.Row="2"
-                  Grid.Column="2"
-                  Text="1.0000"
-                  HorizontalAlignment="Right"
-                  VerticalAlignment="Center"
-                  FontFamily="Cascadia Mono, Consolas" />
-            </Grid>
-            <TextBlock
-                x:Name="RescueValidationText"
-                Text="3方向を見比べながら、形が自然に見える位置へ動かしてください。"
-                Style="{StaticResource MutedTextStyle}"
-                Margin="0,0,0,16"
-                TextWrapping="Wrap" />
             <Grid Margin="0,0,0,18">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -701,25 +622,184 @@
                 <ColumnDefinition Width="12" />
                 <ColumnDefinition Width="*" />
               </Grid.ColumnDefinitions>
-              <StackPanel Grid.Column="0">
-                <TextBlock Text="AXIAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
-                <Border Height="140" Background="Black" CornerRadius="6">
-                  <Image x:Name="RescueAxialImage" Stretch="Uniform" />
-                </Border>
-              </StackPanel>
-              <StackPanel Grid.Column="2">
-                <TextBlock Text="CORONAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
-                <Border Height="140" Background="Black" CornerRadius="6">
-                  <Image x:Name="RescueCoronalImage" Stretch="Uniform" />
-                </Border>
-              </StackPanel>
-              <StackPanel Grid.Column="4">
-                <TextBlock Text="SAGITTAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
-                <Border Height="140" Background="Black" CornerRadius="6">
-                  <Image x:Name="RescueSagittalImage" Stretch="Uniform" />
-                </Border>
-              </StackPanel>
+              <Border Grid.Column="0" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <TextBlock Text="AXIAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                  <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="34" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Height="170" Background="Black" ClipToBounds="True">
+                      <Image x:Name="RescueAxialImage" Stretch="Uniform" />
+                      <Border Width="1" Background="White" Opacity="0.28" HorizontalAlignment="Center" />
+                      <Border Height="1" Background="White" Opacity="0.28" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                      <TextBlock Text="↑" Foreground="#18A957" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <Slider
+                          x:Name="RescueSpacingYSlider"
+                          Orientation="Vertical"
+                          Height="132"
+                          Minimum="-2"
+                          Maximum="2"
+                          Value="0"
+                          SmallChange="0.05"
+                          LargeChange="0.25"
+                          ValueChanged="RescueSpacingSlider_ValueChanged"
+                          automation:AutomationProperties.Name="AXIAL画像のY方向を縦に伸縮"
+                          automation:AutomationProperties.HelpText="緑色。同じ色のSAGITTAL横ハンドルと連動します。" />
+                      <TextBlock Text="↓" Foreground="#18A957" FontWeight="Bold" HorizontalAlignment="Center" />
+                    </StackPanel>
+                  </Grid>
+                  <Grid Grid.Row="2" Grid.Column="0" Margin="0,8,34,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="←" Foreground="#1684E8" FontWeight="Bold" VerticalAlignment="Center" />
+                    <Slider
+                        x:Name="RescueSpacingXSlider"
+                        Grid.Column="1"
+                        Minimum="-2"
+                        Maximum="2"
+                        Value="0"
+                        SmallChange="0.05"
+                        LargeChange="0.25"
+                        ValueChanged="RescueSpacingSlider_ValueChanged"
+                        automation:AutomationProperties.Name="AXIAL画像のX方向を横に伸縮"
+                        automation:AutomationProperties.HelpText="青色。同じ色のCORONAL横ハンドルと連動します。" />
+                    <TextBlock Grid.Column="2" Text="→" Foreground="#1684E8" FontWeight="Bold" VerticalAlignment="Center" />
+                  </Grid>
+                </Grid>
+              </Border>
+              <Border Grid.Column="2" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <TextBlock Text="CORONAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                  <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="34" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Height="170" Background="Black" ClipToBounds="True">
+                      <Image x:Name="RescueCoronalImage" Stretch="Uniform" />
+                      <Border Width="1" Background="White" Opacity="0.28" HorizontalAlignment="Center" />
+                      <Border Height="1" Background="White" Opacity="0.28" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                      <TextBlock Text="↑" Foreground="#FF7A1A" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <Slider
+                          x:Name="RescueSpacingZSlider"
+                          Orientation="Vertical"
+                          Height="132"
+                          Minimum="-2"
+                          Maximum="2"
+                          Value="0"
+                          SmallChange="0.05"
+                          LargeChange="0.25"
+                          ValueChanged="RescueSpacingSlider_ValueChanged"
+                          automation:AutomationProperties.Name="CORONAL画像のZ方向を縦に伸縮"
+                          automation:AutomationProperties.HelpText="橙色。同じ色のSAGITTAL縦ハンドルと連動します。" />
+                      <TextBlock Text="↓" Foreground="#FF7A1A" FontWeight="Bold" HorizontalAlignment="Center" />
+                    </StackPanel>
+                  </Grid>
+                  <Grid Grid.Row="2" Grid.Column="0" Margin="0,8,34,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="←" Foreground="#1684E8" FontWeight="Bold" VerticalAlignment="Center" />
+                    <Slider
+                        x:Name="RescueSpacingXCoronalSlider"
+                        Grid.Column="1"
+                        Minimum="-2"
+                        Maximum="2"
+                        Value="0"
+                        SmallChange="0.05"
+                        LargeChange="0.25"
+                        ValueChanged="RescueSpacingSlider_ValueChanged"
+                        automation:AutomationProperties.Name="CORONAL画像のX方向を横に伸縮"
+                        automation:AutomationProperties.HelpText="青色。同じ色のAXIAL横ハンドルと連動します。" />
+                    <TextBlock Grid.Column="2" Text="→" Foreground="#1684E8" FontWeight="Bold" VerticalAlignment="Center" />
+                  </Grid>
+                </Grid>
+              </Border>
+              <Border Grid.Column="4" Padding="10" BorderBrush="#24000000" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <TextBlock Text="SAGITTAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                  <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="34" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Height="170" Background="Black" ClipToBounds="True">
+                      <Image x:Name="RescueSagittalImage" Stretch="Uniform" />
+                      <Border Width="1" Background="White" Opacity="0.28" HorizontalAlignment="Center" />
+                      <Border Height="1" Background="White" Opacity="0.28" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                      <TextBlock Text="↑" Foreground="#FF7A1A" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <Slider
+                          x:Name="RescueSpacingZSagittalSlider"
+                          Orientation="Vertical"
+                          Height="132"
+                          Minimum="-2"
+                          Maximum="2"
+                          Value="0"
+                          SmallChange="0.05"
+                          LargeChange="0.25"
+                          ValueChanged="RescueSpacingSlider_ValueChanged"
+                          automation:AutomationProperties.Name="SAGITTAL画像のZ方向を縦に伸縮"
+                          automation:AutomationProperties.HelpText="橙色。同じ色のCORONAL縦ハンドルと連動します。" />
+                      <TextBlock Text="↓" Foreground="#FF7A1A" FontWeight="Bold" HorizontalAlignment="Center" />
+                    </StackPanel>
+                  </Grid>
+                  <Grid Grid.Row="2" Grid.Column="0" Margin="0,8,34,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="←" Foreground="#18A957" FontWeight="Bold" VerticalAlignment="Center" />
+                    <Slider
+                        x:Name="RescueSpacingYSagittalSlider"
+                        Grid.Column="1"
+                        Minimum="-2"
+                        Maximum="2"
+                        Value="0"
+                        SmallChange="0.05"
+                        LargeChange="0.25"
+                        ValueChanged="RescueSpacingSlider_ValueChanged"
+                        automation:AutomationProperties.Name="SAGITTAL画像のY方向を横に伸縮"
+                        automation:AutomationProperties.HelpText="緑色。同じ色のAXIAL縦ハンドルと連動します。" />
+                    <TextBlock Grid.Column="2" Text="→" Foreground="#18A957" FontWeight="Bold" VerticalAlignment="Center" />
+                  </Grid>
+                </Grid>
+              </Border>
             </Grid>
+            <TextBlock
+                x:Name="RescueValidationText"
+                Text="3枚を見比べながら形を確認してください。候補値は正確な寸法が確認できたことを意味しません。"
+                Style="{StaticResource MutedTextStyle}"
+                Margin="0,0,0,16"
+                TextWrapping="Wrap" />
             <TextBlock
                 x:Name="RescuePreviewStatusText"
                 Text="確認画像はまだ作成されていません。AI推論は開始しません。"
@@ -748,10 +828,10 @@
               <Button
                   x:Name="CreateRescuePreviewButton"
                   Grid.Column="3"
-                  Content="この寸法で確認画像を作る"
+                  Content="この形状で確認画像を作る"
                   Style="{StaticResource PrimaryButtonStyle}"
                   Click="CreateRescuePreviewButton_Click"
-                  automation:AutomationProperties.Name="この寸法で確認画像を作る"
+                  automation:AutomationProperties.Name="この形状で確認画像を作る"
                   automation:AutomationProperties.HelpText="Secondary Captureの確認用pseudo-volumeと三方向画像を作ります。AI推論は開始しません。" />
             </Grid>
           </StackPanel>

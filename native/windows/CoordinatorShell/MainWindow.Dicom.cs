@@ -17,6 +17,7 @@ public partial class MainWindow
     private DicomUiFailure? _lastDicomFailure;
     private bool _dicomOperationActive;
     private bool _dicomStopRequested;
+    private bool _synchronizingRescueSpacingControls;
 
     private void BeginOwnDataSelection(bool clearExistingInput)
     {
@@ -270,24 +271,48 @@ public partial class MainWindow
 
     private void SetRescueSpacingControls(DicomSpacing spacing)
     {
-        RescueSpacingXSlider.Maximum =
-            Math.Max(10, spacing.X);
-        RescueSpacingYSlider.Maximum =
-            Math.Max(10, spacing.Y);
-        RescueSpacingZSlider.Maximum =
-            Math.Max(10, spacing.Z);
-        RescueSpacingXSlider.Value = spacing.X;
-        RescueSpacingYSlider.Value = spacing.Y;
-        RescueSpacingZSlider.Value = spacing.Z;
-        UpdateRescueSpacingValueText();
+        var estimate = _initialDicomRescueSpacing ?? spacing;
+        _synchronizingRescueSpacingControls = true;
+        try
+        {
+            SetRescueAxisSliderValues(
+                RescueSpacingXSlider,
+                RescueSpacingXCoronalSlider,
+                ToRescueSliderPosition(spacing.X, estimate.X));
+            SetRescueAxisSliderValues(
+                RescueSpacingYSlider,
+                RescueSpacingYSagittalSlider,
+                ToRescueSliderPosition(spacing.Y, estimate.Y));
+            SetRescueAxisSliderValues(
+                RescueSpacingZSlider,
+                RescueSpacingZSagittalSlider,
+                ToRescueSliderPosition(spacing.Z, estimate.Z));
+        }
+        finally
+        {
+            _synchronizingRescueSpacingControls = false;
+        }
+        UpdateRescueSpacingAccessibility();
     }
 
     private bool TryReadRescueSpacing(out DicomSpacing spacing)
     {
+        var estimate = _initialDicomRescueSpacing;
+        if (estimate is null)
+        {
+            spacing = new DicomSpacing(0, 0, 0);
+            return false;
+        }
         spacing = new DicomSpacing(
-            RescueSpacingXSlider.Value,
-            RescueSpacingYSlider.Value,
-            RescueSpacingZSlider.Value);
+            RescueSpacingFromSlider(
+                RescueSpacingXSlider.Value,
+                estimate.X),
+            RescueSpacingFromSlider(
+                RescueSpacingYSlider.Value,
+                estimate.Y),
+            RescueSpacingFromSlider(
+                RescueSpacingZSlider.Value,
+                estimate.Z));
         return spacing.IsValid;
     }
 
@@ -295,29 +320,137 @@ public partial class MainWindow
         object sender,
         RoutedPropertyChangedEventArgs<double> e)
     {
-        if (RescueSpacingXValueText is null
-            || RescueSpacingYValueText is null
-            || RescueSpacingZValueText is null)
+        if (_synchronizingRescueSpacingControls
+            || RescueSpacingXSlider is null
+            || RescueSpacingXCoronalSlider is null
+            || RescueSpacingYSlider is null
+            || RescueSpacingYSagittalSlider is null
+            || RescueSpacingZSlider is null
+            || RescueSpacingZSagittalSlider is null)
         {
             return;
         }
-        UpdateRescueSpacingValueText();
+        _synchronizingRescueSpacingControls = true;
+        try
+        {
+            if (ReferenceEquals(sender, RescueSpacingXSlider))
+            {
+                RescueSpacingXCoronalSlider.Value = e.NewValue;
+            }
+            else if (ReferenceEquals(
+                sender,
+                RescueSpacingXCoronalSlider))
+            {
+                RescueSpacingXSlider.Value = e.NewValue;
+            }
+            else if (ReferenceEquals(sender, RescueSpacingYSlider))
+            {
+                RescueSpacingYSagittalSlider.Value = e.NewValue;
+            }
+            else if (ReferenceEquals(
+                sender,
+                RescueSpacingYSagittalSlider))
+            {
+                RescueSpacingYSlider.Value = e.NewValue;
+            }
+            else if (ReferenceEquals(sender, RescueSpacingZSlider))
+            {
+                RescueSpacingZSagittalSlider.Value = e.NewValue;
+            }
+            else if (ReferenceEquals(
+                sender,
+                RescueSpacingZSagittalSlider))
+            {
+                RescueSpacingZSlider.Value = e.NewValue;
+            }
+        }
+        finally
+        {
+            _synchronizingRescueSpacingControls = false;
+        }
+        UpdateRescueSpacingAccessibility();
         if (_lastDicomRescue is not null)
         {
             ClearRescuePreview();
             RescueValidationText.Text =
-                "寸法を変更しました。もう一度、確認画像を作ってください。";
+                "形状を変更しました。もう一度、確認画像を作ってください。";
         }
     }
 
-    private void UpdateRescueSpacingValueText()
+    private static void SetRescueAxisSliderValues(
+        System.Windows.Controls.Slider first,
+        System.Windows.Controls.Slider second,
+        double value)
     {
-        RescueSpacingXValueText.Text =
-            $"{RescueSpacingXSlider.Value:0.0000} mm";
-        RescueSpacingYValueText.Text =
-            $"{RescueSpacingYSlider.Value:0.0000} mm";
-        RescueSpacingZValueText.Text =
-            $"{RescueSpacingZSlider.Value:0.0000} mm";
+        first.Value = value;
+        second.Value = value;
+    }
+
+    private static double ToRescueSliderPosition(
+        double spacing,
+        double estimate)
+    {
+        return Math.Clamp(
+            Math.Log2(
+                Math.Max(spacing, 0.01)
+                / Math.Max(estimate, 0.01)),
+            -2,
+            2);
+    }
+
+    private static double RescueSpacingFromSlider(
+        double position,
+        double estimate)
+    {
+        return Math.Clamp(
+            Math.Max(estimate, 0.01) * Math.Pow(2, position),
+            0.01,
+            20);
+    }
+
+    private void UpdateRescueSpacingAccessibility()
+    {
+        SetRescueSliderAccessibility(
+            RescueSpacingXSlider,
+            RescueSpacingXCoronalSlider,
+            RescueSpacingXSlider.Value);
+        SetRescueSliderAccessibility(
+            RescueSpacingYSlider,
+            RescueSpacingYSagittalSlider,
+            RescueSpacingYSlider.Value);
+        SetRescueSliderAccessibility(
+            RescueSpacingZSlider,
+            RescueSpacingZSagittalSlider,
+            RescueSpacingZSlider.Value);
+    }
+
+    private static void SetRescueSliderAccessibility(
+        System.Windows.Controls.Slider first,
+        System.Windows.Controls.Slider second,
+        double position)
+    {
+        var percentage =
+            $"{Math.Round(Math.Pow(2, position) * 100):0}パーセント";
+        AutomationProperties.SetItemStatus(first, percentage);
+        AutomationProperties.SetItemStatus(second, percentage);
+    }
+
+    internal bool RescueSliderContractSelfTest()
+    {
+        _initialDicomRescueSpacing = new DicomSpacing(1, 2, 4);
+        SetRescueSpacingControls(_initialDicomRescueSpacing);
+
+        RescueSpacingXSlider.Value = 0.5;
+        RescueSpacingYSagittalSlider.Value = -0.5;
+        RescueSpacingZSlider.Value = 1;
+
+        return RescueSpacingXCoronalSlider.Value == 0.5
+            && RescueSpacingYSlider.Value == -0.5
+            && RescueSpacingZSagittalSlider.Value == 1
+            && TryReadRescueSpacing(out var spacing)
+            && Math.Abs(spacing.X - Math.Sqrt(2)) < 0.000_001
+            && Math.Abs(spacing.Y - Math.Sqrt(2)) < 0.000_001
+            && Math.Abs(spacing.Z - 8) < 0.000_001;
     }
 
     private void ShowRescuePreviews(
@@ -351,7 +484,7 @@ public partial class MainWindow
         RescueCoronalImage.Source = null;
         RescueSagittalImage.Source = null;
         RescueValidationText.Text =
-            "3方向を見比べながら、形が自然に見える位置へ動かしてください。";
+            "3枚を見比べながら形を確認してください。候補値は正確な寸法が確認できたことを意味しません。";
         RescuePreviewStatusText.Text =
             "確認画像はまだ作成されていません。AI推論は開始しません。";
     }

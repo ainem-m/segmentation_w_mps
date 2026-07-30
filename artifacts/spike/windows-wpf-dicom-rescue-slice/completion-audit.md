@@ -6,7 +6,7 @@ Date: 2026-07-31
 | --- | --- | --- |
 | clean CT候補をrescueより優先する | PASS | `AuditAndConvertDicomAsync` |
 | Secondary Capture候補をtyped modelで分離する | PASS | `DicomRescueCandidate` |
-| 数値入力ではなくX/Y/Z sliderで確認する | PASS | WPF screenshot、UI contract |
+| 画像端の6 sliderを青=X、緑=Y、橙=Zで連動する | PASS | WPF screenshot、UI contract self-test |
 | reset後に初期候補へ戻る | PASS | `ResetRescueSpacingButton_Click` |
 | slider変更後に古いpreviewを使わない | PASS | preview clear + regenerate案内 |
 | explicit spacingを`prepare-rescue`へ渡す | PASS | WPF evidence |

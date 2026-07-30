@@ -167,6 +167,9 @@ class WindowsWpfContractTests(unittest.TestCase):
     def test_manual_flow_and_local_preview_remain_explicit(self) -> None:
         xaml = (SHELL / "MainWindow.xaml").read_text(encoding="utf-8")
         code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+        dicom_code = (SHELL / "MainWindow.Dicom.cs").read_text(
+            encoding="utf-8"
+        )
 
         automation_names = (
             "準備を始める",
@@ -181,7 +184,7 @@ class WindowsWpfContractTests(unittest.TestCase):
             "形状候補の理由を見る",
             "形状確認から別のCTを選ぶ",
             "推定形状に戻す",
-            "この寸法で確認画像を作る",
+            "この形状で確認画像を作る",
             "標準モデルを選ぶ",
             "その他のモデルを比較",
             "作成方法の比較を閉じる",
@@ -213,10 +216,11 @@ class WindowsWpfContractTests(unittest.TestCase):
             "高精細歯（ToothSeg）",
             "上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。",
             "形状を確認",
-            "形の比率をスライダーで調整（mm）",
+            "三方向の形が自然に見えるよう、画像の端を動かしてください。",
+            "同じ色のハンドルは連動します。",
             "理由を見る",
             "推定形状に戻す",
-            "この寸法で確認画像を作る",
+            "この形状で確認画像を作る",
             "AI推論は開始しません。",
         )
         for label in (*automation_names, *visible_copy):
@@ -239,11 +243,28 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertNotIn("RescueSpacingXTextBox", xaml)
         for slider in (
             "RescueSpacingXSlider",
+            "RescueSpacingXCoronalSlider",
             "RescueSpacingYSlider",
+            "RescueSpacingYSagittalSlider",
             "RescueSpacingZSlider",
+            "RescueSpacingZSagittalSlider",
         ):
             with self.subTest(slider=slider):
                 self.assertIn(slider, xaml)
+        self.assertIn("ToRescueSliderPosition", dicom_code)
+        self.assertIn("RescueSpacingFromSlider", dicom_code)
+        self.assertIn(
+            "RescueSpacingXCoronalSlider.Value = e.NewValue",
+            dicom_code,
+        )
+        self.assertIn(
+            "RescueSpacingYSagittalSlider.Value = e.NewValue",
+            dicom_code,
+        )
+        self.assertIn(
+            "RescueSpacingZSagittalSlider.Value = e.NewValue",
+            dicom_code,
+        )
         for dynamic_label in (
             "別のCTを選ぶ",
             "このCTで3Dプレビューを作る",

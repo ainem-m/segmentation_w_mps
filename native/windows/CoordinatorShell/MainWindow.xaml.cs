@@ -82,7 +82,7 @@ public partial class MainWindow : Window
                 "形状確認から別のCTを選ぶ",
             [ResetRescueSpacingButton] = "推定形状に戻す",
             [CreateRescuePreviewButton] =
-                "この寸法で確認画像を作る",
+                "この形状で確認画像を作る",
             [StandardModelCardButton] = "標準モデルを選ぶ",
             [OtherModelsCardButton] = "その他のモデルを比較",
             [CloseModelComparisonButton] =
@@ -210,6 +210,8 @@ public partial class MainWindow : Window
                     StringComparison.Ordinal);
         SetSelectedSegmentationProfile(
             SegmentationProfile.TotalSegmentator);
+        var rescueSlidersLinked =
+            RescueSliderContractSelfTest();
         var dynamicLabelsPassed =
             ownInputLabelPassed
             && detailsExpandedLabelPassed
@@ -228,11 +230,13 @@ public partial class MainWindow : Window
             namesPassed
                 && keyboardPassed
                 && dynamicLabelsPassed
+                && rescueSlidersLinked
                 && systemColorsPassed,
             namesPassed,
             keyboardPassed,
             systemColorsPassed,
             dynamicLabelsPassed,
+            rescueSlidersLinked,
             expectedNames.Count);
     }
 
@@ -1012,7 +1016,7 @@ public partial class MainWindow : Window
                     ChooseNiftiButton.Focus(),
             ShellScreen.Input => RunButton.Focus(),
             ShellScreen.DicomRescue =>
-                RescueSpacingXSlider.Focus(),
+                ShowRescueReasonButton.Focus(),
             ShellScreen.Running => StopButton.Focus(),
             ShellScreen.Result when
                 OpenPreviewButton.Visibility == Visibility.Visible =>
@@ -1191,4 +1195,5 @@ internal sealed record UiContractResult(
     bool KeyboardFocusable,
     bool DynamicSystemColors,
     bool DynamicLabels,
+    bool RescueSlidersLinked,
     int ButtonCount);

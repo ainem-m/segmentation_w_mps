@@ -43,6 +43,8 @@ public partial class App : Application
                     keyboard_focusable = ui.KeyboardFocusable,
                     dynamic_system_colors = ui.DynamicSystemColors,
                     dynamic_labels = ui.DynamicLabels,
+                    rescue_sliders_linked =
+                        ui.RescueSlidersLinked,
                     button_count = ui.ButtonCount,
                     per_monitor_v2_manifest = true,
                     long_path_aware_manifest = true,
