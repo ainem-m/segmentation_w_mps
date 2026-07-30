@@ -1,0 +1,4 @@
+No raw third-party output is retained in repository evidence.
+Successful coordinator stderr contained only wrapper RUN_STAGE/RUN_PROGRESS records.
+Host stderr was empty.
+No absolute path, stdout/stderr tail, patient data, username, or secret is included.

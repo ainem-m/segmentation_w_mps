@@ -525,8 +525,15 @@
                     <StackPanel>
                       <TextBlock Text="高精細歯（ToothSeg）" FontSize="17" FontWeight="SemiBold" />
                       <Image Source="/model_comparison/toothseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="高精細歯ToothSegによる3D分割結果" />
-                      <TextBlock Text="通常のTotalSegmentator完了後に追加する高精細推論です。" TextWrapping="Wrap" />
-                      <TextBlock Text="このWindows工程ではUNVERIFIEDです。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <TextBlock Text="歯を1本ずつ分け、FDI歯式番号を付ける高精細推論です。" TextWrapping="Wrap" />
+                      <TextBlock Text="実験的な追加機能です。通常より長い処理時間とVRAMを必要とします。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <Button
+                          x:Name="SelectToothSegButton"
+                          Content="この方法を選ぶ"
+                          Click="SelectToothSegButton_Click"
+                          Margin="0,10,0,0"
+                          TabIndex="13"
+                          automation:AutomationProperties.Name="高精細歯ToothSegを選ぶ" />
                     </StackPanel>
                   </Border>
                 </Grid>

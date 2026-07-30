@@ -1,0 +1,11 @@
+OS=Microsoft Windows 10 IoT Enterprise 10.0.19045 x64
+PowerShell=5.1.19041.6456
+.NET SDK=10.0.302
+Python=3.12.10 x64
+PyTorch=2.11.0+cu126
+CUDA runtime=12.6
+NVIDIA GPU=NVIDIA GeForce RTX 2060
+NVIDIA driver=572.83
+GPU memory=6442123264 bytes
+compute capability=7.5
+CMake=not present on PATH; not required by this slice

@@ -80,14 +80,30 @@ RUN_STAGE_LAYOUTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("restore", "FDI番号付与・元画像へ復元中"),
         ("preview", "3D表示・結果情報を作成中"),
     ),
+    "toothseg_standalone": (
+        ("roi", "5mm ROI・入力を準備中"),
+        ("semantic", "ToothSeg semantic枝"),
+        ("instance", "ToothSeg instance枝"),
+        ("restore", "FDI番号付与・元画像へ復元中"),
+        ("preview", "3D表示・結果情報を作成中"),
+    ),
 }
 
 
-def _progress_route(*, backend: str, task: str) -> str:
+def _progress_route(
+    *,
+    backend: str,
+    task: str,
+    toothseg_refine: bool = False,
+) -> str:
     if backend == "dentalsegmentator":
         return "dentalsegmentator"
     if backend == "toothseg":
-        return "toothseg_refine"
+        return (
+            "toothseg_refine"
+            if toothseg_refine
+            else "toothseg_standalone"
+        )
     if task == "teeth":
         return "individual_teeth_beta"
     return "totalsegmentator"
@@ -553,7 +569,11 @@ def run_totalsegmentator(
     copied_source = copy_source_if_requested(input_path, case, copy_input)
     source_for_summary = copied_source or input_path
 
-    route = _progress_route(backend=backend, task=task)
+    route = _progress_route(
+        backend=backend,
+        task=task,
+        toothseg_refine=toothseg_refine,
+    )
     if emit_run_stages:
         _emit_run_stage(
             route,
@@ -631,6 +651,9 @@ def run_totalsegmentator(
             require_mps=require_mps,
             execution_profile=execution_profile,
             emit_run_stages=emit_run_stages,
+            progress_route=route,
+            event_sink=event_sink,
+            should_cancel=should_cancel,
         )
 
     if task == "teeth" and not experimental_teeth:
@@ -1109,6 +1132,9 @@ def _run_toothseg(
     require_mps: bool,
     execution_profile: str | None,
     emit_run_stages: bool,
+    progress_route: str,
+    event_sink: RunEventSink | None,
+    should_cancel: ShouldCancel | None,
 ) -> TotalSegRunResult:
     from totalsegmentator_wrapper_mac.toothseg_postprocess import (
         assign_mincost_tooth_labels,
@@ -1148,8 +1174,11 @@ def _run_toothseg(
     try:
         if task != "teeth":
             raise ValueError("ToothSeg backend supports task=teeth only")
-        if device_check.actual_device != "mps":
-            raise RuntimeError("ToothSeg is enabled only for the validated MPS app path")
+        actual_device = str(device_check.actual_device)
+        if actual_device != "mps" and re.fullmatch(r"cuda:\d+", actual_device) is None:
+            raise RuntimeError(
+                "ToothSeg requires a validated MPS or CUDA device"
+            )
         if toothseg_nnunet_results is None:
             raise RuntimeError("ToothSeg requires --toothseg-nnunet-results")
         toothseg_nnunet_results = toothseg_nnunet_results.expanduser().resolve()
@@ -1166,7 +1195,7 @@ def _run_toothseg(
                 input_path=input_path,
                 output_root=craniofacial_case,
                 task="craniofacial_structures",
-                requested_device="mps",
+                requested_device=requested_device,
                 totalseg_bin=totalseg_bin,
                 totalseg_home=totalseg_home,
                 totalseg_weights=totalseg_weights,
@@ -1176,6 +1205,9 @@ def _run_toothseg(
                 execution_profile=execution_profile,
                 require_mps=require_mps,
                 emit_run_stages=False,
+                event_sink=event_sink,
+                prevalidated_device_check=device_check,
+                should_cancel=should_cancel,
             )
             if preflight.status != "success":
                 preflight_info["status"] = "failed"
@@ -1227,6 +1259,7 @@ def _run_toothseg(
             trainer="nnUNetTrainer_onlyMirror01_DASegOrd0",
             configuration="3d_fullres_resample_torch_256_bs8_ctnorm",
             save_probabilities=True,
+            device=actual_device,
         )
         instance_command = _toothseg_predict_command(
             executable=toothseg_bin,
@@ -1236,6 +1269,7 @@ def _run_toothseg(
             trainer="nnUNetTrainer",
             configuration="3d_fullres_resample_torch_192_bs8_ctnorm",
             save_probabilities=False,
+            device=actual_device,
         )
         extra["toothseg"]["semantic_command"] = _sanitize_toothseg_command(semantic_command, case=case)
         extra["toothseg"]["instance_command"] = _sanitize_toothseg_command(instance_command, case=case)
@@ -1243,7 +1277,13 @@ def _run_toothseg(
             (("semantic", semantic_command), ("instance", instance_command))
         ):
             if emit_run_stages:
-                _emit_run_stage("toothseg_refine", index + 2, log_path=case.run_log_path)
+                _emit_run_stage(
+                    progress_route,
+                    index + 2,
+                    log_path=case.run_log_path,
+                    event_sink=event_sink,
+                )
+            _raise_if_cancelled(should_cancel)
             returncode, elapsed, stdout, stderr = _run_command_streamed(
                 command=command,
                 env=env,
@@ -1252,10 +1292,13 @@ def _run_toothseg(
                 timeout_sec=toothseg_timeout_sec,
                 append=True,
                 progress_stage=f"ToothSeg {name}",
-                progress_route="toothseg_refine",
+                progress_route=progress_route,
                 progress_stage_id=name,
                 progress_scope="stage",
+                event_sink=event_sink,
+                should_cancel=should_cancel,
             )
+            _raise_if_cancelled(should_cancel)
             stdout_parts.append(stdout)
             stderr_parts.append(stderr)
             extra["toothseg"][f"{name}_elapsed_seconds"] = elapsed
@@ -1265,7 +1308,13 @@ def _run_toothseg(
                 )
 
         if emit_run_stages:
-            _emit_run_stage("toothseg_refine", 4, log_path=case.run_log_path)
+            _emit_run_stage(
+                progress_route,
+                4,
+                log_path=case.run_log_path,
+                event_sink=event_sink,
+            )
+        _raise_if_cancelled(should_cancel)
         border_core = case.toothseg_instance_predictions_dir / "case.nii.gz"
         semantic_probabilities = case.toothseg_semantic_predictions_dir / "case.npz"
         if not border_core.is_file() or not semantic_probabilities.is_file():
@@ -1375,6 +1424,11 @@ def _run_toothseg(
 
 def _toothseg_failure_safe_fields(error_text: str) -> tuple[str, str]:
     lower = error_text.lower()
+    if "cuda out of memory" in lower or "cuda error: out of memory" in lower:
+        return (
+            "toothseg_cuda_oom",
+            "ToothSeg exceeded available CUDA memory after dental ROI preparation.",
+        )
     if "mps backend out of memory" in lower:
         return (
             "toothseg_mps_oom",
@@ -1406,6 +1460,7 @@ def _toothseg_predict_command(
     trainer: str,
     configuration: str,
     save_probabilities: bool,
+    device: str = "mps",
 ) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     command = [
@@ -1416,7 +1471,7 @@ def _toothseg_predict_command(
         "-tr", trainer,
         "-c", configuration,
         "-f", "5",
-        "-device", "mps",
+        "-device", "cuda" if device.startswith("cuda:") else device,
         "-npp", "1",
         "-nps", "1",
         "--disable_tta",

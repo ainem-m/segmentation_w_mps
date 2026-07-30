@@ -6,9 +6,10 @@ This document describes the platform-neutral coordinator boundary implemented
 on the Windows spike branch. Runtime, strict CUDA, normal completion, and
 cancellation have engineering evidence on the Windows 10 spike host. The WPF
 shell and its clean-DICOM-to-NIfTI intake integration also have Windows 10
-engineering evidence. The fixed DentalSegmentator and Individual Teeth
-operations have Windows 10 strict-CUDA completion and hidden-GPU failure
-evidence. Windows 11, external UI accessibility interaction,
+engineering evidence. The fixed DentalSegmentator, Individual Teeth, and
+ToothSeg operations have Windows 10 strict-CUDA completion evidence; their
+strict device policies also have hidden-GPU failure evidence. Windows 11,
+external UI accessibility interaction,
 clean-machine/model distribution, DICOM rescue, and the installer remain
 unverified.
 
@@ -155,6 +156,32 @@ app-private TotalSegmentator home containing `Dataset113_ToothFairy3`;
 requests cannot select the task, checkpoint, crop margin, split policy, or CPU
 fallback. A missing checkpoint emits `individual_teeth_prepare_required`; a
 hidden or invalid CUDA device fails before inference.
+
+### NIfTI ToothSeg run
+
+The fixed ToothSeg operation uses the same request envelope with:
+
+```json
+{
+  "operation": "run_nifti_toothseg",
+  "device_policy": {
+    "mode": "cuda_required",
+    "device_index": 0
+  },
+  "options": {
+    "robust_crop": false,
+    "higher_order_resampling": false
+  }
+}
+```
+
+The coordinator fixes the backend to ToothSeg, task to `teeth`, crop margin
+to 5 mm, robust craniofacial preflight on, semantic Dataset121 and instance
+Dataset123 to fold 5 with TTA disabled, and FDI output labeling. The host
+supplies the verified app-private model root. Requests cannot select a model,
+dataset, fold, ROI, resolution, device fallback, or CPU execution. A missing
+model emits `toothseg_prepare_required`; CUDA OOM emits
+`toothseg_cuda_oom` without changing the model or resolution.
 
 Protocol v1 remains NIfTI-only. The Windows WPF clean-DICOM path audits and
 converts a selected clean series in a pre-coordinator adapter, verifies exactly

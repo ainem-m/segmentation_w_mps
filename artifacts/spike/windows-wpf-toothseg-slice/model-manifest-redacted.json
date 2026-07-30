@@ -1,0 +1,22 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_toothseg_model_evidence.v1",
+  "status": "ready",
+  "source": "Zenodo",
+  "doi": "10.5281/zenodo.14893540",
+  "license": "CC-BY-4.0",
+  "archive_md5": "5d8dd061cce9529943567aeba3271143",
+  "archive_sha256": "803072574d12eb34c9989622a8a1508dc1998be95e9732f9718a4d0d032befd3",
+  "pair_distributions_sha256": "82ab04892277d36013be5ba9763ac334ea073fca7ebe8679086f1e33ed64ff29",
+  "dataset_ids": [
+    "121",
+    "123"
+  ],
+  "dataset_names": [
+    "Dataset121_ToothFairy2_Teeth",
+    "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px"
+  ],
+  "fold": "5",
+  "tta_disabled": true,
+  "checkpoints_modified": false,
+  "archive_retained": false
+}

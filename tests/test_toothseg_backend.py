@@ -6,12 +6,19 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import nibabel as nib
 import numpy as np
 
+from totalsegmentator_wrapper_mac.device import DeviceCheck
 from totalsegmentator_wrapper_mac.outputs import prepare_case_output
-from totalsegmentator_wrapper_mac.runner_totalseg import _toothseg_predict_command, run_totalsegmentator
+from totalsegmentator_wrapper_mac.runner_totalseg import (
+    _run_toothseg,
+    _toothseg_predict_command,
+    run_totalsegmentator,
+)
 from totalsegmentator_wrapper_mac.toothseg_postprocess import (
     assign_mincost_tooth_labels,
     border_core_to_instances,
@@ -19,6 +26,79 @@ from totalsegmentator_wrapper_mac.toothseg_postprocess import (
 
 
 class ToothSegBackendTests(unittest.TestCase):
+    def test_internal_preflight_reuses_validated_cuda_device(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.nii.gz"
+            nib.save(
+                nib.Nifti1Image(
+                    np.zeros((8, 8, 8), dtype=np.float32),
+                    np.eye(4),
+                ),
+                str(source),
+            )
+            results = root / "models" / "nnUNet_results"
+            results.mkdir(parents=True)
+            (results.parent / "fdi_pair_distrs.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            device_check = DeviceCheck(
+                status="pass",
+                requested_device="cuda:0",
+                actual_device="cuda:0",
+                fallback_reason=None,
+                python="test",
+                platform="test",
+                machine="AMD64",
+                torch_version="test",
+                mps_built=None,
+                mps_available=None,
+                convtranspose3d_fp32="pass",
+                elapsed_seconds=0.1,
+                error=None,
+            )
+
+            with mock.patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg.run_totalsegmentator",
+                return_value=SimpleNamespace(
+                    status="failed",
+                    stderr_tail="expected stop",
+                ),
+            ) as preflight:
+                result = _run_toothseg(
+                    case=prepare_case_output(root / "case"),
+                    input_path=source,
+                    source_for_summary=source,
+                    requested_device="cuda:0",
+                    device_check=device_check,
+                    task="teeth",
+                    toothseg_bin="nnUNetv2_predict",
+                    toothseg_nnunet_results=results,
+                    toothseg_timeout_sec=60,
+                    totalseg_bin="TotalSegmentator",
+                    totalseg_home=None,
+                    totalseg_weights=None,
+                    teeth_crop_margin_mm=5.0,
+                    teeth_craniofacial_case=None,
+                    teeth_robust_craniofacial_preflight=True,
+                    skip_device_check=False,
+                    require_mps=False,
+                    execution_profile=None,
+                    emit_run_stages=False,
+                    progress_route="toothseg_standalone",
+                    event_sink=None,
+                    should_cancel=None,
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIs(
+                preflight.call_args.kwargs["prevalidated_device_check"],
+                device_check,
+            )
+            self.assertIsNone(preflight.call_args.kwargs["event_sink"])
+            self.assertIsNone(preflight.call_args.kwargs["should_cancel"])
+
     def test_missing_primary_teeth_masks_are_classified_as_input_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -120,6 +200,32 @@ class ToothSegBackendTests(unittest.TestCase):
             self.assertEqual(command[command.index("-f") + 1], "5")
             self.assertIn("--disable_tta", command)
             self.assertIn("--save_probabilities", command)
+
+    def test_predict_command_maps_validated_cuda_device_to_nnunet_cuda(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case = prepare_case_output(Path(tmp) / "case")
+            command = _toothseg_predict_command(
+                executable="nnUNetv2_predict",
+                input_dir=case.toothseg_instance_input_dir,
+                output_dir=case.toothseg_instance_predictions_dir,
+                dataset_id="123",
+                trainer="nnUNetTrainer",
+                configuration=(
+                    "3d_fullres_resample_torch_192_bs8_ctnorm"
+                ),
+                save_probabilities=False,
+                device="cuda:0",
+            )
+
+            self.assertEqual(
+                command[command.index("-device") + 1],
+                "cuda",
+            )
+            self.assertEqual(command[command.index("-f") + 1], "5")
+            self.assertIn("--disable_tta", command)
+            self.assertNotIn("--save_probabilities", command)
 
     def test_mincost_assignment_writes_fdi_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

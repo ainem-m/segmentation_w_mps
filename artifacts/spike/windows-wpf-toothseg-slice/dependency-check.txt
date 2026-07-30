@@ -1,0 +1,17 @@
+dependency_resolution=reused existing app-private runtime and internal wheelhouse
+public_index_access=false
+dependency_upgrade=false
+source_build=false
+pip_check=PASS (No broken requirements found)
+production_import_matrix=PASS
+torch=2.11.0+cu126
+cuda=12.6
+nnunetv2=2.8.1
+acvl_utils=0.2.6
+scipy=1.18.0
+nibabel=5.4.2
+TotalSegmentator=2.14.0
+ToothSeg model download source=official Zenodo record 14893540
+ToothSeg archive MD5=5d8dd061cce9529943567aeba3271143
+ToothSeg archive SHA256=803072574d12eb34c9989622a8a1508dc1998be95e9732f9718a4d0d032befd3
+archive retained after verified installation=false

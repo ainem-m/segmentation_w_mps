@@ -1,0 +1,7 @@
+branch=agent/windows-wpf-toothseg-slice
+base_branch=origin/agent/windows-wpf-individual-teeth-slice
+base_commit=92cd66b0f43baa8248f530b99e79495302a879bd
+base_commit_verified=true
+initial_worktree_clean=true
+evidence_os=Windows 10 engineering host
+windows_11=UNVERIFIED

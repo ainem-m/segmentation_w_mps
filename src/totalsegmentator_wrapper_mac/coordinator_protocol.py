@@ -13,12 +13,14 @@ CAPABILITIES_OPERATION = "capabilities"
 RUN_NIFTI_TOTALSEG_OPERATION = "run_nifti_totalsegmentator"
 RUN_NIFTI_DENTALSEG_OPERATION = "run_nifti_dentalsegmentator"
 RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION = "run_nifti_individual_teeth"
+RUN_NIFTI_TOOTHSEG_OPERATION = "run_nifti_toothseg"
 CANCEL_CONTROL = "cancel"
 SUPPORTED_OPERATIONS = frozenset(
     {
         CAPABILITIES_OPERATION,
         RUN_NIFTI_DENTALSEG_OPERATION,
         RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+        RUN_NIFTI_TOOTHSEG_OPERATION,
         RUN_NIFTI_TOTALSEG_OPERATION,
     }
 )
@@ -234,6 +236,7 @@ def parse_coordinator_request(payload: Any) -> CoordinatorRequest:
     if operation in {
         RUN_NIFTI_DENTALSEG_OPERATION,
         RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+        RUN_NIFTI_TOOTHSEG_OPERATION,
     } and (
         robust_crop or higher_order_resampling
     ):

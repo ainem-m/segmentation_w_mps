@@ -86,6 +86,8 @@ public partial class MainWindow : Window
                 "DentalSegmentatorを選ぶ",
             [SelectIndividualTeethButton] =
                 "個別歯ベータを選ぶ",
+            [SelectToothSegButton] =
+                "高精細歯ToothSegを選ぶ",
             [RunButton] = "Sampleで3Dプレビューを作る",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
@@ -173,6 +175,22 @@ public partial class MainWindow : Window
                     "個別歯ベータ",
                     StringComparison.Ordinal);
         SetSelectedSegmentationProfile(
+            SegmentationProfile.ToothSeg);
+        var toothSegLabelPassed =
+            Equals(
+                OtherModelsCardName.Text,
+                "選択中：高精細歯（ToothSeg）")
+            && Equals(
+                SelectToothSegButton.Content,
+                "選択中")
+            && AutomationProperties.GetName(
+                    SelectToothSegButton)
+                == "高精細歯ToothSegを選択中"
+            && AutomationProperties.GetHelpText(RunButton)
+                .Contains(
+                    "ToothSeg",
+                    StringComparison.Ordinal);
+        SetSelectedSegmentationProfile(
             SegmentationProfile.TotalSegmentator);
         var dynamicLabelsPassed =
             ownInputLabelPassed
@@ -182,7 +200,8 @@ public partial class MainWindow : Window
             && noInputLabelPassed
             && dicomRecoveryLabelPassed
             && dentalModelLabelPassed
-            && individualTeethLabelPassed;
+            && individualTeethLabelPassed
+            && toothSegLabelPassed;
         var systemColorsPassed =
             Equals(PrepareButton.Background, SystemColors.HighlightBrush)
             && Equals(Background, SystemColors.WindowBrush);
@@ -1037,6 +1056,8 @@ public partial class MainWindow : Window
             case "running-dentalseg":
             case "input-individual-teeth":
             case "running-individual-teeth":
+            case "input-toothseg":
+            case "running-toothseg":
                 ApplyModelPreviewScenario(scenario);
                 break;
             default:
@@ -1060,6 +1081,10 @@ public partial class MainWindow : Window
             "prepare" => "実行準備",
             "segment" => "顎顔面を抽出中",
             "predict" => "DentalSegmentatorで推論中",
+            "roi" => "歯列ROI・入力を準備中",
+            "semantic" => "ToothSeg semantic枝",
+            "instance" => "ToothSeg instance枝",
+            "restore" => "FDI番号付与・元画像へ復元中",
             "finalize" => "結果を整理中",
             "preview" => "3D表示・結果情報を作成中",
             "Resampling" => "入力を調整中",
@@ -1087,6 +1112,12 @@ public partial class MainWindow : Window
                     "検証済みのapp-private DentalSegmentatorモデルを確認できませんでした。",
             "dentalseg_failed" =>
                     "DentalSegmentator処理を完了できませんでした。別モデルやCPUには切り替えていません。",
+            "toothseg_prepare_required" =>
+                    "検証済みのapp-private ToothSegモデルを確認できませんでした。",
+            "toothseg_cuda_oom" =>
+                    "ToothSegに必要なCUDAメモリが不足しました。解像度やモデルは変更していません。",
+            "toothseg_failed" =>
+                    "ToothSeg処理を完了できませんでした。別モデルやCPUには切り替えていません。",
             _ =>
                 "Windows hostで処理状態を確認できませんでした。詳細情報を確認してください。",
         };

@@ -17,7 +17,7 @@ process client. It has no external UI framework, service, dependency resolver,
 installer, updater, or embedded browser. DICOM intake is limited to the
 existing native audit and `convert-clean` path; rescue conversion is outside
 this slice. The enabled additional-model paths are fixed DentalSegmentator
-five-label and Individual Teeth beta operations.
+five-label, Individual Teeth beta, and ToothSeg FDI operations.
 
 The shell starts `tswm-process-supervisor supervise --interactive-cancel`.
 The supervisor owns the coordinator Job Object. The shell reads coordinator
@@ -35,6 +35,7 @@ runtime/native/totalsegmentator-wrapper-dicom-normalizer.exe
 runtime/native/dcm2niix.exe
 models/totalseg-home/
 models/dentalseg/
+models/toothseg/
 sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz
 ```
 
@@ -49,6 +50,7 @@ The JSON keys are `supervisor_path`, `coordinator_path`,
 `totalseg_home`. Optional `dicom_normalizer_path` and `dcm2niix_path` keys
 override the two app-private native defaults above. Optional
 `dentalseg_model_root` overrides the app-private DentalSegmentator model root.
+Optional `toothseg_model_root` overrides the app-private ToothSeg model root.
 Existing NIfTI-only engineering configurations remain valid. This
 configuration is for spike evidence only and is not a dependency installation
 mechanism.
@@ -78,6 +80,7 @@ Focused verification modes:
 --evidence-run-dicom <absolute-dicom-folder> <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dentalseg <absolute-evidence-json> --engineering-config <path>
 --evidence-run-individual-teeth <absolute-evidence-json> --engineering-config <path>
+--evidence-run-toothseg <absolute-evidence-json> --engineering-config <path>
 ```
 
 `--evidence-run-sample` uses the same runtime check, request builder,
@@ -100,5 +103,10 @@ JSONL parser, promotion, and artifact verification as the interactive flow.
 selection and the fixed protocol operation. It requires the app-private
 `Dataset113_ToothFairy3` checkpoint, uses the existing 5 mm robust
 craniofacial preflight, and does not permit a client-selected task, model,
-device fallback, or split policy. ToothSeg remains a visible comparison
-reference only and is not selectable.
+device fallback, or split policy.
+
+`--evidence-run-toothseg` uses the visible fixed ToothSeg selection, verified
+app-private Dataset121/Dataset123 model pair, 5 mm robust craniofacial
+preflight, fold 5 with TTA disabled, strict `cuda:0`, FDI output, Job Object
+supervision, promotion, and artifact verification. It does not permit
+client-selected model, dataset, fold, ROI, resolution, or fallback.

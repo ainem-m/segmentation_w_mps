@@ -13,7 +13,8 @@ internal sealed record ShellConfiguration(
     string TotalSegmentatorHome,
     string DicomNormalizerPath,
     string Dcm2niixPath,
-    string DentalSegmentatorModelRoot)
+    string DentalSegmentatorModelRoot,
+    string ToothSegModelRoot)
 {
     internal static ShellConfiguration Load(string? engineeringConfigPath)
     {
@@ -44,7 +45,8 @@ internal sealed record ShellConfiguration(
                     nativeRuntime,
                     "totalsegmentator-wrapper-dicom-normalizer.exe"),
                 Path.Combine(nativeRuntime, "dcm2niix.exe"),
-                Path.Combine(baseDirectory, "models", "dentalseg"));
+                Path.Combine(baseDirectory, "models", "dentalseg"),
+                Path.Combine(baseDirectory, "models", "toothseg"));
         }
 
         var absoluteConfigPath = Path.GetFullPath(engineeringConfigPath);
@@ -81,7 +83,11 @@ internal sealed record ShellConfiguration(
             OptionalAbsolute(
                 payload.DentalSegmentatorModelRoot,
                 Path.Combine(baseDirectory, "models", "dentalseg"),
-                "dentalseg_model_root"));
+                "dentalseg_model_root"),
+            OptionalAbsolute(
+                payload.ToothSegModelRoot,
+                Path.Combine(baseDirectory, "models", "toothseg"),
+                "toothseg_model_root"));
     }
 
     internal RuntimeCheckResult CheckRuntime()
@@ -278,6 +284,82 @@ internal sealed record ShellConfiguration(
                 "検証済みのapp-private Dataset113モデルを準備してから、もう一度選んでください。");
     }
 
+    internal RuntimeCheckResult CheckToothSegRuntime()
+    {
+        var results = Path.Combine(ToothSegModelRoot, "nnUNet_results");
+        var failures = new List<string>();
+        try
+        {
+            using var marker = JsonDocument.Parse(
+                File.ReadAllText(
+                    Path.Combine(
+                        results,
+                        ".toothseg_model_ready.json")));
+            var root = marker.RootElement;
+            var datasets = new[]
+            {
+                "Dataset121_ToothFairy2_Teeth",
+                "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px",
+            };
+            if (!root.TryGetProperty("schema", out var schema)
+                || schema.GetString()
+                    != "totalsegmentator_wrapper_mac.toothseg_model_status.v1"
+                || !root.TryGetProperty("model_state", out var state)
+                || state.GetString() != "ready"
+                || !root.TryGetProperty("expected_md5", out var md5)
+                || md5.GetString()
+                    != "5d8dd061cce9529943567aeba3271143"
+                || !root.TryGetProperty(
+                    "pair_distributions_sha256",
+                    out var pairHash)
+                || pairHash.GetString()
+                    != "82ab04892277d36013be5ba9763ac334ea073fca7ebe8679086f1e33ed64ff29"
+                || !File.Exists(
+                    Path.Combine(
+                        ToothSegModelRoot,
+                        "fdi_pair_distrs.json"))
+                || datasets.Any(
+                    dataset =>
+                    {
+                        var datasetRoot = Path.Combine(results, dataset);
+                        return !Directory.Exists(datasetRoot)
+                            || !Directory.EnumerateFiles(
+                                    datasetRoot,
+                                    "dataset.json",
+                                    SearchOption.AllDirectories)
+                                .Any()
+                            || !Directory.EnumerateFiles(
+                                    datasetRoot,
+                                    "checkpoint_final.pth",
+                                    SearchOption.AllDirectories)
+                                .Any(path => new FileInfo(path).Length > 0);
+                    }))
+            {
+                failures.Add("ToothSeg の追加モデルを確認できません。");
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or JsonException)
+        {
+            failures.Add("ToothSeg の追加モデルを確認できません。");
+        }
+        return failures.Count == 0
+            ? new RuntimeCheckResult(
+                true,
+                "ToothSeg の追加モデルを確認しました。",
+                null,
+                null)
+            : new RuntimeCheckResult(
+                false,
+                string.Join(
+                    " ",
+                    failures.Distinct(StringComparer.Ordinal)),
+                "toothseg_prepare_required",
+                "検証済みのapp-private ToothSegモデルを準備してから、もう一度選んでください。");
+    }
+
     private static string RequireAbsolute(string? value, string name)
     {
         if (string.IsNullOrWhiteSpace(value)
@@ -397,6 +479,9 @@ internal sealed record ShellConfiguration(
 
         [JsonPropertyName("dentalseg_model_root")]
         public string? DentalSegmentatorModelRoot { get; init; }
+
+        [JsonPropertyName("toothseg_model_root")]
+        public string? ToothSegModelRoot { get; init; }
     }
 }
 

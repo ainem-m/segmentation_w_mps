@@ -43,12 +43,14 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"run_nifti_totalsegmentator"', profiles)
         self.assertIn('"run_nifti_dentalsegmentator"', profiles)
         self.assertIn('"run_nifti_individual_teeth"', profiles)
+        self.assertIn('"run_nifti_toothseg"', profiles)
         self.assertIn('mode = "cuda_required"', session)
         self.assertIn('index = 0', session)
         self.assertNotIn("dicom", session.lower())
         self.assertNotIn('mode = "auto"', session)
         self.assertNotIn('mode = "cpu"', session)
         self.assertIn('"TSWM_DENTALSEG_MODEL_ROOT"', session)
+        self.assertIn('"TSWM_TOOTHSEG_MODEL_ROOT"', session)
         self.assertIn('await process.StandardInput.WriteLineAsync("cancel")', session)
         self.assertIn(
             'terminal.EventName == "operation_cancelled"',
@@ -156,6 +158,7 @@ class WindowsWpfContractTests(unittest.TestCase):
             "通常のTotalSegmentatorを選ぶ",
             "DentalSegmentatorを選ぶ",
             "個別歯ベータを選ぶ",
+            "高精細歯ToothSegを選ぶ",
             "Sampleで3Dプレビューを作る",
             "停止",
             "3Dプレビューを開く",
@@ -190,7 +193,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 23)
+        self.assertEqual(len(buttons), 24)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
@@ -247,6 +250,14 @@ class WindowsWpfContractTests(unittest.TestCase):
             '"Dataset113_ToothFairy3"',
             configuration,
         )
+        self.assertIn("CheckToothSegRuntime", configuration)
+        self.assertIn('"Dataset121_ToothFairy2_Teeth"', configuration)
+        self.assertIn(
+            '"Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px"',
+            configuration,
+        )
+        self.assertIn('".toothseg_model_ready.json"', configuration)
+        self.assertIn('"toothseg_model_root"', configuration)
         self.assertIn(
             '".dentalsegmentator_model_ready.json"',
             configuration,
@@ -360,6 +371,39 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"teeth_force_split": False', coordinator)
         self.assertIn(
             'code="individual_teeth_prepare_required"',
+            coordinator,
+        )
+        self.assertNotIn('"backend": request', coordinator)
+        self.assertNotIn('"task": request', coordinator)
+
+    def test_toothseg_is_fixed_allowlisted_and_never_falls_back(
+        self,
+    ) -> None:
+        models = (SHELL / "MainWindow.Models.cs").read_text(
+            encoding="utf-8"
+        )
+        coordinator = (
+            ROOT / "src" / "totalsegmentator_wrapper_mac" / "coordinator.py"
+        ).read_text(encoding="utf-8")
+        protocol = (
+            ROOT
+            / "src"
+            / "totalsegmentator_wrapper_mac"
+            / "coordinator_protocol.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("SegmentationProfile.ToothSeg", models)
+        self.assertIn("CheckToothSegRuntime", models)
+        self.assertIn("RunEvidenceToothSegAsync", models)
+        self.assertIn('"run_nifti_toothseg"', protocol)
+        self.assertIn('"toothseg_refine": False', coordinator)
+        self.assertIn('"teeth_crop_margin_mm": 5.0', coordinator)
+        self.assertIn(
+            '"teeth_robust_craniofacial_preflight": True',
+            coordinator,
+        )
+        self.assertIn(
+            'code="toothseg_prepare_required"',
             coordinator,
         )
         self.assertNotIn('"backend": request', coordinator)

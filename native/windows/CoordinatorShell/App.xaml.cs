@@ -19,7 +19,8 @@ public partial class App : Application
                 || options.EvidenceCancelPath is not null
                 || options.EvidenceDicomPath is not null
                 || options.EvidenceDentalSegmentatorPath is not null
-                || options.EvidenceIndividualTeethPath is not null)
+                || options.EvidenceIndividualTeethPath is not null
+                || options.EvidenceToothSegPath is not null)
             {
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
             }
@@ -65,7 +66,8 @@ public partial class App : Application
                 || options.EvidenceCancelPath is not null
                 || options.EvidenceDicomPath is not null
                 || options.EvidenceDentalSegmentatorPath is not null
-                || options.EvidenceIndividualTeethPath is not null)
+                || options.EvidenceIndividualTeethPath is not null
+                || options.EvidenceToothSegPath is not null)
             {
                 TextOptions.SetTextRenderingMode(
                     mainWindow,
@@ -151,6 +153,25 @@ public partial class App : Application
                 Shutdown(passed ? 0 : 1);
                 return;
             }
+            if (options.EvidenceToothSegPath is not null)
+            {
+                var passed =
+                    await mainWindow.RunEvidenceToothSegAsync(
+                        options.EvidenceToothSegPath);
+                var parent = Path.GetDirectoryName(
+                    Path.GetFullPath(
+                        options.EvidenceToothSegPath));
+                if (parent is not null)
+                {
+                    await CaptureAfterRenderAsync(
+                        mainWindow,
+                        Path.Combine(
+                            parent,
+                            "wpf-toothseg-result.png"));
+                }
+                Shutdown(passed ? 0 : 1);
+                return;
+            }
             if (options.EvidenceDicomPath is not null
                 && options.EvidenceDicomFolder is not null)
             {
@@ -219,6 +240,7 @@ public partial class App : Application
         string? EvidenceCancelPath,
         string? EvidenceDentalSegmentatorPath,
         string? EvidenceIndividualTeethPath,
+        string? EvidenceToothSegPath,
         string? EvidenceDicomFolder,
         string? EvidenceDicomPath)
     {
@@ -232,6 +254,7 @@ public partial class App : Application
             string? evidenceCancelPath = null;
             string? evidenceDentalSegmentatorPath = null;
             string? evidenceIndividualTeethPath = null;
+            string? evidenceToothSegPath = null;
             string? evidenceDicomFolder = null;
             string? evidenceDicomPath = null;
             var contractSelfTest = false;
@@ -329,6 +352,18 @@ public partial class App : Application
                                 "The Individual Teeth evidence path must be absolute.");
                         }
                         break;
+                    case "--evidence-run-toothseg":
+                        evidenceToothSegPath = RequiredValue(
+                            args,
+                            ref index,
+                            "--evidence-run-toothseg");
+                        if (!Path.IsPathFullyQualified(
+                                evidenceToothSegPath))
+                        {
+                            throw new ArgumentException(
+                                "The ToothSeg evidence path must be absolute.");
+                        }
+                        break;
                     case "--evidence-run-dicom":
                         evidenceDicomFolder = RequiredValue(
                             args,
@@ -359,6 +394,7 @@ public partial class App : Application
                     evidenceCancelPath,
                     evidenceDentalSegmentatorPath,
                     evidenceIndividualTeethPath,
+                    evidenceToothSegPath,
                     evidenceDicomPath,
                 }.Count(value => value is not null) > 1)
             {
@@ -371,6 +407,7 @@ public partial class App : Application
                     || evidenceCancelPath is not null
                     || evidenceDentalSegmentatorPath is not null
                     || evidenceIndividualTeethPath is not null
+                    || evidenceToothSegPath is not null
                     || evidenceDicomPath is not null))
             {
                 throw new ArgumentException(
@@ -386,6 +423,7 @@ public partial class App : Application
                 evidenceCancelPath,
                 evidenceDentalSegmentatorPath,
                 evidenceIndividualTeethPath,
+                evidenceToothSegPath,
                 evidenceDicomFolder,
                 evidenceDicomPath);
         }

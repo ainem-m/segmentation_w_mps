@@ -372,6 +372,8 @@ internal sealed class CoordinatorSession : IDisposable
             _configuration.TotalSegmentatorHome;
         startInfo.Environment["TSWM_DENTALSEG_MODEL_ROOT"] =
             _configuration.DentalSegmentatorModelRoot;
+        startInfo.Environment["TSWM_TOOTHSEG_MODEL_ROOT"] =
+            _configuration.ToothSegModelRoot;
         startInfo.Environment["PYTHONNOUSERSITE"] = "1";
         startInfo.Environment["PYTHONUTF8"] = "1";
         return Process.Start(startInfo)

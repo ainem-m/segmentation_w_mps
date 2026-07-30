@@ -16,6 +16,7 @@ from totalsegmentator_wrapper_mac.coordinator_protocol import (
     PROTOCOL_VERSION,
     RUN_NIFTI_DENTALSEG_OPERATION,
     RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+    RUN_NIFTI_TOOTHSEG_OPERATION,
     RUN_NIFTI_TOTALSEG_OPERATION,
     CoordinatorProtocolError,
     CoordinatorRequest,
@@ -49,6 +50,7 @@ def run_coordinator_request(
     start_cancel_listener: StartCancelListener | None = None,
     dentalseg_model_root: Path | None = None,
     individual_teeth_model_root: Path | None = None,
+    toothseg_model_root: Path | None = None,
 ) -> int:
     writer.emit("operation_started", operation=request.operation)
     if _cancellation_requested(should_cancel):
@@ -60,6 +62,7 @@ def run_coordinator_request(
                 CAPABILITIES_OPERATION,
                 RUN_NIFTI_DENTALSEG_OPERATION,
                 RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+                RUN_NIFTI_TOOTHSEG_OPERATION,
                 RUN_NIFTI_TOTALSEG_OPERATION,
             ],
             device_policies={
@@ -81,6 +84,7 @@ def run_coordinator_request(
     if request.operation not in {
         RUN_NIFTI_DENTALSEG_OPERATION,
         RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+        RUN_NIFTI_TOOTHSEG_OPERATION,
         RUN_NIFTI_TOTALSEG_OPERATION,
     }:
         return _emit_failure(
@@ -127,13 +131,35 @@ def run_coordinator_request(
     is_individual_teeth = (
         request.operation == RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION
     )
-    backend = "dentalsegmentator" if is_dentalseg else "totalsegmentator"
-    task = "teeth" if is_individual_teeth else "craniofacial_structures"
+    is_toothseg = request.operation == RUN_NIFTI_TOOTHSEG_OPERATION
+    if is_toothseg and request.device_policy != "cuda_required":
+        return _emit_failure(
+            writer,
+            code="device_policy_unsupported",
+            safe_reason="The ToothSeg operation requires strict CUDA.",
+        )
+    backend = (
+        "dentalsegmentator"
+        if is_dentalseg
+        else "toothseg"
+        if is_toothseg
+        else "totalsegmentator"
+    )
+    task = (
+        "teeth"
+        if is_individual_teeth or is_toothseg
+        else "craniofacial_structures"
+    )
     progress_route = (
-        "individual_teeth_beta" if is_individual_teeth else backend
+        "individual_teeth_beta"
+        if is_individual_teeth
+        else "toothseg_standalone"
+        if is_toothseg
+        else backend
     )
     resolved_dentalseg_root: Path | None = None
     resolved_individual_teeth_root: Path | None = None
+    resolved_toothseg_root: Path | None = None
     if is_dentalseg:
         resolved_dentalseg_root = _ready_dentalseg_model_root(
             dentalseg_model_root
@@ -157,6 +183,16 @@ def run_coordinator_request(
                 safe_reason=(
                     "The app-private Individual Teeth model is not ready."
                 ),
+            )
+    if is_toothseg:
+        resolved_toothseg_root = _ready_toothseg_model_root(
+            toothseg_model_root
+        )
+        if resolved_toothseg_root is None:
+            return _emit_failure(
+                writer,
+                code="toothseg_prepare_required",
+                safe_reason="The app-private ToothSeg model is not ready.",
             )
 
     expected_device = "cpu"
@@ -209,6 +245,10 @@ def run_coordinator_request(
         from totalsegmentator_wrapper_mac.surface_preview import run_surface_preview
 
         preview_runner = run_surface_preview
+    if is_toothseg:
+        # SciPy's Windows DLL initialization must finish before the blocking
+        # coordinator control-reader thread is started.
+        import totalsegmentator_wrapper_mac.toothseg_postprocess  # noqa: F401
     if start_cancel_listener is not None:
         start_cancel_listener()
 
@@ -279,6 +319,17 @@ def run_coordinator_request(
                     "teeth_crop_margin_mm": 5.0,
                     "teeth_robust_craniofacial_preflight": True,
                     "teeth_force_split": False,
+                }
+            )
+        if resolved_toothseg_root is not None:
+            runner_kwargs.update(
+                {
+                    "toothseg_nnunet_results": (
+                        resolved_toothseg_root / "nnUNet_results"
+                    ),
+                    "toothseg_refine": False,
+                    "teeth_crop_margin_mm": 5.0,
+                    "teeth_robust_craniofacial_preflight": True,
                 }
             )
         if prevalidated_device_check is not None:
@@ -501,6 +552,7 @@ def main(
         if request.operation in {
             RUN_NIFTI_DENTALSEG_OPERATION,
             RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
+            RUN_NIFTI_TOOTHSEG_OPERATION,
             RUN_NIFTI_TOTALSEG_OPERATION,
         }:
             cancel_event = threading.Event()
@@ -608,6 +660,37 @@ def _ready_individual_teeth_model_root(
     except (OSError, StopIteration):
         return None
     return candidate if ready else None
+
+
+def _ready_toothseg_model_root(
+    configured_root: Path | None,
+) -> Path | None:
+    candidate = configured_root
+    if candidate is None:
+        raw_root = os.environ.get("TSWM_TOOTHSEG_MODEL_ROOT")
+        if not raw_root:
+            return None
+        candidate = Path(raw_root)
+    candidate = candidate.expanduser()
+    if not candidate.is_absolute():
+        return None
+    try:
+        candidate = candidate.resolve()
+        from totalsegmentator_wrapper_mac.setup_manager import (
+            TOOTHSEG_MODEL_MD5,
+        )
+        from totalsegmentator_wrapper_mac.toothseg_setup import (
+            toothseg_model_status,
+        )
+
+        status = toothseg_model_status(
+            model_root=candidate,
+            nnunet_results=candidate / "nnUNet_results",
+            expected_md5=TOOTHSEG_MODEL_MD5,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if status.get("model_state") == "ready" else None
 
 
 def _cancellation_requested(should_cancel: ShouldCancel | None) -> bool:
@@ -746,7 +829,9 @@ def _verify_and_manifest_case(
         ):
             raise ArtifactVerificationError
 
-        if expected_task == "teeth":
+        if expected_backend == "toothseg":
+            segmentation_relative = Path("segmentations") / "toothseg"
+        elif expected_task == "teeth":
             segmentation_relative = (
                 Path("segmentations") / "teeth_experimental"
             )
@@ -759,7 +844,16 @@ def _verify_and_manifest_case(
                 Path("segmentations") / "raw_totalseg"
             )
         segmentation_root = case_directory / segmentation_relative
-        segmentation_masks = sorted(segmentation_root.glob("**/*.nii.gz"))
+        if expected_backend == "toothseg":
+            segmentation_masks = [
+                segmentation_root / "toothseg_fdi_multilabel.nii.gz"
+            ]
+            if not segmentation_masks[0].is_file():
+                raise ArtifactVerificationError
+        else:
+            segmentation_masks = sorted(
+                segmentation_root.glob("**/*.nii.gz")
+            )
         if not segmentation_masks:
             raise ArtifactVerificationError
         relative_mask_paths = {
@@ -774,7 +868,13 @@ def _verify_and_manifest_case(
             for item in masks
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
-        if stats_names != mask_names:
+        if (
+            expected_backend == "toothseg"
+            and not mask_names.issubset(stats_names)
+        ) or (
+            expected_backend != "toothseg"
+            and stats_names != mask_names
+        ):
             raise ArtifactVerificationError
         valid_nonempty_names = {
             item.get("name")
@@ -787,6 +887,15 @@ def _verify_and_manifest_case(
         }
         if not mask_names.intersection(valid_nonempty_names):
             raise ArtifactVerificationError
+        if expected_backend == "toothseg":
+            masks = [
+                item
+                for item in masks
+                if isinstance(item, dict)
+                and item.get("name") in mask_names
+            ]
+            mask_stats["masks"] = masks
+            mask_stats["mask_count"] = len(masks)
         mask_stats["mask_dir"] = segmentation_relative.as_posix()
         for item in masks:
             name = str(item["name"])
@@ -799,10 +908,15 @@ def _verify_and_manifest_case(
 
         supporting_files = (
             sorted(segmentation_root.glob("*.labels.json"))
-            if expected_backend == "dentalsegmentator"
+            if expected_backend
+            in {"dentalsegmentator", "toothseg"}
             else []
         )
-        if expected_backend == "dentalsegmentator" and not supporting_files:
+        if (
+            expected_backend
+            in {"dentalsegmentator", "toothseg"}
+            and not supporting_files
+        ):
             raise ArtifactVerificationError
         manifest_entries = []
         for path in [

@@ -1,0 +1,52 @@
+{
+  "artifacts": [
+    {
+      "relative_path": "README_OUTPUT.md",
+      "sha256": "3e273c1036e49e752740f76a436228ae494236234c7b9da66b25916b60c90979",
+      "size_bytes": 1564
+    },
+    {
+      "relative_path": "logs/run.log",
+      "sha256": "791faebbcaca36ddddbfbd59b667733daf8d8b6572f8073e6f683e11fb9af8a0",
+      "size_bytes": 10562
+    },
+    {
+      "relative_path": "logs/benchmark.json",
+      "sha256": "1167922ab0e7bb06aa9055ae249b4e986b02ae8246a0de5e5a01c8cc06a046ae",
+      "size_bytes": 12337
+    },
+    {
+      "relative_path": "logs/environment.json",
+      "sha256": "a78a7af143354a697ef59f98279c38a20037d09eb57424c00ba6040eeab16692",
+      "size_bytes": 607
+    },
+    {
+      "relative_path": "logs/mask_stats.json",
+      "sha256": "94d5025d318935f75a8de4b8b38efc4cddb58f0b7b2fa0560582af6e0fe62be8",
+      "size_bytes": 486
+    },
+    {
+      "relative_path": "surface_preview/index.html",
+      "sha256": "7fce11482a9d770938b7c3911c0955b4b5a22e2fe3e578ae6f61246e2778855e",
+      "size_bytes": 9485
+    },
+    {
+      "relative_path": "run-manifest.json",
+      "sha256": "41d509ff998f3aa0b9a121fc9d32dccfea1306aa5317d470198b8426935b80b8",
+      "size_bytes": 821
+    },
+    {
+      "relative_path": "segmentations/toothseg/toothseg_fdi_multilabel.nii.gz",
+      "sha256": "3fd55aedd3706f03f235b5fb00e7b3aae1600dbca1634b3d8e13359c79b28664",
+      "size_bytes": 150417
+    },
+    {
+      "relative_path": "segmentations/toothseg/toothseg_fdi_multilabel.nii.gz.labels.json",
+      "sha256": "87972777d8fec86595382bd83e0c860e77c6599b1e82636e91892841f499f6ef",
+      "size_bytes": 618
+    }
+  ],
+  "operation_id": "9017ce07-d7bc-44d0-9e5d-795871364a27",
+  "protocol_version": 1,
+  "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1"
+}

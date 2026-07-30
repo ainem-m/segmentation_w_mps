@@ -265,8 +265,10 @@ and update/rollback flows.
 
 ### Feature parity
 
-Add ToothSeg, secondary-capture rescue, remaining recovery paths, and the
-documented hardware/support matrix.
+The fixed ToothSeg strict-CUDA slice has Windows 10 engineering evidence.
+Feature parity still requires clean Windows 11/model distribution evidence,
+secondary-capture rescue, remaining recovery paths, and the documented
+hardware/support matrix.
 
 ## Estimate
 

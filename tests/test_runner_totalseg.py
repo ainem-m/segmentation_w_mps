@@ -22,6 +22,7 @@ from totalsegmentator_wrapper_mac.runner_totalseg import (
     RUN_STAGE_PREFIX,
     TEETH_UNSUPPORTED_REASON,
     _emit_run_stage,
+    _progress_route,
     _run_command_streamed,
     _teeth_detected_from_mask_stats,
     executable_command,
@@ -71,10 +72,25 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(_teeth_detected_from_mask_stats(stats_path))
 
     def test_run_stage_layouts_match_the_fixed_route_contract(self) -> None:
-        self.assertEqual([len(stages) for stages in RUN_STAGE_LAYOUTS.values()], [4, 4, 6, 5])
+        self.assertEqual(
+            [len(stages) for stages in RUN_STAGE_LAYOUTS.values()],
+            [4, 4, 6, 5, 5],
+        )
         self.assertEqual(
             [stage_id for stage_id, _label in RUN_STAGE_LAYOUTS["toothseg_refine"]],
             ["roi", "semantic", "instance", "restore", "preview"],
+        )
+        self.assertEqual(
+            RUN_STAGE_LAYOUTS["toothseg_standalone"][0],
+            ("roi", "5mm ROI・入力を準備中"),
+        )
+        self.assertEqual(
+            _progress_route(
+                backend="toothseg",
+                task="teeth",
+                toothseg_refine=False,
+            ),
+            "toothseg_standalone",
         )
 
     def test_run_stage_is_saved_and_mirrored_to_stderr(self) -> None:

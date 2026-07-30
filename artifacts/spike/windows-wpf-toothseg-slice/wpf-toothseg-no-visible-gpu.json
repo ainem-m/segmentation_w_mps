@@ -1,0 +1,18 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_toothseg_run.v1",
+  "status": "fail",
+  "operation": "run_nifti_toothseg",
+  "backend": "toothseg",
+  "task": "teeth",
+  "operation_id": "17c66a3a-7a61-4763-b013-14773dba5f2b",
+  "terminal_event": "operation_failed",
+  "supervisor_exit_code": 1,
+  "requested_policy": "cuda_required",
+  "requested_device_index": 0,
+  "resolved_device": null,
+  "fallback_allowed": false,
+  "fallback_occurred": false,
+  "run_manifest_verified": false,
+  "artifact_manifest_exists": false,
+  "segmentation_started": true
+}
