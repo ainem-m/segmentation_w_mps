@@ -18,6 +18,7 @@ public partial class App : Application
                 || options.EvidenceRunPath is not null
                 || options.EvidenceCancelPath is not null
                 || options.EvidenceDicomPath is not null
+                || options.EvidenceDicomRescuePath is not null
                 || options.EvidenceDentalSegmentatorPath is not null
                 || options.EvidenceIndividualTeethPath is not null
                 || options.EvidenceToothSegPath is not null)
@@ -65,6 +66,7 @@ public partial class App : Application
                 || options.EvidenceRunPath is not null
                 || options.EvidenceCancelPath is not null
                 || options.EvidenceDicomPath is not null
+                || options.EvidenceDicomRescuePath is not null
                 || options.EvidenceDentalSegmentatorPath is not null
                 || options.EvidenceIndividualTeethPath is not null
                 || options.EvidenceToothSegPath is not null)
@@ -188,6 +190,26 @@ public partial class App : Application
                 }
                 Shutdown(passed ? 0 : 1);
             }
+            if (options.EvidenceDicomRescuePath is not null
+                && options.EvidenceDicomRescueFolder is not null)
+            {
+                var passed =
+                    await mainWindow.RunEvidenceDicomRescueAsync(
+                        options.EvidenceDicomRescueFolder,
+                        options.EvidenceDicomRescuePath);
+                var parent = Path.GetDirectoryName(
+                    Path.GetFullPath(
+                        options.EvidenceDicomRescuePath));
+                if (parent is not null)
+                {
+                    await CaptureAfterRenderAsync(
+                        mainWindow,
+                        Path.Combine(
+                            parent,
+                            "wpf-dicom-rescue-preview.png"));
+                }
+                Shutdown(passed ? 0 : 1);
+            }
         }
         catch (Exception exception) when (
             exception is ArgumentException
@@ -242,7 +264,9 @@ public partial class App : Application
         string? EvidenceIndividualTeethPath,
         string? EvidenceToothSegPath,
         string? EvidenceDicomFolder,
-        string? EvidenceDicomPath)
+        string? EvidenceDicomPath,
+        string? EvidenceDicomRescueFolder,
+        string? EvidenceDicomRescuePath)
     {
         internal static LaunchOptions Parse(string[] args)
         {
@@ -257,6 +281,8 @@ public partial class App : Application
             string? evidenceToothSegPath = null;
             string? evidenceDicomFolder = null;
             string? evidenceDicomPath = null;
+            string? evidenceDicomRescueFolder = null;
+            string? evidenceDicomRescuePath = null;
             var contractSelfTest = false;
             for (var index = 0; index < args.Length; index++)
             {
@@ -382,6 +408,24 @@ public partial class App : Application
                                 "The DICOM input and evidence paths must be absolute.");
                         }
                         break;
+                    case "--evidence-run-dicom-rescue":
+                        evidenceDicomRescueFolder = RequiredValue(
+                            args,
+                            ref index,
+                            "--evidence-run-dicom-rescue");
+                        evidenceDicomRescuePath = RequiredValue(
+                            args,
+                            ref index,
+                            "--evidence-run-dicom-rescue");
+                        if (!Path.IsPathFullyQualified(
+                                evidenceDicomRescueFolder)
+                            || !Path.IsPathFullyQualified(
+                                evidenceDicomRescuePath))
+                        {
+                            throw new ArgumentException(
+                                "The DICOM rescue input and evidence paths must be absolute.");
+                        }
+                        break;
                     default:
                         throw new ArgumentException(
                             "The Windows shell option is not supported.");
@@ -396,6 +440,7 @@ public partial class App : Application
                     evidenceIndividualTeethPath,
                     evidenceToothSegPath,
                     evidenceDicomPath,
+                    evidenceDicomRescuePath,
                 }.Count(value => value is not null) > 1)
             {
                 throw new ArgumentException(
@@ -408,7 +453,8 @@ public partial class App : Application
                     || evidenceDentalSegmentatorPath is not null
                     || evidenceIndividualTeethPath is not null
                     || evidenceToothSegPath is not null
-                    || evidenceDicomPath is not null))
+                    || evidenceDicomPath is not null
+                    || evidenceDicomRescuePath is not null))
             {
                 throw new ArgumentException(
                     "The contract self-test cannot be combined with another mode.");
@@ -425,7 +471,9 @@ public partial class App : Application
                 evidenceIndividualTeethPath,
                 evidenceToothSegPath,
                 evidenceDicomFolder,
-                evidenceDicomPath);
+                evidenceDicomPath,
+                evidenceDicomRescueFolder,
+                evidenceDicomRescuePath);
         }
 
         private static string RequiredValue(

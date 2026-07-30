@@ -12,6 +12,10 @@ internal sealed class DicomIntakeSession : IDisposable
         "totalsegmentator_wrapper_mac.dicom_normalizer.audit.v1";
     private const string ConvertSchema =
         "totalsegmentator_wrapper_mac.dicom_normalizer.convert_clean.v1";
+    private const string RescueSchema =
+        "totalsegmentator_wrapper_mac.dicom_normalizer.rescue.v1";
+    private const string RescueValidationSchema =
+        "totalsegmentator_wrapper_mac.dicom_normalizer.rescue_validation.v1";
     private const uint CancelExitCode = 1223;
     private const uint TimeoutExitCode = 124;
     private static readonly TimeSpan AuditTimeout =
@@ -146,10 +150,10 @@ internal sealed class DicomIntakeSession : IDisposable
                     workspaceDirectory);
             }
 
-            IReadOnlyList<DicomCleanCandidate> candidates;
+            ParsedDicomAudit parsed;
             try
             {
-                candidates = ParseAudit(
+                parsed = ParseAudit(
                     auditPath,
                     operationId);
             }
@@ -165,7 +169,8 @@ internal sealed class DicomIntakeSession : IDisposable
                     operationId,
                     workspaceDirectory);
             }
-            if (candidates.Count == 0)
+            if (parsed.CleanCandidates.Count == 0
+                && parsed.RescueCandidates.Count == 0)
             {
                 return DicomAuditResult.Failure(
                     "dicom_clean_series_unavailable",
@@ -179,7 +184,8 @@ internal sealed class DicomIntakeSession : IDisposable
                 workspaceDirectory,
                 sourceDirectory,
                 auditPath,
-                candidates);
+                parsed.CleanCandidates,
+                parsed.RescueCandidates);
         }
         finally
         {
@@ -388,6 +394,175 @@ internal sealed class DicomIntakeSession : IDisposable
                 verified.NiftiPath,
                 manifestPath,
                 selectionBasis);
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    internal async Task<DicomRescueResult> PrepareRescueAsync(
+        DicomAuditResult audit,
+        DicomRescueCandidate candidate,
+        DicomSpacing spacing)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!BeginOperation())
+        {
+            return DicomRescueResult.Failure(
+                "dicom_intake_busy",
+                "別のDICOM読み込み処理が実行中です。");
+        }
+
+        try
+        {
+            if (!audit.Succeeded
+                || string.IsNullOrWhiteSpace(audit.OperationId)
+                || string.IsNullOrWhiteSpace(audit.WorkspaceDirectory)
+                || string.IsNullOrWhiteSpace(audit.SourceDirectory)
+                || !Directory.Exists(audit.WorkspaceDirectory)
+                || !Directory.Exists(audit.SourceDirectory))
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_audit_invalid",
+                    "DICOM確認結果を使用できません。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            var knownCandidate = audit.RescueCandidates.SingleOrDefault(
+                item => item.CandidateId == candidate.CandidateId);
+            if (knownCandidate is null
+                || knownCandidate.AuditOperationId != audit.OperationId
+                || knownCandidate.Classification
+                    != "secondary_capture_rescue_candidate")
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_candidate_invalid",
+                    "選択した救済候補を使用できません。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            if (!spacing.IsValid)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_spacing_invalid",
+                    "X、Y、Zの寸法は0より大きく20以下の数値で入力してください。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+
+            var runtime = _configuration.CheckDicomRuntime();
+            if (!runtime.Passed)
+            {
+                return DicomRescueResult.Failure(
+                    runtime.ErrorCode ?? "dicom_runtime_unavailable",
+                    runtime.Message,
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+
+            var rescueDirectory = Path.Combine(
+                audit.WorkspaceDirectory,
+                $"rescue-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(rescueDirectory);
+            var arguments = new List<string>
+            {
+                "prepare-rescue",
+                "--dicom-dir",
+                audit.SourceDirectory,
+                "--series-key",
+                knownCandidate.NativeSeriesKey,
+                "--patched-spacing",
+                spacing.CommandValue,
+                "--output",
+                rescueDirectory,
+                "--dcm2niix",
+                _configuration.Dcm2niixPath,
+                "--dcm2niix-timeout-seconds",
+                ((int)ConvertTimeout.TotalSeconds).ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+            };
+            var execution = await RunJobAsync(
+                _configuration.DicomNormalizerPath,
+                arguments,
+                ConvertTimeout);
+            if (!execution.Started)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_normalizer_start_failed",
+                    "DICOM救済機能を開始できません。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            if (execution.Cancelled)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_cancelled",
+                    "確認画像の作成を停止しました。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            if (execution.TimedOut)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_timeout",
+                    "確認画像の作成が制限時間を超えました。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            if (!execution.JobBecameEmpty)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_process_tree_error",
+                    "確認画像の作成処理を安全に終了できませんでした。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+            if (execution.ExitCode != 0)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_failed",
+                    "確認画像を作成できませんでした。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
+
+            try
+            {
+                var verified = VerifyRescue(
+                    rescueDirectory,
+                    knownCandidate,
+                    spacing);
+                var manifestPath = Path.Combine(
+                    rescueDirectory,
+                    "windows-rescue-manifest.json");
+                await WriteRescueManifestAsync(
+                    manifestPath,
+                    audit.OperationId,
+                    knownCandidate,
+                    spacing,
+                    execution.ExitCode!.Value,
+                    verified);
+                return DicomRescueResult.Success(
+                    audit.OperationId,
+                    audit.WorkspaceDirectory,
+                    verified.PatchedNiftiPath,
+                    manifestPath,
+                    verified.Previews);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or JsonException
+                    or InvalidDataException
+                    or ArgumentException)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_output_invalid",
+                    "作成した確認画像と寸法情報を検証できませんでした。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
         }
         finally
         {
@@ -640,7 +815,7 @@ internal sealed class DicomIntakeSession : IDisposable
         }
     }
 
-    private static IReadOnlyList<DicomCleanCandidate> ParseAudit(
+    private static ParsedDicomAudit ParseAudit(
         string auditPath,
         string operationId)
     {
@@ -659,7 +834,8 @@ internal sealed class DicomIntakeSession : IDisposable
             "secondary_capture_rescue_written");
 
         var series = RequireArray(root, "series");
-        var result = new List<DicomCleanCandidate>();
+        var cleanCandidates = new List<DicomCleanCandidate>();
+        var rescueCandidates = new List<DicomRescueCandidate>();
         foreach (var item in series.EnumerateArray())
         {
             var classification = RequireObject(
@@ -691,13 +867,25 @@ internal sealed class DicomIntakeSession : IDisposable
                 throw new InvalidDataException(
                     "A DICOM external-tool classification is invalid.");
             }
-            if (status.GetString() != "original_ct_geometry_ok"
-                || nextAction.GetString() != "convert_clean"
-                || requiresExternalTool.GetBoolean())
+            if (requiresExternalTool.GetBoolean())
             {
                 continue;
             }
 
+            var classificationStatus = status.GetString();
+            var action = nextAction.GetString();
+            var clean =
+                classificationStatus == "original_ct_geometry_ok"
+                && action == "convert_clean";
+            var rescue =
+                classificationStatus
+                    == "secondary_capture_rescue_candidate"
+                && action
+                    == "prepare_rescue_with_explicit_spacing";
+            if (!clean && !rescue)
+            {
+                continue;
+            }
             var seriesKey = RequireNonEmptyString(
                 item,
                 "series_key");
@@ -723,17 +911,37 @@ internal sealed class DicomIntakeSession : IDisposable
                 seriesNumber = parsedSeriesNumber;
             }
 
-            result.Add(
-                new DicomCleanCandidate(
-                    $"clean-{result.Count + 1}",
+            if (clean)
+            {
+                cleanCandidates.Add(
+                    new DicomCleanCandidate(
+                        $"clean-{cleanCandidates.Count + 1}",
+                        operationId,
+                        seriesKey,
+                        seriesNumber,
+                        seriesDescription,
+                        fileCount,
+                        classificationStatus!));
+                continue;
+            }
+
+            var sliceThickness = OptionalConsistentSpacing(
+                item,
+                "slice_thickness");
+            rescueCandidates.Add(
+                new DicomRescueCandidate(
+                    $"rescue-{rescueCandidates.Count + 1}",
                     operationId,
                     seriesKey,
                     seriesNumber,
                     seriesDescription,
                     fileCount,
-                    "original_ct_geometry_ok"));
+                    classificationStatus!,
+                    sliceThickness));
         }
-        return result;
+        return new ParsedDicomAudit(
+            cleanCandidates,
+            rescueCandidates);
     }
 
     private static VerifiedConversion VerifyConversion(
@@ -847,6 +1055,137 @@ internal sealed class DicomIntakeSession : IDisposable
             dcm2niixExitCode);
     }
 
+    private static VerifiedRescue VerifyRescue(
+        string rescueDirectory,
+        DicomRescueCandidate candidate,
+        DicomSpacing requestedSpacing)
+    {
+        var metadataPath = Path.Combine(
+            rescueDirectory,
+            "rescue_metadata.json");
+        using (var document = JsonDocument.Parse(
+                   File.ReadAllText(metadataPath)))
+        {
+            var root = document.RootElement;
+            RequireString(root, "schema", RescueSchema);
+            RequireString(root, "status", "success");
+            var selected = RequireObject(root, "selected_series");
+            RequireString(
+                selected,
+                "classification",
+                "secondary_capture_rescue_candidate");
+            RequireString(
+                selected,
+                "series_instance_uid",
+                candidate.NativeSeriesKey);
+            if (RequirePositiveInt32(selected, "file_count")
+                != candidate.FileCount)
+            {
+                throw new InvalidDataException(
+                    "The rescue series file count changed.");
+            }
+            var warnings = RequireObject(root, "warnings");
+            foreach (var warning in new[]
+                     {
+                         "secondary_capture",
+                         "geometry_inferred",
+                         "burned_in_annotation",
+                         "not_segmentation_grade_original_ct",
+                         "manual_spacing_required",
+                     })
+            {
+                RequireTrue(warnings, warning);
+            }
+            RequireSpacing(
+                root,
+                "patched_spacing",
+                requestedSpacing);
+            var dcm2niix = RequireObject(root, "dcm2niix");
+            if (RequireInt32(dcm2niix, "returncode") != 0)
+            {
+                throw new InvalidDataException(
+                    "dcm2niix did not succeed.");
+            }
+        }
+
+        var validationPath = Path.Combine(
+            rescueDirectory,
+            "rescue_validation.json");
+        using var validationDocument = JsonDocument.Parse(
+            File.ReadAllText(validationPath));
+        var validation = validationDocument.RootElement;
+        RequireString(
+            validation,
+            "schema",
+            RescueValidationSchema);
+        RequireString(validation, "status", "success");
+        RequireTrue(
+            validation,
+            "patched_spacing_matches_requested");
+        RequireSpacing(
+            validation,
+            "requested_spacing",
+            requestedSpacing);
+        var patched = RequireObject(validation, "patched_nifti");
+        RequireTrue(patched, "ok");
+        RequireSpacing(patched, "spacing", requestedSpacing);
+        var patchedNifti = Path.GetFullPath(
+            RequireNonEmptyString(patched, "path"));
+        var rescueRoot = Path.GetFullPath(rescueDirectory);
+        if (!IsPathWithin(patchedNifti, rescueRoot)
+            || !File.Exists(patchedNifti)
+            || new FileInfo(patchedNifti).Length <= 0
+            || !IsNifti(patchedNifti))
+        {
+            throw new InvalidDataException(
+                "The rescue NIfTI output is invalid.");
+        }
+
+        var mpr = RequireObject(validation, "mpr_preview");
+        RequireTrue(mpr, "written");
+        var previewRoot = Path.GetFullPath(
+            Path.Combine(rescueDirectory, "mpr_preview"));
+        var previews = new List<DicomRescuePreview>();
+        foreach (var item in RequireArray(
+                     mpr,
+                     "previews").EnumerateArray())
+        {
+            var plane = RequireNonEmptyString(item, "plane");
+            if (plane is not ("axial" or "coronal" or "sagittal")
+                || previews.Any(existing => existing.Plane == plane))
+            {
+                throw new InvalidDataException(
+                    "A rescue preview plane is invalid.");
+            }
+            var path = Path.GetFullPath(
+                RequireNonEmptyString(item, "path"));
+            var width = RequirePositiveInt32(item, "width");
+            var height = RequirePositiveInt32(item, "height");
+            if (!IsPathWithin(path, previewRoot)
+                || !File.Exists(path)
+                || new FileInfo(path).Length <= 0)
+            {
+                throw new InvalidDataException(
+                    "A rescue preview image is invalid.");
+            }
+            previews.Add(
+                new DicomRescuePreview(
+                    plane,
+                    path,
+                    width,
+                    height,
+                    RequireBoolean(item, "uniform_or_empty")));
+        }
+        if (previews.Count != 3)
+        {
+            throw new InvalidDataException(
+                "Three rescue preview images are required.");
+        }
+        return new VerifiedRescue(
+            patchedNifti,
+            previews);
+    }
+
     private static bool Dcm2niixTimedOut(string metadataPath)
     {
         try
@@ -902,6 +1241,63 @@ internal sealed class DicomIntakeSession : IDisposable
                 status = "success",
             },
             segmentation_started = false,
+            raw_output_recorded = false,
+        };
+        await File.WriteAllTextAsync(
+            manifestPath,
+            JsonSerializer.Serialize(
+                payload,
+                new JsonSerializerOptions { WriteIndented = true })
+            + Environment.NewLine,
+            new UTF8Encoding(false));
+    }
+
+    private static async Task WriteRescueManifestAsync(
+        string manifestPath,
+        string operationId,
+        DicomRescueCandidate candidate,
+        DicomSpacing spacing,
+        uint normalizerExitCode,
+        VerifiedRescue verified)
+    {
+        var payload = new
+        {
+            schema =
+                "totalsegmentator_wrapper.windows_dicom_rescue_preview.v1",
+            status = "success",
+            operation_id = operationId,
+            source_kind = "dicom_secondary_capture",
+            selected_series = new
+            {
+                series_number = candidate.SeriesNumber,
+                file_count = candidate.FileCount,
+                classification = candidate.Classification,
+            },
+            confirmed_spacing_xyz = spacing.Values,
+            warning_flags = new
+            {
+                secondary_capture = true,
+                geometry_inferred = true,
+                burned_in_annotation = true,
+                not_segmentation_grade_original_ct = true,
+                manual_spacing_required = true,
+            },
+            normalizer = new
+            {
+                exit_code = normalizerExitCode,
+                status = "success",
+            },
+            output_validation = new
+            {
+                patched_nifti_nonempty = true,
+                preview_count = verified.Previews.Count,
+                preview_planes = verified.Previews
+                    .Select(preview => preview.Plane)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray(),
+            },
+            segmentation_started = false,
+            rescue_output_promoted_as_clean_ct = false,
             raw_output_recorded = false,
         };
         await File.WriteAllTextAsync(
@@ -1004,6 +1400,58 @@ internal sealed class DicomIntakeSession : IDisposable
         return value.GetString() ?? string.Empty;
     }
 
+    private static double? OptionalConsistentSpacing(
+        JsonElement parent,
+        string propertyName)
+    {
+        if (!parent.TryGetProperty(
+                propertyName,
+                out var value)
+            || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            if (!value.TryGetDouble(out var parsed)
+                || !double.IsFinite(parsed)
+                || parsed <= 0)
+            {
+                throw new InvalidDataException(
+                    $"The {propertyName} value is invalid.");
+            }
+            return parsed;
+        }
+        if (value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty(
+                "consistent",
+                out var consistent)
+            || consistent.ValueKind is not (
+                JsonValueKind.True or JsonValueKind.False)
+            || !value.TryGetProperty(
+                "values_mm",
+                out var values)
+            || values.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidDataException(
+                $"The {propertyName} value is invalid.");
+        }
+        if (!consistent.GetBoolean())
+        {
+            return null;
+        }
+        var parsedValues = values.EnumerateArray().ToArray();
+        if (parsedValues.Length != 1
+            || !parsedValues[0].TryGetDouble(out var spacing)
+            || !double.IsFinite(spacing)
+            || spacing <= 0)
+        {
+            throw new InvalidDataException(
+                $"The {propertyName} value is invalid.");
+        }
+        return spacing;
+    }
+
     private static int RequireInt32(
         JsonElement parent,
         string propertyName)
@@ -1030,6 +1478,62 @@ internal sealed class DicomIntakeSession : IDisposable
         {
             throw new InvalidDataException(
                 $"The {propertyName} value is invalid.");
+        }
+    }
+
+    private static void RequireTrue(
+        JsonElement parent,
+        string propertyName)
+    {
+        if (!parent.TryGetProperty(
+                propertyName,
+                out var value)
+            || value.ValueKind != JsonValueKind.True)
+        {
+            throw new InvalidDataException(
+                $"The {propertyName} value is invalid.");
+        }
+    }
+
+    private static bool RequireBoolean(
+        JsonElement parent,
+        string propertyName)
+    {
+        if (!parent.TryGetProperty(
+                propertyName,
+                out var value)
+            || value.ValueKind is not (
+                JsonValueKind.True
+                    or JsonValueKind.False))
+        {
+            throw new InvalidDataException(
+                $"The {propertyName} value is invalid.");
+        }
+        return value.GetBoolean();
+    }
+
+    private static void RequireSpacing(
+        JsonElement parent,
+        string propertyName,
+        DicomSpacing expected)
+    {
+        var value = RequireArray(parent, propertyName);
+        var values = value.EnumerateArray().ToArray();
+        if (values.Length != 3)
+        {
+            throw new InvalidDataException(
+                $"The {propertyName} value is invalid.");
+        }
+        var expectedValues = expected.Values;
+        for (var index = 0; index < values.Length; index++)
+        {
+            if (!values[index].TryGetDouble(out var parsed)
+                || !double.IsFinite(parsed)
+                || Math.Abs(parsed - expectedValues[index]) > 1e-4)
+            {
+                throw new InvalidDataException(
+                    $"The {propertyName} value is invalid.");
+            }
         }
     }
 
@@ -1090,6 +1594,14 @@ internal sealed class DicomIntakeSession : IDisposable
     private sealed record VerifiedConversion(
         string NiftiPath,
         int Dcm2niixExitCode);
+
+    private sealed record VerifiedRescue(
+        string PatchedNiftiPath,
+        IReadOnlyList<DicomRescuePreview> Previews);
+
+    private sealed record ParsedDicomAudit(
+        IReadOnlyList<DicomCleanCandidate> CleanCandidates,
+        IReadOnlyList<DicomRescueCandidate> RescueCandidates);
 }
 
 internal sealed record DicomCleanCandidate(
@@ -1119,6 +1631,68 @@ internal sealed record DicomCleanCandidate(
     public string DisplayDetail => $"{FileCount}枚";
 }
 
+internal sealed record DicomRescueCandidate(
+    string CandidateId,
+    string AuditOperationId,
+    string NativeSeriesKey,
+    int? SeriesNumber,
+    string SeriesDescription,
+    int FileCount,
+    string Classification,
+    double? SliceThickness)
+{
+    public string DisplayTitle
+    {
+        get
+        {
+            var number = SeriesNumber?.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+                ?? "番号なし";
+            var description = string.IsNullOrWhiteSpace(
+                SeriesDescription)
+                ? "名称なし"
+                : SeriesDescription;
+            return $"撮影 {number}: {description}";
+        }
+    }
+
+    public string DisplayDetail =>
+        SliceThickness.HasValue
+            ? $"{FileCount}枚 / スライス厚 {SliceThickness.Value:0.####} mm"
+            : $"{FileCount}枚 / 寸法情報なし";
+
+    public DicomSpacing InitialSpacing =>
+        new(1.0, 1.0, SliceThickness ?? 1.0);
+}
+
+internal sealed record DicomSpacing(
+    double X,
+    double Y,
+    double Z)
+{
+    public bool IsValid =>
+        new[] { X, Y, Z }.All(
+            value => double.IsFinite(value)
+                && value > 0
+                && value <= 20);
+
+    public double[] Values => [X, Y, Z];
+
+    public string CommandValue => string.Join(
+        ",",
+        Values.Select(
+            value => value.ToString(
+                "0.######",
+                System.Globalization.CultureInfo.InvariantCulture)));
+}
+
+internal sealed record DicomRescuePreview(
+    string Plane,
+    string Path,
+    int Width,
+    int Height,
+    bool UniformOrEmpty);
+
 internal sealed record DicomAuditResult(
     bool Succeeded,
     string? OperationId,
@@ -1126,6 +1700,7 @@ internal sealed record DicomAuditResult(
     string? SourceDirectory,
     string? AuditPath,
     IReadOnlyList<DicomCleanCandidate> Candidates,
+    IReadOnlyList<DicomRescueCandidate> RescueCandidates,
     string? ErrorCode,
     string? SafeMessage)
 {
@@ -1134,7 +1709,8 @@ internal sealed record DicomAuditResult(
         string workspaceDirectory,
         string sourceDirectory,
         string auditPath,
-        IReadOnlyList<DicomCleanCandidate> candidates)
+        IReadOnlyList<DicomCleanCandidate> candidates,
+        IReadOnlyList<DicomRescueCandidate> rescueCandidates)
     {
         return new DicomAuditResult(
             true,
@@ -1143,6 +1719,7 @@ internal sealed record DicomAuditResult(
             sourceDirectory,
             auditPath,
             candidates,
+            rescueCandidates,
             null,
             null);
     }
@@ -1160,6 +1737,53 @@ internal sealed record DicomAuditResult(
             null,
             null,
             Array.Empty<DicomCleanCandidate>(),
+            Array.Empty<DicomRescueCandidate>(),
+            errorCode,
+            safeMessage);
+    }
+}
+
+internal sealed record DicomRescueResult(
+    bool Succeeded,
+    string? OperationId,
+    string? WorkspaceDirectory,
+    string? NiftiPath,
+    string? ManifestPath,
+    IReadOnlyList<DicomRescuePreview> Previews,
+    string? ErrorCode,
+    string? SafeMessage)
+{
+    internal static DicomRescueResult Success(
+        string operationId,
+        string workspaceDirectory,
+        string niftiPath,
+        string manifestPath,
+        IReadOnlyList<DicomRescuePreview> previews)
+    {
+        return new DicomRescueResult(
+            true,
+            operationId,
+            workspaceDirectory,
+            niftiPath,
+            manifestPath,
+            previews,
+            null,
+            null);
+    }
+
+    internal static DicomRescueResult Failure(
+        string errorCode,
+        string safeMessage,
+        string? operationId = null,
+        string? workspaceDirectory = null)
+    {
+        return new DicomRescueResult(
+            false,
+            operationId,
+            workspaceDirectory,
+            null,
+            null,
+            Array.Empty<DicomRescuePreview>(),
             errorCode,
             safeMessage);
     }

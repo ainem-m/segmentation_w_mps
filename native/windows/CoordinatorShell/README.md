@@ -8,15 +8,15 @@ The visual and wording references are:
 - `docs/USER_MANUAL_JA.md`
 - `docs/assets/user-manual/README.md`
 - screenshots `01-setup`, `02-start`, `03-input-sample`, `07-running`,
-  `09-result-success`, and `10-result-failure`
+  `09-result-success`, `10-result-failure`, and `16-shape-confirmation`
 - the canonical non-clinical copy in
   `docs/37_NON_CLINICAL_LANGUAGE_GUIDE.md`
 
 The slice intentionally contains one WPF window and one coordinator-specific
 process client. It has no external UI framework, service, dependency resolver,
-installer, updater, or embedded browser. DICOM intake is limited to the
-existing native audit and `convert-clean` path; rescue conversion is outside
-this slice. The enabled additional-model paths are fixed DentalSegmentator
+installer, updater, or embedded browser. DICOM intake keeps the existing
+native audit and `convert-clean` path and adds a manual-only Secondary Capture
+preview lane. The enabled additional-model paths are fixed DentalSegmentator
 five-label, Individual Teeth beta, and ToothSeg FDI operations.
 
 The shell starts `tswm-process-supervisor supervise --interactive-cancel`.
@@ -55,8 +55,16 @@ Existing NIfTI-only engineering configurations remain valid. This
 configuration is for spike evidence only and is not a dependency installation
 mechanism.
 
-`DicomIntakeSession` audits a selected folder and exposes only series classified
-as `original_ct_geometry_ok`, `convert_clean`, and requiring no external tool.
+`DicomIntakeSession` audits a selected folder and exposes series classified as
+either `original_ct_geometry_ok` / `convert_clean` or
+`secondary_capture_rescue_candidate` /
+`prepare_rescue_with_explicit_spacing`, requiring no external tool. A clean
+candidate always takes priority. The rescue lane requires the user to confirm
+finite X/Y/Z spacing with three sliders, runs the existing `prepare-rescue`,
+verifies warning flags,
+patched NIfTI spacing readback, and three local PGM MPR images, and leaves the
+coordinator stopped. It does not promote the pseudo-volume as clean CT or
+start segmentation.
 Audit and conversion children are created suspended, assigned to a Job Object,
 then resumed. Cancellation or the fixed 120-second audit / 900-second conversion
 limit terminates the whole Job. Process stdout and stderr are drained but never
@@ -74,10 +82,11 @@ Focused verification modes:
 
 ```text
 --contract-self-test [absolute-evidence-json]
---capture-ui <setup|start|input|dicom-input|dicom-series|running|success|failure> <absolute-png>
+--capture-ui <setup|start|input|dicom-input|dicom-series|dicom-rescue|running|success|failure> <absolute-png>
 --evidence-run-sample <absolute-evidence-json> --engineering-config <path>
 --evidence-cancel-sample <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dicom <absolute-dicom-folder> <absolute-evidence-json> --engineering-config <path>
+--evidence-run-dicom-rescue <absolute-dicom-folder> <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dentalseg <absolute-evidence-json> --engineering-config <path>
 --evidence-run-individual-teeth <absolute-evidence-json> --engineering-config <path>
 --evidence-run-toothseg <absolute-evidence-json> --engineering-config <path>
@@ -94,6 +103,13 @@ then uses the same stop-request method as the `停止` button.
 implementation, verifies that no coordinator started during intake, and then
 explicitly invokes the unchanged strict-CUDA NIfTI run. Its evidence JSON
 contains no input path, series key/UID, description, or native process output.
+
+`--evidence-run-dicom-rescue` uses the visible Secondary Capture audit and
+manual-spacing preview implementation. It verifies a non-empty patched NIfTI,
+all three PGM preview planes, Job completion, and the safe rescue manifest.
+Evidence contains no paths, DICOM UIDs/descriptions, or raw native output, and
+records `segmentation_started=false` and
+`rescue_output_promoted_as_clean_ct=false`.
 
 `--evidence-run-dentalseg` uses the same visible fixed-model selection,
 app-private ready-marker gate, strict `cuda:0` policy, Job Object supervisor,

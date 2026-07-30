@@ -561,6 +561,202 @@
           </StackPanel>
         </ScrollViewer>
 
+        <ScrollViewer x:Name="DicomRescuePanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <Border
+                Padding="14"
+                Margin="0,0,0,18"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                CornerRadius="8">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock
+                      Text="三方向の形が自然に見えるよう、X・Y・Zのスライダーを動かしてください。"
+                      FontWeight="SemiBold"
+                      TextWrapping="Wrap" />
+                  <TextBlock
+                      Text="候補値は正確な寸法が確認できたことを意味しません。"
+                      Style="{StaticResource MutedTextStyle}"
+                      Margin="0,5,0,0" />
+                </StackPanel>
+                <Button
+                    x:Name="ShowRescueReasonButton"
+                    Grid.Column="1"
+                    Content="理由を見る"
+                    Click="ShowRescueReasonButton_Click"
+                    Margin="14,0,0,0"
+                    VerticalAlignment="Center"
+                    automation:AutomationProperties.Name="形状候補の理由を見る" />
+              </Grid>
+            </Border>
+            <Border
+                x:Name="RescueReasonPanel"
+                Visibility="Collapsed"
+                Padding="12"
+                Margin="0,0,0,16"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                CornerRadius="6">
+              <TextBlock
+                  x:Name="RescueReasonText"
+                  Text="X/Yは編集用の仮初期値です。Zは利用できる場合だけDICOMのスライス厚を候補に使います。推定の確かさ: 低。"
+                  TextWrapping="Wrap"
+                  Style="{StaticResource MutedTextStyle}" />
+            </Border>
+            <TextBlock Text="使用する撮影" Style="{StaticResource SectionTitleStyle}" />
+            <ComboBox
+                x:Name="RescueCandidateComboBox"
+                DisplayMemberPath="DisplayTitle"
+                SelectionChanged="RescueCandidateComboBox_SelectionChanged"
+                Margin="0,0,0,16"
+                automation:AutomationProperties.Name="形状を確認する撮影" />
+            <TextBlock Text="形の比率をスライダーで調整（mm）" Style="{StaticResource SectionTitleStyle}" />
+            <Grid Margin="0,0,0,8">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="72" />
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Text="X" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+              <Slider
+                  x:Name="RescueSpacingXSlider"
+                  Grid.Row="0"
+                  Grid.Column="1"
+                  Minimum="0.05"
+                  Maximum="10"
+                  Value="1"
+                  SmallChange="0.05"
+                  LargeChange="0.25"
+                  ValueChanged="RescueSpacingSlider_ValueChanged"
+                  automation:AutomationProperties.Name="X方向の寸法スライダー" />
+              <TextBlock
+                  x:Name="RescueSpacingXValueText"
+                  Grid.Row="0"
+                  Grid.Column="2"
+                  Text="1.0000"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Center"
+                  FontFamily="Cascadia Mono, Consolas" />
+              <TextBlock Grid.Row="1" Text="Y" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+              <Slider
+                  x:Name="RescueSpacingYSlider"
+                  Grid.Row="1"
+                  Grid.Column="1"
+                  Minimum="0.05"
+                  Maximum="10"
+                  Value="1"
+                  SmallChange="0.05"
+                  LargeChange="0.25"
+                  ValueChanged="RescueSpacingSlider_ValueChanged"
+                  automation:AutomationProperties.Name="Y方向の寸法スライダー" />
+              <TextBlock
+                  x:Name="RescueSpacingYValueText"
+                  Grid.Row="1"
+                  Grid.Column="2"
+                  Text="1.0000"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Center"
+                  FontFamily="Cascadia Mono, Consolas" />
+              <TextBlock Grid.Row="2" Text="Z" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+              <Slider
+                  x:Name="RescueSpacingZSlider"
+                  Grid.Row="2"
+                  Grid.Column="1"
+                  Minimum="0.05"
+                  Maximum="10"
+                  Value="1"
+                  SmallChange="0.05"
+                  LargeChange="0.25"
+                  ValueChanged="RescueSpacingSlider_ValueChanged"
+                  automation:AutomationProperties.Name="Z方向の寸法スライダー" />
+              <TextBlock
+                  x:Name="RescueSpacingZValueText"
+                  Grid.Row="2"
+                  Grid.Column="2"
+                  Text="1.0000"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Center"
+                  FontFamily="Cascadia Mono, Consolas" />
+            </Grid>
+            <TextBlock
+                x:Name="RescueValidationText"
+                Text="3方向を見比べながら、形が自然に見える位置へ動かしてください。"
+                Style="{StaticResource MutedTextStyle}"
+                Margin="0,0,0,16"
+                TextWrapping="Wrap" />
+            <Grid Margin="0,0,0,18">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0">
+                <TextBlock Text="AXIAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                <Border Height="140" Background="Black" CornerRadius="6">
+                  <Image x:Name="RescueAxialImage" Stretch="Uniform" />
+                </Border>
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <TextBlock Text="CORONAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                <Border Height="140" Background="Black" CornerRadius="6">
+                  <Image x:Name="RescueCoronalImage" Stretch="Uniform" />
+                </Border>
+              </StackPanel>
+              <StackPanel Grid.Column="4">
+                <TextBlock Text="SAGITTAL" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                <Border Height="140" Background="Black" CornerRadius="6">
+                  <Image x:Name="RescueSagittalImage" Stretch="Uniform" />
+                </Border>
+              </StackPanel>
+            </Grid>
+            <TextBlock
+                x:Name="RescuePreviewStatusText"
+                Text="確認画像はまだ作成されていません。AI推論は開始しません。"
+                Style="{StaticResource MutedTextStyle}"
+                Margin="0,0,0,16"
+                TextWrapping="Wrap" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Button
+                  x:Name="ChooseAnotherCtFromRescueButton"
+                  Content="別のCTを選ぶ"
+                  Click="ChooseAnotherCtFromRescueButton_Click"
+                  Margin="0,0,8,0"
+                  automation:AutomationProperties.Name="形状確認から別のCTを選ぶ" />
+              <Button
+                  x:Name="ResetRescueSpacingButton"
+                  Grid.Column="1"
+                  Content="推定形状に戻す"
+                  Click="ResetRescueSpacingButton_Click"
+                  automation:AutomationProperties.Name="推定形状に戻す" />
+              <Button
+                  x:Name="CreateRescuePreviewButton"
+                  Grid.Column="3"
+                  Content="この寸法で確認画像を作る"
+                  Style="{StaticResource PrimaryButtonStyle}"
+                  Click="CreateRescuePreviewButton_Click"
+                  automation:AutomationProperties.Name="この寸法で確認画像を作る"
+                  automation:AutomationProperties.HelpText="Secondary Captureの確認用pseudo-volumeと三方向画像を作ります。AI推論は開始しません。" />
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
         <ScrollViewer x:Name="RunningPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
           <StackPanel>
             <Grid Margin="0,0,0,12">

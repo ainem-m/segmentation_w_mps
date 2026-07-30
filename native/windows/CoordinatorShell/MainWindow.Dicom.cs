@@ -10,7 +10,10 @@ public partial class MainWindow
     private DicomIntakeSession? _dicomSession;
     private DicomAuditResult? _dicomAudit;
     private DicomCleanCandidate? _selectedDicomCandidate;
+    private DicomRescueCandidate? _selectedDicomRescueCandidate;
     private DicomConversionResult? _lastDicomConversion;
+    private DicomRescueResult? _lastDicomRescue;
+    private DicomSpacing? _initialDicomRescueSpacing;
     private DicomUiFailure? _lastDicomFailure;
     private bool _dicomOperationActive;
     private bool _dicomStopRequested;
@@ -95,6 +98,264 @@ public partial class MainWindow
         ChangeDicomSeriesButton.Focus();
     }
 
+    private void ShowRescueReasonButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var expanded =
+            RescueReasonPanel.Visibility != Visibility.Visible;
+        RescueReasonPanel.Visibility = expanded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ShowRescueReasonButton.Content = expanded
+            ? "理由を閉じる"
+            : "理由を見る";
+        AutomationProperties.SetName(
+            ShowRescueReasonButton,
+            expanded
+                ? "形状候補の理由を閉じる"
+                : "形状候補の理由を見る");
+    }
+
+    private void ChooseAnotherCtFromRescueButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        BeginOwnDataSelection(clearExistingInput: true);
+    }
+
+    private void ResetRescueSpacingButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_initialDicomRescueSpacing is null)
+        {
+            return;
+        }
+        SetRescueSpacingControls(_initialDicomRescueSpacing);
+        RescueValidationText.Text =
+            "候補値へ戻しました。確認後に確認画像を作ってください。";
+    }
+
+    private void RescueCandidateComboBox_SelectionChanged(
+        object sender,
+        System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (RescueCandidateComboBox.SelectedItem
+            is not DicomRescueCandidate candidate)
+        {
+            return;
+        }
+        _selectedDicomRescueCandidate = candidate;
+        _initialDicomRescueSpacing = candidate.InitialSpacing;
+        SetRescueSpacingControls(candidate.InitialSpacing);
+        RescueReasonText.Text = candidate.SliceThickness.HasValue
+            ? "X/Yは編集用の仮初期値です。ZはDICOMに残っているスライス厚を候補に使います。推定の確かさ: 低。"
+            : "X/Y/Zはすべて編集用の仮初期値です。寸法は確認できていません。推定の確かさ: 不明。";
+        ClearRescuePreview();
+    }
+
+    private async void CreateRescuePreviewButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_dicomSession is null
+            || _dicomAudit is null
+            || _selectedDicomRescueCandidate is null)
+        {
+            ShowDicomFailure(
+                "dicom_rescue_candidate_invalid",
+                "形状を確認する撮影を選択してください。",
+                _dicomAudit?.OperationId,
+                stage: "rescue");
+            return;
+        }
+        if (!TryReadRescueSpacing(out var spacing))
+        {
+            RescueValidationText.Text =
+                "X、Y、Zのスライダー位置を確認してください。";
+            RescueSpacingXSlider.Focus();
+            return;
+        }
+
+        _dicomStopRequested = false;
+        BeginDicomProgress(
+            "確認画像を作成中",
+            "確定した寸法でpseudo-volumeと三方向画像を作成しています。AI推論は開始しません。",
+            "形状と寸法のreadbackを確認しています。");
+        DicomRescueResult result;
+        try
+        {
+            result = await _dicomSession.PrepareRescueAsync(
+                _dicomAudit,
+                _selectedDicomRescueCandidate,
+                spacing);
+        }
+        finally
+        {
+            EndDicomProgress();
+        }
+        if (_dicomStopRequested)
+        {
+            ShowDicomFailure(
+                "dicom_rescue_cancelled",
+                "確認画像の作成を停止しました。",
+                result.OperationId,
+                stage: "rescue");
+            return;
+        }
+        if (!result.Succeeded)
+        {
+            ShowDicomFailure(
+                result.ErrorCode ?? "dicom_rescue_failed",
+                result.SafeMessage
+                    ?? "確認画像を作成できませんでした。",
+                result.OperationId,
+                stage: "rescue");
+            return;
+        }
+        try
+        {
+            ShowRescuePreviews(result.Previews);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or ArgumentException
+                or OverflowException)
+        {
+            ShowDicomFailure(
+                "dicom_rescue_preview_invalid",
+                "作成した三方向画像を表示できませんでした。",
+                result.OperationId,
+                stage: "rescue");
+            return;
+        }
+        _lastDicomRescue = result;
+        AddSafeDicomEvent(
+            "rescue_preview_completed",
+            result.OperationId,
+            "preview_count=3");
+        RescueValidationText.Text =
+            $"確認済み寸法: X {spacing.X:0.####} / Y {spacing.Y:0.####} / Z {spacing.Z:0.####} mm";
+        RescuePreviewStatusText.Text =
+            "三方向の確認画像を作成しました。Secondary Captureの救済用pseudo-volumeであり、通常CTとして扱いません。AI推論は開始していません。";
+        SetScreen(
+            ShellScreen.DicomRescue,
+            "確認画像を作成しました");
+    }
+
+    private void ShowDicomRescue(
+        DicomRescueCandidate candidate)
+    {
+        _inputPath = null;
+        RunButton.IsEnabled = false;
+        RescueCandidateComboBox.ItemsSource =
+            _dicomAudit?.RescueCandidates;
+        RescueCandidateComboBox.SelectedItem = candidate;
+        _selectedDicomRescueCandidate = candidate;
+        _initialDicomRescueSpacing = candidate.InitialSpacing;
+        SetRescueSpacingControls(candidate.InitialSpacing);
+        ClearRescuePreview();
+        RescueReasonPanel.Visibility = Visibility.Collapsed;
+        ShowRescueReasonButton.Content = "理由を見る";
+        AutomationProperties.SetName(
+            ShowRescueReasonButton,
+            "形状候補の理由を見る");
+        SetScreen(
+            ShellScreen.DicomRescue,
+            "推定の確かさ: 低");
+    }
+
+    private void SetRescueSpacingControls(DicomSpacing spacing)
+    {
+        RescueSpacingXSlider.Maximum =
+            Math.Max(10, spacing.X);
+        RescueSpacingYSlider.Maximum =
+            Math.Max(10, spacing.Y);
+        RescueSpacingZSlider.Maximum =
+            Math.Max(10, spacing.Z);
+        RescueSpacingXSlider.Value = spacing.X;
+        RescueSpacingYSlider.Value = spacing.Y;
+        RescueSpacingZSlider.Value = spacing.Z;
+        UpdateRescueSpacingValueText();
+    }
+
+    private bool TryReadRescueSpacing(out DicomSpacing spacing)
+    {
+        spacing = new DicomSpacing(
+            RescueSpacingXSlider.Value,
+            RescueSpacingYSlider.Value,
+            RescueSpacingZSlider.Value);
+        return spacing.IsValid;
+    }
+
+    private void RescueSpacingSlider_ValueChanged(
+        object sender,
+        RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (RescueSpacingXValueText is null
+            || RescueSpacingYValueText is null
+            || RescueSpacingZValueText is null)
+        {
+            return;
+        }
+        UpdateRescueSpacingValueText();
+        if (_lastDicomRescue is not null)
+        {
+            ClearRescuePreview();
+            RescueValidationText.Text =
+                "寸法を変更しました。もう一度、確認画像を作ってください。";
+        }
+    }
+
+    private void UpdateRescueSpacingValueText()
+    {
+        RescueSpacingXValueText.Text =
+            $"{RescueSpacingXSlider.Value:0.0000} mm";
+        RescueSpacingYValueText.Text =
+            $"{RescueSpacingYSlider.Value:0.0000} mm";
+        RescueSpacingZValueText.Text =
+            $"{RescueSpacingZSlider.Value:0.0000} mm";
+    }
+
+    private void ShowRescuePreviews(
+        IReadOnlyList<DicomRescuePreview> previews)
+    {
+        RescueAxialImage.Source = LoadVerifiedPreview(
+            previews.Single(item => item.Plane == "axial"));
+        RescueCoronalImage.Source = LoadVerifiedPreview(
+            previews.Single(item => item.Plane == "coronal"));
+        RescueSagittalImage.Source = LoadVerifiedPreview(
+            previews.Single(item => item.Plane == "sagittal"));
+    }
+
+    private static System.Windows.Media.Imaging.BitmapSource
+        LoadVerifiedPreview(DicomRescuePreview preview)
+    {
+        var image = PgmBitmapLoader.Load(preview.Path);
+        if (image.PixelWidth != preview.Width
+            || image.PixelHeight != preview.Height)
+        {
+            throw new InvalidDataException(
+                "The PGM dimensions do not match the rescue manifest.");
+        }
+        return image;
+    }
+
+    private void ClearRescuePreview()
+    {
+        _lastDicomRescue = null;
+        RescueAxialImage.Source = null;
+        RescueCoronalImage.Source = null;
+        RescueSagittalImage.Source = null;
+        RescueValidationText.Text =
+            "3方向を見比べながら、形が自然に見える位置へ動かしてください。";
+        RescuePreviewStatusText.Text =
+            "確認画像はまだ作成されていません。AI推論は開始しません。";
+    }
+
     private async Task<bool> AuditAndConvertDicomAsync(
         string dicomFolder)
     {
@@ -103,7 +364,10 @@ public partial class MainWindow
         _dicomSession = new DicomIntakeSession(_configuration);
         _dicomAudit = null;
         _selectedDicomCandidate = null;
+        _selectedDicomRescueCandidate = null;
         _lastDicomConversion = null;
+        _lastDicomRescue = null;
+        _initialDicomRescueSpacing = null;
         _lastDicomFailure = null;
 
         BeginDicomProgress(
@@ -141,6 +405,19 @@ public partial class MainWindow
             return false;
         }
         _dicomAudit = audit;
+        if (audit.Candidates.Count == 0)
+        {
+            _selectedDicomRescueCandidate =
+                audit.RescueCandidates[0];
+            AddSafeDicomEvent(
+                "audit_completed",
+                audit.OperationId,
+                $"rescue_candidate_count={audit.RescueCandidates.Count}");
+            ShowDicomRescue(
+                _selectedDicomRescueCandidate);
+            return true;
+        }
+
         _selectedDicomCandidate = audit.Candidates[0];
         AddSafeDicomEvent(
             "audit_completed",
@@ -262,7 +539,10 @@ public partial class MainWindow
             _dicomSession,
             _dicomAudit,
             _selectedDicomCandidate,
+            _selectedDicomRescueCandidate,
             _lastDicomConversion,
+            _lastDicomRescue,
+            _initialDicomRescueSpacing,
             _inputPath);
     }
 
@@ -276,7 +556,12 @@ public partial class MainWindow
         _dicomSession = snapshot.Session;
         _dicomAudit = snapshot.Audit;
         _selectedDicomCandidate = snapshot.SelectedCandidate;
+        _selectedDicomRescueCandidate =
+            snapshot.SelectedRescueCandidate;
         _lastDicomConversion = snapshot.Conversion;
+        _lastDicomRescue = snapshot.Rescue;
+        _initialDicomRescueSpacing =
+            snapshot.InitialRescueSpacing;
         _inputPath = snapshot.InputPath;
     }
 
@@ -434,7 +719,10 @@ public partial class MainWindow
         _dicomSession = null;
         _dicomAudit = null;
         _selectedDicomCandidate = null;
+        _selectedDicomRescueCandidate = null;
         _lastDicomConversion = null;
+        _lastDicomRescue = null;
+        _initialDicomRescueSpacing = null;
         _lastDicomFailure = null;
         _dicomOperationActive = false;
         _dicomStopRequested = false;
@@ -442,6 +730,8 @@ public partial class MainWindow
         DicomSeriesSummaryPanel.Visibility = Visibility.Collapsed;
         DicomSeriesSelectionPanel.Visibility = Visibility.Collapsed;
         DicomSeriesListBox.ItemsSource = null;
+        RescueCandidateComboBox.ItemsSource = null;
+        ClearRescuePreview();
         SetReturnToInputButtonForDicomFailure(
             dicomFailure: false);
     }
@@ -533,6 +823,28 @@ public partial class MainWindow
                         DicomSeriesListBox.Focus();
                     },
                     System.Windows.Threading.DispatcherPriority.ContextIdle);
+                break;
+            case "dicom-rescue":
+                var rescueCandidate = new DicomRescueCandidate(
+                    "preview-rescue-1",
+                    "preview",
+                    "preview-rescue-series",
+                    200,
+                    "AXIAL BO",
+                    138,
+                    "secondary_capture_rescue_candidate",
+                    0.9375);
+                _dicomAudit = DicomAuditResult.Success(
+                    "preview",
+                    "preview-workspace",
+                    "preview-source",
+                    "preview-audit.json",
+                    Array.Empty<DicomCleanCandidate>(),
+                    new[] { rescueCandidate });
+                _selectedDicomRescueCandidate = rescueCandidate;
+                ShowDicomRescue(rescueCandidate);
+                RescuePreviewStatusText.Text =
+                    "UI PREVIEW: 三方向画像の生成前です。AI推論は開始しません。";
                 break;
             default:
                 throw new ArgumentException(
@@ -628,6 +940,119 @@ public partial class MainWindow
             });
         return passed;
     }
+
+    internal async Task<bool> RunEvidenceDicomRescueAsync(
+        string dicomFolder,
+        string evidencePath)
+    {
+        _safeEventLog.Clear();
+        var audited = await AuditAndConvertDicomAsync(
+            dicomFolder);
+        var candidate = _selectedDicomRescueCandidate;
+        var audit = _dicomAudit;
+        DicomSpacing? spacing = null;
+        if (candidate is not null
+            && TryReadRescueSpacing(out var sliderSpacing))
+        {
+            spacing = sliderSpacing;
+        }
+        var coordinatorWasNotStarted =
+            _lastResult is null;
+        DicomRescueResult? rescue = null;
+        if (audited
+            && audit is not null
+            && candidate is not null
+            && spacing is not null
+            && _dicomSession is not null
+            && audit.Candidates.Count == 0)
+        {
+            rescue = await _dicomSession.PrepareRescueAsync(
+                audit,
+                candidate,
+                spacing);
+            if (rescue.Succeeded)
+            {
+                ShowRescuePreviews(rescue.Previews);
+                _lastDicomRescue = rescue;
+                RescuePreviewStatusText.Text =
+                    "三方向の確認画像を作成しました。AI推論は開始していません。";
+                SetScreen(
+                    ShellScreen.DicomRescue,
+                    "確認画像を作成しました");
+            }
+        }
+        var manifestExists =
+            rescue?.ManifestPath is { } manifestPath
+            && File.Exists(manifestPath);
+        var niftiExists =
+            rescue?.NiftiPath is { } niftiPath
+            && File.Exists(niftiPath)
+            && new FileInfo(niftiPath).Length > 0;
+        var previewPlanes = rescue?.Previews
+            .Select(preview => preview.Plane)
+            .Order(StringComparer.Ordinal)
+            .ToArray()
+            ?? Array.Empty<string>();
+        var passed =
+            audited
+            && coordinatorWasNotStarted
+            && rescue?.Succeeded == true
+            && manifestExists
+            && niftiExists
+            && previewPlanes.SequenceEqual(
+                new[] { "axial", "coronal", "sagittal" })
+            && _lastResult is null
+            && _inputPath is null;
+        await WriteEvidenceAsync(
+            evidencePath,
+            new
+            {
+                schema =
+                    "totalsegmentator_wrapper.windows_wpf_dicom_rescue_preview.v1",
+                status = passed ? "pass" : "fail",
+                source_kind =
+                    "dicom_secondary_capture",
+                dicom_operation_id =
+                    audit?.OperationId
+                    ?? _lastDicomFailure?.OperationId,
+                clean_candidate_count =
+                    audit?.Candidates.Count,
+                rescue_candidate_count =
+                    audit?.RescueCandidates.Count,
+                selected_series_number =
+                    candidate?.SeriesNumber,
+                selected_series_file_count =
+                    candidate?.FileCount,
+                requested_spacing_xyz =
+                    spacing?.Values,
+                normalizer_exit_code =
+                    rescue?.Succeeded == true ? (int?)0 : null,
+                job_became_empty =
+                    rescue?.Succeeded == true,
+                rescue_manifest_exists =
+                    manifestExists,
+                patched_nifti_nonempty =
+                    niftiExists,
+                preview_count =
+                    rescue?.Previews.Count,
+                preview_planes = previewPlanes,
+                preview_uniform_or_empty =
+                    rescue?.Previews.ToDictionary(
+                        preview => preview.Plane,
+                        preview => preview.UniformOrEmpty),
+                coordinator_started =
+                    !coordinatorWasNotStarted
+                    || _lastResult is not null,
+                segmentation_started = false,
+                rescue_output_promoted_as_clean_ct =
+                    _inputPath is not null,
+                raw_output_forwarded = false,
+                error_code =
+                    rescue?.ErrorCode
+                    ?? _lastDicomFailure?.ErrorCode,
+            });
+        return passed;
+    }
 }
 
 internal sealed record DicomUiFailure(
@@ -641,5 +1066,8 @@ internal sealed record DicomSelectionSnapshot(
     DicomIntakeSession? Session,
     DicomAuditResult? Audit,
     DicomCleanCandidate? SelectedCandidate,
+    DicomRescueCandidate? SelectedRescueCandidate,
     DicomConversionResult? Conversion,
+    DicomRescueResult? Rescue,
+    DicomSpacing? InitialRescueSpacing,
     string? InputPath);

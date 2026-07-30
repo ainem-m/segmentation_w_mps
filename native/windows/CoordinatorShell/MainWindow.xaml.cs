@@ -18,6 +18,7 @@ internal enum ShellScreen
     Setup,
     Start,
     Input,
+    DicomRescue,
     Running,
     Result,
 }
@@ -76,6 +77,12 @@ public partial class MainWindow : Window
             [ChangeDicomSeriesButton] = "使用する撮影を変更",
             [UseSelectedDicomSeriesButton] = "この撮影を使う",
             [CloseDicomSeriesButton] = "撮影選択を閉じる",
+            [ShowRescueReasonButton] = "形状候補の理由を見る",
+            [ChooseAnotherCtFromRescueButton] =
+                "形状確認から別のCTを選ぶ",
+            [ResetRescueSpacingButton] = "推定形状に戻す",
+            [CreateRescuePreviewButton] =
+                "この寸法で確認画像を作る",
             [StandardModelCardButton] = "標準モデルを選ぶ",
             [OtherModelsCardButton] = "その他のモデルを比較",
             [CloseModelComparisonButton] =
@@ -142,6 +149,17 @@ public partial class MainWindow : Window
             && AutomationProperties.GetName(ReturnToInputButton)
                 == "別のCTを選ぶ";
         SetReturnToInputButtonForDicomFailure(dicomFailure: false);
+        ShowRescueReasonButton_Click(
+            ShowRescueReasonButton,
+            new RoutedEventArgs());
+        var rescueReasonExpandedLabelPassed =
+            Equals(ShowRescueReasonButton.Content, "理由を閉じる")
+            && AutomationProperties.GetName(
+                    ShowRescueReasonButton)
+                == "形状候補の理由を閉じる";
+        ShowRescueReasonButton_Click(
+            ShowRescueReasonButton,
+            new RoutedEventArgs());
         SetSelectedSegmentationProfile(
             SegmentationProfile.DentalSegmentator);
         var dentalModelLabelPassed =
@@ -199,6 +217,7 @@ public partial class MainWindow : Window
             && cancellationCopyLabelPassed
             && noInputLabelPassed
             && dicomRecoveryLabelPassed
+            && rescueReasonExpandedLabelPassed
             && dentalModelLabelPassed
             && individualTeethLabelPassed
             && toothSegLabelPassed;
@@ -908,6 +927,10 @@ public partial class MainWindow : Window
             screen == ShellScreen.Input
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        DicomRescuePanel.Visibility =
+            screen == ShellScreen.DicomRescue
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         RunningPanel.Visibility =
             screen == ShellScreen.Running
                 ? Visibility.Visible
@@ -927,6 +950,9 @@ public partial class MainWindow : Window
             ShellScreen.Input => (
                 "入力と作成内容",
                 "入力を確認し、作成する3Dプレビューを確認します。"),
+            ShellScreen.DicomRescue => (
+                "形状を確認",
+                "三方向の断面を見ながら、形が自然に見える寸法を確認します。"),
             ShellScreen.Running => (
                 "処理中",
                 "現在の処理と経過時間を表示します。"),
@@ -948,6 +974,7 @@ public partial class MainWindow : Window
         {
             ShellScreen.Start => 1,
             ShellScreen.Input => 2,
+            ShellScreen.DicomRescue => 2,
             ShellScreen.Running => 3,
             ShellScreen.Result => 4,
             _ => 0,
@@ -984,6 +1011,8 @@ public partial class MainWindow : Window
                 InputSourceChoicePanel.Visibility == Visibility.Visible =>
                     ChooseNiftiButton.Focus(),
             ShellScreen.Input => RunButton.Focus(),
+            ShellScreen.DicomRescue =>
+                RescueSpacingXSlider.Focus(),
             ShellScreen.Running => StopButton.Focus(),
             ShellScreen.Result when
                 OpenPreviewButton.Visibility == Visibility.Visible =>
@@ -1049,6 +1078,7 @@ public partial class MainWindow : Window
                 break;
             case "dicom-input":
             case "dicom-series":
+            case "dicom-rescue":
                 ApplyDicomPreviewScenario(scenario);
                 break;
             case "model-comparison":

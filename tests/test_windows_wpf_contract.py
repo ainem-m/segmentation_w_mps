@@ -67,7 +67,9 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("RunEvidenceCancelSampleAsync", shell)
         self.assertIn("await RequestStopAsync()", shell)
 
-    def test_dicom_intake_is_clean_only_private_and_boundary_checked(self) -> None:
+    def test_dicom_intake_keeps_clean_priority_and_rescue_preview_boundary(
+        self,
+    ) -> None:
         session_path = SHELL / "DicomIntakeSession.cs"
         self.assertTrue(session_path.is_file())
         intake = "\n".join(
@@ -81,6 +83,8 @@ class WindowsWpfContractTests(unittest.TestCase):
 
         self.assertIn('"audit"', intake)
         self.assertIn('"convert-clean"', intake)
+        self.assertIn('"prepare-rescue"', intake)
+        self.assertIn('"--patched-spacing"', intake)
         self.assertIn('"--series-key"', intake)
         self.assertNotIn('"--series-number"', intake)
         self.assertIn('"series_instance_uid"', intake)
@@ -96,7 +100,6 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"convert_clean"', intake)
         self.assertIn('"requires_external_tool"', intake)
         for unsupported_command in (
-            '"prepare-rescue"',
             '"export-rescue-stack"',
             '"prepare-viewer-export"',
         ):
@@ -104,6 +107,29 @@ class WindowsWpfContractTests(unittest.TestCase):
                 self.assertNotIn(unsupported_command, intake)
         self.assertNotIn("CoordinatorSession", intake)
         self.assertNotIn('"run_nifti_totalsegmentator"', intake)
+        self.assertIn(
+            'audit.Candidates.Count == 0',
+            shell,
+        )
+        self.assertIn(
+            '"secondary_capture_rescue_candidate"',
+            intake,
+        )
+        self.assertIn(
+            '"prepare_rescue_with_explicit_spacing"',
+            intake,
+        )
+        self.assertIn(
+            '"totalsegmentator_wrapper.windows_dicom_rescue_preview.v1"',
+            intake,
+        )
+        self.assertIn("segmentation_started = false", intake)
+        self.assertIn(
+            "rescue_output_promoted_as_clean_ct = false",
+            intake,
+        )
+        self.assertIn("patched_spacing_matches_requested", intake)
+        self.assertIn("PgmBitmapLoader.Load", shell)
 
         self.assertIn("DrainAsync(process.StandardOutput)", intake)
         self.assertIn("DrainAsync(process.StandardError)", intake)
@@ -152,6 +178,10 @@ class WindowsWpfContractTests(unittest.TestCase):
             "使用する撮影を変更",
             "この撮影を使う",
             "撮影選択を閉じる",
+            "形状候補の理由を見る",
+            "形状確認から別のCTを選ぶ",
+            "推定形状に戻す",
+            "この寸法で確認画像を作る",
             "標準モデルを選ぶ",
             "その他のモデルを比較",
             "作成方法の比較を閉じる",
@@ -182,6 +212,12 @@ class WindowsWpfContractTests(unittest.TestCase):
             "個別歯ベータ",
             "高精細歯（ToothSeg）",
             "上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。",
+            "形状を確認",
+            "形の比率をスライダーで調整（mm）",
+            "理由を見る",
+            "推定形状に戻す",
+            "この寸法で確認画像を作る",
+            "AI推論は開始しません。",
         )
         for label in (*automation_names, *visible_copy):
             with self.subTest(label=label):
@@ -193,16 +229,26 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 24)
+        self.assertEqual(len(buttons), 28)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
             {button.get(automation_name) for button in buttons},
             set(automation_names),
         )
+        self.assertNotIn("RescueSpacingXTextBox", xaml)
+        for slider in (
+            "RescueSpacingXSlider",
+            "RescueSpacingYSlider",
+            "RescueSpacingZSlider",
+        ):
+            with self.subTest(slider=slider):
+                self.assertIn(slider, xaml)
         for dynamic_label in (
             "別のCTを選ぶ",
             "このCTで3Dプレビューを作る",
+            "理由を閉じる",
+            "形状候補の理由を閉じる",
             "詳細情報を閉じる",
             "停止要求済み。終了処理中です。",
             "停止情報をコピー",
@@ -288,6 +334,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("dynamicLabelsPassed", code)
         self.assertIn("dynamic_labels = ui.DynamicLabels", app)
         self.assertIn("button_count = ui.ButtonCount", app)
+        self.assertIn('"--evidence-run-dicom-rescue"', app)
 
     def test_dentalsegmentator_is_fixed_allowlisted_and_never_falls_back(
         self,

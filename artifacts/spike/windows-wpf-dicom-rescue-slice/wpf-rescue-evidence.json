@@ -1,0 +1,35 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_wpf_dicom_rescue_preview.v1",
+  "status": "pass",
+  "source_kind": "dicom_secondary_capture",
+  "dicom_operation_id": "c3db4e0d-b768-417f-9312-19c2a0eec1e9",
+  "clean_candidate_count": 0,
+  "rescue_candidate_count": 1,
+  "selected_series_number": 20,
+  "selected_series_file_count": 32,
+  "requested_spacing_xyz": [
+    1,
+    1,
+    1
+  ],
+  "normalizer_exit_code": 0,
+  "job_became_empty": true,
+  "rescue_manifest_exists": true,
+  "patched_nifti_nonempty": true,
+  "preview_count": 3,
+  "preview_planes": [
+    "axial",
+    "coronal",
+    "sagittal"
+  ],
+  "preview_uniform_or_empty": {
+    "axial": true,
+    "coronal": true,
+    "sagittal": true
+  },
+  "coordinator_started": false,
+  "segmentation_started": false,
+  "rescue_output_promoted_as_clean_ct": false,
+  "raw_output_forwarded": false,
+  "error_code": null
+}
