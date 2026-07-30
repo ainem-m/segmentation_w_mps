@@ -42,6 +42,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("operation = profile.OperationName()", session)
         self.assertIn('"run_nifti_totalsegmentator"', profiles)
         self.assertIn('"run_nifti_dentalsegmentator"', profiles)
+        self.assertIn('"run_nifti_individual_teeth"', profiles)
         self.assertIn('mode = "cuda_required"', session)
         self.assertIn('index = 0', session)
         self.assertNotIn("dicom", session.lower())
@@ -154,7 +155,7 @@ class WindowsWpfContractTests(unittest.TestCase):
             "作成方法の比較を閉じる",
             "通常のTotalSegmentatorを選ぶ",
             "DentalSegmentatorを選ぶ",
-            "個別歯ベータの対応状況を見る",
+            "個別歯ベータを選ぶ",
             "Sampleで3Dプレビューを作る",
             "停止",
             "3Dプレビューを開く",
@@ -236,6 +237,14 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("CheckDicomRuntime", configuration)
         self.assertIn(
             "CheckDentalSegmentatorRuntime",
+            configuration,
+        )
+        self.assertIn(
+            "CheckIndividualTeethRuntime",
+            configuration,
+        )
+        self.assertIn(
+            '"Dataset113_ToothFairy3"',
             configuration,
         )
         self.assertIn(
@@ -321,6 +330,40 @@ class WindowsWpfContractTests(unittest.TestCase):
             '"task": request',
             coordinator,
         )
+
+    def test_individual_teeth_is_fixed_allowlisted_and_never_falls_back(
+        self,
+    ) -> None:
+        models = (SHELL / "MainWindow.Models.cs").read_text(
+            encoding="utf-8"
+        )
+        coordinator = (
+            ROOT / "src" / "totalsegmentator_wrapper_mac" / "coordinator.py"
+        ).read_text(encoding="utf-8")
+        protocol = (
+            ROOT
+            / "src"
+            / "totalsegmentator_wrapper_mac"
+            / "coordinator_protocol.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("SegmentationProfile.IndividualTeeth", models)
+        self.assertIn("CheckIndividualTeethRuntime", models)
+        self.assertIn("RunEvidenceIndividualTeethAsync", models)
+        self.assertIn('"run_nifti_individual_teeth"', protocol)
+        self.assertIn('"experimental_teeth": True', coordinator)
+        self.assertIn('"teeth_crop_margin_mm": 5.0', coordinator)
+        self.assertIn(
+            '"teeth_robust_craniofacial_preflight": True',
+            coordinator,
+        )
+        self.assertIn('"teeth_force_split": False', coordinator)
+        self.assertIn(
+            'code="individual_teeth_prepare_required"',
+            coordinator,
+        )
+        self.assertNotIn('"backend": request', coordinator)
+        self.assertNotIn('"task": request', coordinator)
 
     def test_interactive_cancel_records_typed_terminal_and_exit_code(self) -> None:
         supervisor = SUPERVISOR.read_text(encoding="utf-8")

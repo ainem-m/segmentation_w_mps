@@ -76,63 +76,93 @@ public partial class MainWindow
         OtherModelsCardButton.Focus();
     }
 
-    private void IndividualTeethStatusButton_Click(
+    private void SelectIndividualTeethButton_Click(
         object sender,
         RoutedEventArgs e)
     {
-        ModelSelectionMessage.Text =
-            "個別歯ベータは次のWindows工程で検証します。この実行では選択していません。";
-        ModelSelectionMessage.Visibility = Visibility.Visible;
+        var readiness =
+            _configuration.CheckIndividualTeethRuntime();
+        if (!readiness.Passed)
+        {
+            ModelSelectionMessage.Text = string.Join(
+                " ",
+                readiness.Message,
+                readiness.RecoveryMessage);
+            ModelSelectionMessage.Visibility =
+                Visibility.Visible;
+            StatusPillText.Text = "追加モデル未準備";
+            return;
+        }
+        SetSelectedSegmentationProfile(
+            SegmentationProfile.IndividualTeeth);
+        SetModelComparisonExpanded(expanded: false);
+        OtherModelsCardButton.Focus();
     }
 
     private void SetSelectedSegmentationProfile(
         SegmentationProfile profile)
     {
         _selectedSegmentationProfile = profile;
+        var standardSelected =
+            profile == SegmentationProfile.TotalSegmentator;
         var dentalSelected =
             profile == SegmentationProfile.DentalSegmentator;
+        var individualSelected =
+            profile == SegmentationProfile.IndividualTeeth;
         StandardModelCardTitle.Text =
-            dentalSelected ? "標準モデル" : "✓  標準モデル";
+            standardSelected ? "✓  標準モデル" : "標準モデル";
         OtherModelsCardTitle.Text =
-            dentalSelected ? "✓  その他のモデル" : "その他のモデル";
-        OtherModelsCardName.Text = dentalSelected
-            ? "選択中：DentalSegmentator（実験的）"
-            : "比較して選ぶ";
+            standardSelected ? "その他のモデル" : "✓  その他のモデル";
+        OtherModelsCardName.Text = standardSelected
+            ? "比較して選ぶ"
+            : $"選択中：{profile.DisplayName()}";
         OtherModelsCardDetail.Text = dentalSelected
             ? "現在はこの方法を使用します。クリックすると結果画像と処理内容を比較できます。"
-            : "結果画像と処理内容を見ながら、用途に合う方法を選べます。";
-        StandardModelCardButton.BorderBrush = dentalSelected
-            ? SystemColors.ActiveBorderBrush
-            : SystemColors.HighlightBrush;
-        StandardModelCardButton.BorderThickness =
-            dentalSelected ? new Thickness(1) : new Thickness(2);
-        OtherModelsCardButton.BorderBrush = dentalSelected
+            : individualSelected
+                ? "歯を1本ずつ分けるベータ機能を使用します。クリックすると他の方法と比較できます。"
+                : "結果画像と処理内容を見ながら、用途に合う方法を選べます。";
+        StandardModelCardButton.BorderBrush = standardSelected
             ? SystemColors.HighlightBrush
             : SystemColors.ActiveBorderBrush;
+        StandardModelCardButton.BorderThickness =
+            standardSelected ? new Thickness(2) : new Thickness(1);
+        OtherModelsCardButton.BorderBrush = standardSelected
+            ? SystemColors.ActiveBorderBrush
+            : SystemColors.HighlightBrush;
         OtherModelsCardButton.BorderThickness =
-            dentalSelected ? new Thickness(2) : new Thickness(1);
-        SelectStandardModelButton.IsEnabled = dentalSelected;
+            standardSelected ? new Thickness(1) : new Thickness(2);
+        SelectStandardModelButton.IsEnabled = !standardSelected;
         SelectStandardModelButton.Content =
-            dentalSelected ? "この方法を選ぶ" : "選択中";
+            standardSelected ? "選択中" : "この方法を選ぶ";
         SelectDentalSegmentatorButton.IsEnabled = !dentalSelected;
         SelectDentalSegmentatorButton.Content =
             dentalSelected ? "選択中" : "この方法を選ぶ";
+        SelectIndividualTeethButton.IsEnabled = !individualSelected;
+        SelectIndividualTeethButton.Content =
+            individualSelected ? "選択中" : "この方法を選ぶ";
         AutomationProperties.SetName(
             SelectStandardModelButton,
-            dentalSelected
-                ? "通常のTotalSegmentatorを選ぶ"
-                : "通常のTotalSegmentatorを選択中");
+            standardSelected
+                ? "通常のTotalSegmentatorを選択中"
+                : "通常のTotalSegmentatorを選ぶ");
         AutomationProperties.SetName(
             SelectDentalSegmentatorButton,
             dentalSelected
                 ? "DentalSegmentatorを選択中"
                 : "DentalSegmentatorを選ぶ");
+        AutomationProperties.SetName(
+            SelectIndividualTeethButton,
+            individualSelected
+                ? "個別歯ベータを選択中"
+                : "個別歯ベータを選ぶ");
         ModelSelectionMessage.Text = dentalSelected
             ? "DentalSegmentatorは実験的な追加機能です。別モデルやCPUへ自動的に切り替えません。"
-            : string.Empty;
-        ModelSelectionMessage.Visibility = dentalSelected
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+            : individualSelected
+                ? "個別歯ベータは検証用のベータ機能です。通常の表示より時間がかかり、CPUへ切り替えません。"
+                : string.Empty;
+        ModelSelectionMessage.Visibility = standardSelected
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         AutomationProperties.SetHelpText(
             RunButton,
             $"strict CUDAで{profile.DisplayName()}処理を開始します。");
@@ -154,14 +184,18 @@ public partial class MainWindow
 
     private RuntimeCheckResult CheckSelectedModelRuntime()
     {
-        return _selectedSegmentationProfile
-            == SegmentationProfile.DentalSegmentator
-            ? _configuration.CheckDentalSegmentatorRuntime()
-            : new RuntimeCheckResult(
+        return _selectedSegmentationProfile switch
+        {
+            SegmentationProfile.DentalSegmentator =>
+                _configuration.CheckDentalSegmentatorRuntime(),
+            SegmentationProfile.IndividualTeeth =>
+                _configuration.CheckIndividualTeethRuntime(),
+            _ => new RuntimeCheckResult(
                 true,
                 "TotalSegmentatorを使用します。",
                 null,
-                null);
+                null),
+        };
     }
 
     private void ResetModelSelection()
@@ -199,6 +233,27 @@ public partial class MainWindow
                     "この工程の進捗率は取得できません。処理を継続しています。";
                 DeviceText.Text =
                     "使用機能: DentalSegmentator（実験的） / NVIDIA CUDA (cuda:0)";
+                break;
+            case "input-individual-teeth":
+                SetSelectedSegmentationProfile(
+                    SegmentationProfile.IndividualTeeth);
+                break;
+            case "running-individual-teeth":
+                SetSelectedSegmentationProfile(
+                    SegmentationProfile.IndividualTeeth);
+                SetScreen(
+                    ShellScreen.Running,
+                    "個別歯ベータで作成中");
+                RunningTitle.Text =
+                    "歯を1本ずつ抽出中";
+                RunningDetail.Text =
+                    "個別歯ベータでCTデータを処理しています。";
+                OverallProgressText.Text = "全体: 工程 4 / 6";
+                RunProgressBar.IsIndeterminate = true;
+                SubProgressText.Text =
+                    "この工程の進捗率は取得できません。処理を継続しています。";
+                DeviceText.Text =
+                    "使用機能: 個別歯ベータ / NVIDIA CUDA (cuda:0)";
                 break;
             default:
                 throw new ArgumentException(
@@ -294,6 +349,111 @@ public partial class MainWindow
                     SegmentationProfile.DentalSegmentator.OperationName(),
                 backend = "dentalsegmentator",
                 task = "craniofacial_structures",
+                operation_id = result?.OperationId,
+                terminal_event = result?.TerminalEvent,
+                supervisor_exit_code = result?.SupervisorExitCode,
+                requested_policy = result?.RequestedPolicy,
+                requested_device_index =
+                    result?.RequestedDeviceIndex,
+                resolved_device = result?.ResolvedDevice,
+                fallback_allowed = result?.FallbackAllowed,
+                fallback_occurred = result?.FallbackOccurred,
+                run_manifest_verified = runManifestPassed,
+                artifact_manifest_exists =
+                    artifactManifestExists,
+                segmentation_started = result is not null,
+            });
+        return passed;
+    }
+
+    internal async Task<bool> RunEvidenceIndividualTeethAsync(
+        string evidencePath)
+    {
+        var runtime = _configuration.CheckRuntime();
+        var model = _configuration.CheckIndividualTeethRuntime();
+        if (!runtime.Passed || !model.Passed)
+        {
+            await WriteEvidenceAsync(
+                evidencePath,
+                new
+                {
+                    schema =
+                        "totalsegmentator_wrapper.windows_wpf_individual_teeth_run.v1",
+                    status = "fail",
+                    error_code =
+                        model.ErrorCode
+                        ?? runtime.ErrorCode
+                        ?? "runtime_unavailable",
+                    segmentation_started = false,
+                });
+            return false;
+        }
+
+        SelectBundledSample();
+        SetSelectedSegmentationProfile(
+            SegmentationProfile.IndividualTeeth);
+        await StartRunAsync();
+        var result = _lastResult;
+        var runManifestPassed = false;
+        var artifactManifestExists = false;
+        if (result?.FinalDirectory is { Length: > 0 } finalDirectory)
+        {
+            var runManifestPath = Path.Combine(
+                finalDirectory,
+                "run-manifest.json");
+            var artifactManifestPath = Path.Combine(
+                finalDirectory,
+                "artifact-manifest.json");
+            artifactManifestExists =
+                File.Exists(artifactManifestPath)
+                && new FileInfo(artifactManifestPath).Length > 0;
+            if (File.Exists(runManifestPath))
+            {
+                using var manifest = JsonDocument.Parse(
+                    File.ReadAllText(runManifestPath));
+                var root = manifest.RootElement;
+                runManifestPassed =
+                    root.GetProperty("backend").GetString()
+                        == "totalsegmentator"
+                    && root.GetProperty("task").GetString()
+                        == "teeth"
+                    && root.GetProperty(
+                            "requested_policy")
+                        .GetString() == "cuda_required"
+                    && root.GetProperty(
+                            "requested_device_index")
+                        .GetInt32() == 0
+                    && root.GetProperty("resolved_device")
+                        .GetString() == "cuda:0"
+                    && !root.GetProperty(
+                            "fallback_allowed")
+                        .GetBoolean()
+                    && !root.GetProperty(
+                            "fallback_occurred")
+                        .GetBoolean();
+            }
+        }
+        var passed =
+            result?.TerminalEvent == "operation_completed"
+            && result.SupervisorExitCode == 0
+            && result.RequestedPolicy == "cuda_required"
+            && result.RequestedDeviceIndex == 0
+            && result.ResolvedDevice == "cuda:0"
+            && result.FallbackAllowed == false
+            && result.FallbackOccurred == false
+            && runManifestPassed
+            && artifactManifestExists;
+        await WriteEvidenceAsync(
+            evidencePath,
+            new
+            {
+                schema =
+                    "totalsegmentator_wrapper.windows_wpf_individual_teeth_run.v1",
+                status = passed ? "pass" : "fail",
+                operation =
+                    SegmentationProfile.IndividualTeeth.OperationName(),
+                backend = "totalsegmentator",
+                task = "teeth",
                 operation_id = result?.OperationId,
                 terminal_event = result?.TerminalEvent,
                 supervisor_exit_code = result?.SupervisorExitCode,

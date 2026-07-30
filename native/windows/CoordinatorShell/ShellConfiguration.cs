@@ -230,6 +230,54 @@ internal sealed record ShellConfiguration(
                 "検証済みのapp-private DentalSegmentatorモデルを準備してから、もう一度選んでください。");
     }
 
+    internal RuntimeCheckResult CheckIndividualTeethRuntime()
+    {
+        var datasetRoot = Path.Combine(
+            TotalSegmentatorHome,
+            "nnunet",
+            "results",
+            "Dataset113_ToothFairy3");
+        var failures = new List<string>();
+        try
+        {
+            if (!Directory.Exists(datasetRoot)
+                || !Directory.EnumerateFiles(
+                        datasetRoot,
+                        "dataset.json",
+                        SearchOption.AllDirectories)
+                    .Any()
+                || !Directory.EnumerateFiles(
+                        datasetRoot,
+                        "checkpoint_final.pth",
+                        SearchOption.AllDirectories)
+                    .Any(path => new FileInfo(path).Length > 0))
+            {
+                failures.Add(
+                    "個別歯ベータの追加モデルを確認できません。");
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException)
+        {
+            failures.Add(
+                "個別歯ベータの追加モデルを確認できません。");
+        }
+        return failures.Count == 0
+            ? new RuntimeCheckResult(
+                true,
+                "個別歯ベータの追加モデルを確認しました。",
+                null,
+                null)
+            : new RuntimeCheckResult(
+                false,
+                string.Join(
+                    " ",
+                    failures.Distinct(StringComparer.Ordinal)),
+                "individual_teeth_prepare_required",
+                "検証済みのapp-private Dataset113モデルを準備してから、もう一度選んでください。");
+    }
+
     private static string RequireAbsolute(string? value, string name)
     {
         if (string.IsNullOrWhiteSpace(value)

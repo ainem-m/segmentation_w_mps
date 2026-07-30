@@ -1,0 +1,19 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_individual_teeth_model_evidence.v1",
+  "status": "ready",
+  "distribution_scope": "app-private engineering runtime",
+  "dataset_id": "113",
+  "dataset_name": "Dataset113_ToothFairy3",
+  "archive_name": "Dataset113_ToothFairy3.zip",
+  "archive_size_bytes": 232066830,
+  "archive_sha256": "cf28693eec49b7a8448e2ebf0a372da41855a099a26d52d1cffe15a3c7e4b740",
+  "checkpoint_size_bytes": 252197438,
+  "checkpoint_sha256": "195ef8bb3f6de012c1200a961110ac5df525025cdbadbe09077ea35fd5424ef0",
+  "trainer": "nnUNetTrainer_onlyMirror01",
+  "configuration": "3d_lowres_high",
+  "fold": 0,
+  "source": "official TotalSegmentator release asset",
+  "authentication_required": false,
+  "public_dependency_index_used": false,
+  "absolute_paths_included": false
+}

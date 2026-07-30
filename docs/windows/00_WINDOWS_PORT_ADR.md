@@ -114,6 +114,13 @@ requires the host-provided app-private model gate. Windows 10 engineering
 evidence proves strict CUDA completion without fallback; Windows 11 and model
 distribution remain unverified.
 
+Protocol v1 also exposes the fixed `run_nifti_individual_teeth` beta
+operation. It remains NIfTI-only, fixes TotalSegmentator task `teeth` plus the
+existing 5 mm robust craniofacial preflight, accepts no task/model/split
+selector, and requires the app-private `Dataset113_ToothFairy3` gate. Windows
+10 engineering evidence proves strict CUDA completion without fallback;
+Windows 11 and clean model distribution remain unverified.
+
 Compatibility adapters remain until both macOS and Windows have independently
 validated the coordinator surface.
 
@@ -252,9 +259,9 @@ standard-user clean-machine setup.
 
 ### Beta
 
-Add clean DICOM audit/conversion, series selection, DentalSegmentator when
-dependency gates pass, expanded NVIDIA qualification, and update/rollback
-flows.
+Add clean DICOM audit/conversion, series selection, DentalSegmentator and
+Individual Teeth when dependency gates pass, expanded NVIDIA qualification,
+and update/rollback flows.
 
 ### Feature parity
 

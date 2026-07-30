@@ -12,6 +12,7 @@ import numpy as np
 
 from totalsegmentator_wrapper_mac.runner_totalseg import _teeth_child_command, run_totalsegmentator
 from totalsegmentator_wrapper_mac.teeth_mps_child import patch_total_segmentator_device_converter
+from totalsegmentator_wrapper_mac.teeth_mps_child import parse_required_device
 from totalsegmentator_wrapper_mac.teeth_roi import crop_to_mask_bbox, reembed_labelmap_to_full_space
 
 
@@ -29,9 +30,34 @@ class TeethExperimentalTests(unittest.TestCase):
         self.assertIn("totalsegmentator_wrapper_mac.teeth_mps_child", command)
         self.assertIn("--ml", command)
         self.assertIn("--benchmark-json", command)
+        self.assertEqual(
+            command[command.index("--device") + 1],
+            "mps",
+        )
         self.assertIn("--dry-run", command)
         self.assertIn("--force-split", command)
         self.assertIn("--higher-order-resampling", command)
+
+    def test_child_command_accepts_only_explicit_cuda_index(self) -> None:
+        command = _teeth_child_command(
+            input_path=Path("/case/input/teeth_roi.nii.gz"),
+            output_path=Path("/case/output.nii.gz"),
+            benchmark_path=Path("/case/benchmark.json"),
+            dry_run=False,
+            force_split=False,
+            higher_order_resampling=False,
+            device="cuda:0",
+        )
+
+        self.assertEqual(
+            command[command.index("--device") + 1],
+            "cuda:0",
+        )
+        self.assertEqual(parse_required_device("cuda:2"), ("cuda", 2))
+        with self.assertRaises(ValueError):
+            parse_required_device("cpu")
+        with self.assertRaises(ValueError):
+            parse_required_device("auto")
 
     def test_patch_total_segmentator_device_converter_handles_strings_and_devices(self) -> None:
         ts_api = SimpleNamespace(convert_device_to_string=lambda device: None)

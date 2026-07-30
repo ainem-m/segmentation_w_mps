@@ -1,0 +1,52 @@
+{
+  "artifacts": [
+    {
+      "relative_path": "README_OUTPUT.md",
+      "sha256": "680d226187d42597ef33bd6e47508701a65b441411160045b7362c76ff539852",
+      "size_bytes": 1392
+    },
+    {
+      "relative_path": "logs/run.log",
+      "sha256": "b8cc778b2dac3cf1e4d8df5cd0a751399c48843f21a638f03c0badeb4b5add7c",
+      "size_bytes": 48775
+    },
+    {
+      "relative_path": "logs/benchmark.json",
+      "sha256": "8e814745b4cc99fa5344aa0895325e757ed2e7670d5e1e5311cb6f722b980e27",
+      "size_bytes": 28753
+    },
+    {
+      "relative_path": "logs/environment.json",
+      "sha256": "a78a7af143354a697ef59f98279c38a20037d09eb57424c00ba6040eeab16692",
+      "size_bytes": 607
+    },
+    {
+      "relative_path": "logs/mask_stats.json",
+      "sha256": "31bf65fc9f63e120eae235d7e3c3a6a484e923cb460138a64040568ce7f56154",
+      "size_bytes": 917
+    },
+    {
+      "relative_path": "surface_preview/index.html",
+      "sha256": "bf31adefd04d3eb1d86cc3fdd5eb4a4348f72b1561eada0b59b2aa9ede64df77",
+      "size_bytes": 10852
+    },
+    {
+      "relative_path": "run-manifest.json",
+      "sha256": "2e99167c8f37e3f7d78a24b4f44c75de4d372ca31c224f55b9be45469859b842",
+      "size_bytes": 829
+    },
+    {
+      "relative_path": "segmentations/teeth_experimental/teeth_multilabel_fullspace.nii.gz",
+      "sha256": "7a505ac41a218e019d6793bd5814d51ddfa5f490810395c40f21e4d6d70e285c",
+      "size_bytes": 258255
+    },
+    {
+      "relative_path": "segmentations/teeth_experimental/teeth_multilabel_roi.nii.gz",
+      "sha256": "45ba3f49931298f61b6b2759e9c1ac6005dbdf5640fbf47367a65add1551b4bf",
+      "size_bytes": 155770
+    }
+  ],
+  "operation_id": "2d390ad1-bfdf-4d13-8407-e4aa460b326d",
+  "protocol_version": 1,
+  "schema": "totalsegmentator_wrapper.coordinator_artifacts.v1"
+}

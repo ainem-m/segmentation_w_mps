@@ -61,6 +61,18 @@ def _dentalseg_run_request_payload(root: Path) -> dict[str, object]:
     return payload
 
 
+def _individual_teeth_run_request_payload(
+    root: Path,
+) -> dict[str, object]:
+    payload = _run_request_payload(root)
+    payload["operation"] = "run_nifti_individual_teeth"
+    payload["options"] = {
+        "robust_crop": False,
+        "higher_order_resampling": False,
+    }
+    return payload
+
+
 def _events(stream: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
@@ -70,21 +82,31 @@ def _write_fake_success_case(
     *,
     device: str = "cpu",
     backend: str = "totalsegmentator",
+    task: str = "craniofacial_structures",
 ) -> None:
-    raw = (
-        case_directory / "segmentations" / "dentalsegmentator"
-        if backend == "dentalsegmentator"
-        else case_directory / "segmentations" / "raw_totalseg"
-    )
+    if task == "teeth":
+        raw = (
+            case_directory
+            / "segmentations"
+            / "teeth_experimental"
+        )
+    elif backend == "dentalsegmentator":
+        raw = case_directory / "segmentations" / "dentalsegmentator"
+    else:
+        raw = case_directory / "segmentations" / "raw_totalseg"
     logs = case_directory / "logs"
     raw.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
     data = np.zeros((4, 4, 4), dtype=np.uint8)
     data[1:3, 1:3, 1:3] = 1
     mask = raw / (
-        "dentalsegmentator_multilabel.nii.gz"
-        if backend == "dentalsegmentator"
-        else "mandible.nii.gz"
+        "teeth_multilabel_fullspace.nii.gz"
+        if task == "teeth"
+        else (
+            "dentalsegmentator_multilabel.nii.gz"
+            if backend == "dentalsegmentator"
+            else "mandible.nii.gz"
+        )
     )
     nib.save(nib.Nifti1Image(data, np.eye(4)), mask)
     if backend == "dentalsegmentator":
@@ -101,7 +123,7 @@ def _write_fake_success_case(
                 "run": {
                     "status": "success",
                     "backend": backend,
-                    "task": "craniofacial_structures",
+                    "task": task,
                     "requested_device": device,
                     "actual_device": device,
                     "fallback_reason": None,
@@ -152,6 +174,19 @@ def _write_ready_dentalseg_model(model_root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _write_ready_individual_teeth_model(model_root: Path) -> None:
+    dataset = (
+        model_root
+        / "nnunet"
+        / "results"
+        / "Dataset113_ToothFairy3"
+        / "trainer"
+    )
+    (dataset / "fold_0").mkdir(parents=True)
+    (dataset / "dataset.json").write_text("{}", encoding="utf-8")
+    (dataset / "fold_0" / "checkpoint_final.pth").write_bytes(b"model")
 
 
 class CoordinatorProtocolTests(unittest.TestCase):
@@ -295,6 +330,30 @@ class CoordinatorProtocolTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "options_unsupported")
 
+    def test_individual_teeth_request_is_fixed_and_disables_totalseg_options(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            request = parse_coordinator_request(
+                _individual_teeth_run_request_payload(root)
+            )
+            self.assertEqual(
+                request.operation,
+                "run_nifti_individual_teeth",
+            )
+            self.assertFalse(request.robust_crop)
+            self.assertFalse(request.higher_order_resampling)
+
+            payload = _individual_teeth_run_request_payload(root)
+            payload["options"] = {
+                "higher_order_resampling": True
+            }
+            with self.assertRaises(CoordinatorProtocolError) as raised:
+                parse_coordinator_request(payload)
+
+        self.assertEqual(raised.exception.code, "options_unsupported")
+
     def test_protocol_v1_rejects_dicom_operation(self) -> None:
         payload = {
             "protocol_version": PROTOCOL_VERSION,
@@ -420,6 +479,7 @@ class CoordinatorExecutionTests(unittest.TestCase):
             [
                 "capabilities",
                 "run_nifti_dentalsegmentator",
+                "run_nifti_individual_teeth",
                 "run_nifti_totalsegmentator",
             ],
         )
@@ -581,6 +641,148 @@ class CoordinatorExecutionTests(unittest.TestCase):
         )
         self.assertIn(
             "segmentations/dentalsegmentator",
+            [
+                event["relative_path"]
+                for event in events
+                if event["event"] == "artifact_created"
+            ],
+        )
+
+    def test_individual_teeth_requires_ready_app_private_model(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
+            request = parse_coordinator_request(
+                _individual_teeth_run_request_payload(root)
+            )
+            stream = io.StringIO()
+            called = False
+
+            def unexpected_runner(**_kwargs: object) -> object:
+                nonlocal called
+                called = True
+                raise AssertionError("backend should not run")
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(
+                    stream,
+                    operation_id=request.operation_id,
+                ),
+                segmentation_runner=unexpected_runner,
+                individual_teeth_model_root=root / "missing-model",
+            )
+
+        self.assertEqual(rc, 2)
+        self.assertFalse(called)
+        events = _events(stream)
+        self.assertEqual(
+            events[-1]["error_code"],
+            "individual_teeth_prepare_required",
+        )
+        self.assertFalse(
+            any(event["event"] == "device_resolved" for event in events)
+        )
+
+    def test_individual_teeth_cuda_run_uses_fixed_runner_contract(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private-input.nii.gz").write_text(
+                "not a real nifti",
+                encoding="utf-8",
+            )
+            model_root = root / "model"
+            _write_ready_individual_teeth_model(model_root)
+            payload = _individual_teeth_run_request_payload(root)
+            payload["device_policy"] = {
+                "mode": "cuda_required",
+                "index": 0,
+            }
+            request = parse_coordinator_request(payload)
+            stream = io.StringIO()
+            runner_kwargs: dict[str, object] = {}
+            device_check = SimpleNamespace(
+                status="pass",
+                actual_device="cuda:0",
+                fallback_reason=None,
+                error_code=None,
+            )
+
+            def fake_runner(**kwargs: object) -> TotalSegRunResult:
+                runner_kwargs.update(kwargs)
+                case_directory = Path(kwargs["output_root"])
+                _write_fake_success_case(
+                    case_directory,
+                    device="cuda:0",
+                    backend="totalsegmentator",
+                    task="teeth",
+                )
+                return TotalSegRunResult(
+                    status="success",
+                    returncode=0,
+                    elapsed_seconds=2.0,
+                    requested_device="cuda:0",
+                    actual_device="cuda:0",
+                    fallback_reason=None,
+                    task="teeth",
+                    output_dir=str(case_directory),
+                    stdout_tail="",
+                    stderr_tail="",
+                )
+
+            def fake_preview(**kwargs: object) -> dict[str, object]:
+                preview = Path(kwargs["case_dir"]) / "surface_preview"
+                preview.mkdir(parents=True)
+                (preview / "index.html").write_text(
+                    "offline",
+                    encoding="utf-8",
+                )
+                return {"output_dir": str(preview)}
+
+            rc = run_coordinator_request(
+                request,
+                JsonlEventWriter(
+                    stream,
+                    operation_id=request.operation_id,
+                ),
+                segmentation_runner=fake_runner,
+                preview_runner=fake_preview,
+                cuda_device_checker=lambda _index: device_check,
+                individual_teeth_model_root=model_root,
+            )
+
+            output = root / "private-output"
+            run_manifest = json.loads(
+                (output / "run-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(runner_kwargs["backend"], "totalsegmentator")
+        self.assertEqual(runner_kwargs["task"], "teeth")
+        self.assertTrue(runner_kwargs["experimental_teeth"])
+        self.assertEqual(runner_kwargs["teeth_crop_margin_mm"], 5.0)
+        self.assertTrue(
+            runner_kwargs["teeth_robust_craniofacial_preflight"]
+        )
+        self.assertFalse(runner_kwargs["teeth_force_split"])
+        self.assertFalse(runner_kwargs["robust_crop"])
+        self.assertFalse(runner_kwargs["higher_order_resampling"])
+        self.assertEqual(run_manifest["backend"], "totalsegmentator")
+        self.assertEqual(run_manifest["task"], "teeth")
+        self.assertEqual(run_manifest["resolved_device"], "cuda:0")
+        events = _events(stream)
+        self.assertEqual(events[-1]["event"], "operation_completed")
+        self.assertIn(
+            "segmentations/teeth_experimental",
             [
                 event["relative_path"]
                 for event in events

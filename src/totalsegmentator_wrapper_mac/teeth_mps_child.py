@@ -41,6 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--benchmark-json", required=True, type=Path)
+    parser.add_argument("--device", default="mps")
     parser.add_argument("--ml", action="store_true", default=True)
     parser.add_argument("--no-ml", dest="ml", action="store_false")
     parser.add_argument("--dry-run", action="store_true")
@@ -129,6 +130,84 @@ def run_mps_gate(torch: Any) -> dict[str, Any]:
     }
 
 
+def parse_required_device(value: str) -> tuple[str, int | None]:
+    if value == "mps":
+        return "mps", None
+    match = re.fullmatch(r"cuda:(\d+)", value)
+    if match:
+        return "cuda", int(match.group(1))
+    raise ValueError(
+        "Individual Teeth child requires device mps or cuda:N."
+    )
+
+
+def run_cuda_gate(torch: Any, index: int) -> dict[str, Any]:
+    if not torch.cuda.is_available():
+        raise RuntimeError("torch.cuda.is_available() is false")
+    if index < 0 or index >= torch.cuda.device_count():
+        raise RuntimeError(
+            f"CUDA device index {index} is unavailable"
+        )
+    device = torch.device(f"cuda:{index}")
+    torch.set_default_dtype(torch.float32)
+    x = torch.randn(
+        (1, 2, 8, 8, 8),
+        device=device,
+        dtype=torch.float32,
+    )
+    conv = torch.nn.Conv3d(
+        2,
+        4,
+        kernel_size=3,
+        padding=1,
+        device=device,
+    )
+    norm = torch.nn.InstanceNorm3d(
+        4,
+        affine=True,
+        device=device,
+    )
+    activation = torch.nn.LeakyReLU()
+    transpose = torch.nn.ConvTranspose3d(
+        4,
+        2,
+        kernel_size=2,
+        stride=2,
+        device=device,
+    )
+    with torch.no_grad():
+        output = transpose(activation(norm(conv(x))))
+    torch.cuda.synchronize(device)
+    finite = bool(torch.isfinite(output).all().item())
+    if not finite:
+        raise RuntimeError("CUDA gate produced non-finite output")
+    return {
+        "cuda_available": True,
+        "device_index": index,
+        "device_name": torch.cuda.get_device_name(index),
+        "conv3d": "passed",
+        "normalization": "passed",
+        "activation": "passed",
+        "convtranspose3d_fp32": "passed",
+        "synchronized": True,
+        "finite_output": finite,
+        "output_shape": [int(value) for value in output.shape],
+        "output_dtype": str(output.dtype),
+    }
+
+
+def synchronize_device(
+    torch: Any,
+    device_type: str,
+    device_index: int | None,
+) -> None:
+    if device_type == "mps":
+        if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+            torch.mps.synchronize()
+        return
+    torch.cuda.synchronize(torch.device(f"cuda:{device_index}"))
+
+
 def read_nifti_meta(path: Path) -> dict[str, Any]:
     import nibabel as nib
 
@@ -206,10 +285,11 @@ def validate_binary_output_dir(path: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    device_type, device_index = parse_required_device(args.device)
     benchmark: dict[str, Any] = {
         "status": "started",
         "task": "teeth",
-        "device_requested": "mps",
+        "device_requested": args.device,
         "precision_policy": "fp32_only_no_autocast_requested",
         "higher_order_resampling": bool(args.higher_order_resampling),
         "started_at_utc": utc_now(),
@@ -225,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         "timing": {},
         "patch": {},
         "mps_gate": {},
+        "cuda_gate": {},
         "error": None,
     }
     started = time.perf_counter()
@@ -242,9 +323,16 @@ def main(argv: list[str] | None = None) -> int:
             "version": torch.__version__,
             "mps_built": bool(torch.backends.mps.is_built()),
             "mps_available": bool(torch.backends.mps.is_available()),
+            "cuda_build": torch.version.cuda,
+            "cuda_available": bool(torch.cuda.is_available()),
+            "cuda_device_count": int(torch.cuda.device_count()),
             "mps_fallback_env": os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"),
         }
-        benchmark["mps_gate"] = run_mps_gate(torch)
+        if device_type == "mps":
+            benchmark["mps_gate"] = run_mps_gate(torch)
+        else:
+            assert device_index is not None
+            benchmark["cuda_gate"] = run_cuda_gate(torch, device_index)
 
         import totalsegmentator.python_api as ts_api
 
@@ -261,9 +349,12 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         benchmark["patch"] = patch_total_segmentator_device_converter(ts_api)
-        benchmark["patch"]["post_patch_torch_device_mps"] = ts_api.convert_device_to_string(
-            torch.device("mps")
+        torch_device = torch.device(args.device)
+        benchmark["patch"]["post_patch_requested_device"] = (
+            ts_api.convert_device_to_string(torch_device)
         )
+        totalseg_device = ts_api.convert_device_to_string(args.device)
+        benchmark["totalsegmentator"]["device"] = totalseg_device
 
         output_arg = prepare_output_path(args.output, args.ml)
         benchmark["output"] = {
@@ -277,15 +368,14 @@ def main(argv: list[str] | None = None) -> int:
             benchmark["dry_run"] = True
             return 0
 
-        if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
-            torch.mps.synchronize()
+        synchronize_device(torch, device_type, device_index)
         inference_started = time.perf_counter()
 
         seg_img = ts_api.totalsegmentator(
             input=args.input,
             output=output_arg,
             task="teeth",
-            device="mps",
+            device=totalseg_device,
             ml=args.ml,
             nr_thr_resamp=args.nr_thr_resamp,
             nr_thr_saving=args.nr_thr_saving,
@@ -299,8 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             higher_order_resampling=args.higher_order_resampling,
         )
 
-        if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
-            torch.mps.synchronize()
+        synchronize_device(torch, device_type, device_index)
         benchmark["timing"]["inference_elapsed_sec"] = round(
             time.perf_counter() - inference_started,
             3,
@@ -319,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
             if benchmark["validation"]["non_empty_file_count"] == 0:
                 raise RuntimeError("teeth output completed but contained no non-empty masks")
 
-        if hasattr(torch, "mps"):
+        if device_type == "mps" and hasattr(torch, "mps"):
             benchmark["mps_memory"] = {
                 "current_allocated_memory": int(torch.mps.current_allocated_memory())
                 if hasattr(torch.mps, "current_allocated_memory")
@@ -327,6 +416,16 @@ def main(argv: list[str] | None = None) -> int:
                 "driver_allocated_memory": int(torch.mps.driver_allocated_memory())
                 if hasattr(torch.mps, "driver_allocated_memory")
                 else None,
+            }
+        elif device_index is not None:
+            benchmark["cuda_memory"] = {
+                "device_index": device_index,
+                "allocated_bytes": int(
+                    torch.cuda.memory_allocated(device_index)
+                ),
+                "reserved_bytes": int(
+                    torch.cuda.memory_reserved(device_index)
+                ),
             }
         benchmark["status"] = "success"
         return 0

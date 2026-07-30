@@ -688,6 +688,8 @@ def run_totalsegmentator(
             higher_order_resampling=higher_order_resampling,
             skip_device_check=skip_device_check,
             emit_run_stages=emit_run_stages,
+            event_sink=event_sink,
+            should_cancel=should_cancel,
         )
 
     resolved_totalseg_bin = resolve_totalseg_executable(totalseg_bin)
@@ -844,7 +846,10 @@ def _run_experimental_teeth(
     execution_profile: str | None,
     require_mps: bool,
     emit_run_stages: bool,
+    event_sink: RunEventSink | None,
+    should_cancel: ShouldCancel | None,
 ) -> TotalSegRunResult:
+    _raise_if_cancelled(should_cancel)
     start = time.perf_counter()
     preflight_source = "none" if teeth_dry_run else ("provided" if teeth_craniofacial_case else "internal")
     preflight_case_dir = None
@@ -875,19 +880,27 @@ def _run_experimental_teeth(
             "child_benchmark_path": str(case.teeth_child_benchmark_path),
             "roi_json_path": str(case.teeth_roi_path),
             "mps_fallback_env_removed": True,
+            "device": device_check.actual_device,
         }
     }
     try:
-        if device_check.actual_device != "mps":
+        actual_device = str(device_check.actual_device)
+        if actual_device != "mps" and not actual_device.startswith("cuda:"):
             raise RuntimeError(
-                f"Experimental teeth is MPS-only; resolved device was {device_check.actual_device!r}"
+                "Experimental teeth requires strict MPS or CUDA; "
+                f"resolved device was {device_check.actual_device!r}"
             )
 
         roi_input = input_path
         roi_metadata: dict[str, Any] | None = None
         if not teeth_dry_run:
             if emit_run_stages:
-                _emit_run_stage("individual_teeth_beta", 2, log_path=case.run_log_path)
+                _emit_run_stage(
+                    "individual_teeth_beta",
+                    2,
+                    log_path=case.run_log_path,
+                    event_sink=event_sink,
+                )
             craniofacial_case = teeth_craniofacial_case
             if craniofacial_case is None:
                 craniofacial_case = case.root / "preflight_craniofacial"
@@ -900,7 +913,7 @@ def _run_experimental_teeth(
                     input_path=input_path,
                     output_root=craniofacial_case,
                     task="craniofacial_structures",
-                    requested_device="mps",
+                    requested_device=actual_device,
                     totalseg_bin=totalseg_bin,
                     totalseg_home=totalseg_home,
                     totalseg_weights=totalseg_weights,
@@ -911,6 +924,7 @@ def _run_experimental_teeth(
                     execution_profile=execution_profile,
                     require_mps=require_mps,
                     emit_run_stages=False,
+                    should_cancel=should_cancel,
                 )
                 if preflight.status != "success":
                     preflight_info["status"] = "failed"
@@ -922,7 +936,13 @@ def _run_experimental_teeth(
                 preflight_info["status"] = "provided"
 
             if emit_run_stages:
-                _emit_run_stage("individual_teeth_beta", 3, log_path=case.run_log_path)
+                _emit_run_stage(
+                    "individual_teeth_beta",
+                    3,
+                    log_path=case.run_log_path,
+                    event_sink=event_sink,
+                )
+            _raise_if_cancelled(should_cancel)
             roi_metadata = create_teeth_roi_for_case(
                 case=case,
                 input_path=input_path,
@@ -939,6 +959,7 @@ def _run_experimental_teeth(
             dry_run=teeth_dry_run,
             force_split=teeth_force_split,
             higher_order_resampling=higher_order_resampling,
+            device=actual_device,
         )
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
@@ -949,7 +970,12 @@ def _run_experimental_teeth(
             env["TOTALSEG_WEIGHTS_PATH"] = str(totalseg_weights)
 
         if emit_run_stages:
-            _emit_run_stage("individual_teeth_beta", 4, log_path=case.run_log_path)
+            _emit_run_stage(
+                "individual_teeth_beta",
+                4,
+                log_path=case.run_log_path,
+                event_sink=event_sink,
+            )
         returncode, child_elapsed, stdout, stderr = _run_command_streamed(
             command=command,
             env=env,
@@ -960,7 +986,10 @@ def _run_experimental_teeth(
             progress_route="individual_teeth_beta",
             progress_stage_id="individual",
             progress_scope="subtask",
+            event_sink=event_sink,
+            should_cancel=should_cancel,
         )
+        _raise_if_cancelled(should_cancel)
         child_benchmark = _read_json_if_exists(case.teeth_child_benchmark_path)
         total_elapsed = time.perf_counter() - start
         last_progress = _extract_last_progress(stdout, stderr)
@@ -979,6 +1008,7 @@ def _run_experimental_teeth(
         extra["experimental_teeth"]["log_path"] = str(case.run_log_path)
         extra["experimental_teeth"]["patch"] = child_benchmark.get("patch")
         extra["experimental_teeth"]["mps_gate"] = child_benchmark.get("mps_gate")
+        extra["experimental_teeth"]["cuda_gate"] = child_benchmark.get("cuda_gate")
         extra["experimental_teeth"]["validation"] = child_benchmark.get("validation")
         extra["experimental_teeth"]["last_progress"] = last_progress
         extra["experimental_teeth"]["child_status"] = child_status
@@ -993,7 +1023,12 @@ def _run_experimental_teeth(
             _append_run_log_warning(case.run_log_path, str(preflight_info["warning"]))
         if returncode == 0 and not teeth_dry_run and roi_metadata is not None:
             if emit_run_stages:
-                _emit_run_stage("individual_teeth_beta", 5, log_path=case.run_log_path)
+                _emit_run_stage(
+                    "individual_teeth_beta",
+                    5,
+                    log_path=case.run_log_path,
+                    event_sink=event_sink,
+                )
             extra["experimental_teeth"]["fullspace"] = reembed_labelmap_to_full_space(
                 cropped_label_nii=case.teeth_multilabel_roi_path,
                 source_nii=input_path,
@@ -1858,6 +1893,7 @@ def _teeth_child_command(
     dry_run: bool,
     force_split: bool,
     higher_order_resampling: bool,
+    device: str = "mps",
 ) -> list[str]:
     command = [
         sys.executable,
@@ -1870,6 +1906,8 @@ def _teeth_child_command(
         str(output_path),
         "--benchmark-json",
         str(benchmark_path),
+        "--device",
+        device,
         "--require-totalseg-version",
         "2.14.0",
         "--ml",

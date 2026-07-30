@@ -1,0 +1,7 @@
+branch=agent/windows-wpf-individual-teeth-slice
+base_branch=origin/agent/windows-wpf-additional-models-slice
+expected_base_commit=7a41abe107ba987bca59d9415d77ab926ba37487
+observed_base_commit=7a41abe107ba987bca59d9415d77ab926ba37487
+base_commit_match=true
+host_scope=Windows 10 engineering evidence
+windows_11=UNVERIFIED

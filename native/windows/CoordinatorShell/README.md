@@ -16,8 +16,8 @@ The slice intentionally contains one WPF window and one coordinator-specific
 process client. It has no external UI framework, service, dependency resolver,
 installer, updater, or embedded browser. DICOM intake is limited to the
 existing native audit and `convert-clean` path; rescue conversion is outside
-this slice. The only additional model enabled here is the fixed
-DentalSegmentator five-label path.
+this slice. The enabled additional-model paths are fixed DentalSegmentator
+five-label and Individual Teeth beta operations.
 
 The shell starts `tswm-process-supervisor supervise --interactive-cancel`.
 The supervisor owns the coordinator Job Object. The shell reads coordinator
@@ -77,6 +77,7 @@ Focused verification modes:
 --evidence-cancel-sample <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dicom <absolute-dicom-folder> <absolute-evidence-json> --engineering-config <path>
 --evidence-run-dentalseg <absolute-evidence-json> --engineering-config <path>
+--evidence-run-individual-teeth <absolute-evidence-json> --engineering-config <path>
 ```
 
 `--evidence-run-sample` uses the same runtime check, request builder,
@@ -94,5 +95,10 @@ contains no input path, series key/UID, description, or native process output.
 `--evidence-run-dentalseg` uses the same visible fixed-model selection,
 app-private ready-marker gate, strict `cuda:0` policy, Job Object supervisor,
 JSONL parser, promotion, and artifact verification as the interactive flow.
-Individual Teeth and ToothSeg remain visible comparison references only and
-are not selectable.
+
+`--evidence-run-individual-teeth` uses the visible Individual Teeth beta
+selection and the fixed protocol operation. It requires the app-private
+`Dataset113_ToothFairy3` checkpoint, uses the existing 5 mm robust
+craniofacial preflight, and does not permit a client-selected task, model,
+device fallback, or split policy. ToothSeg remains a visible comparison
+reference only and is not selectable.

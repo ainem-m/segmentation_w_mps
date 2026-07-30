@@ -84,8 +84,8 @@ public partial class MainWindow : Window
                 "通常のTotalSegmentatorを選択中",
             [SelectDentalSegmentatorButton] =
                 "DentalSegmentatorを選ぶ",
-            [IndividualTeethStatusButton] =
-                "個別歯ベータの対応状況を見る",
+            [SelectIndividualTeethButton] =
+                "個別歯ベータを選ぶ",
             [RunButton] = "Sampleで3Dプレビューを作る",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
@@ -157,6 +157,22 @@ public partial class MainWindow : Window
                     "DentalSegmentator",
                     StringComparison.Ordinal);
         SetSelectedSegmentationProfile(
+            SegmentationProfile.IndividualTeeth);
+        var individualTeethLabelPassed =
+            Equals(
+                OtherModelsCardName.Text,
+                "選択中：個別歯ベータ")
+            && Equals(
+                SelectIndividualTeethButton.Content,
+                "選択中")
+            && AutomationProperties.GetName(
+                    SelectIndividualTeethButton)
+                == "個別歯ベータを選択中"
+            && AutomationProperties.GetHelpText(RunButton)
+                .Contains(
+                    "個別歯ベータ",
+                    StringComparison.Ordinal);
+        SetSelectedSegmentationProfile(
             SegmentationProfile.TotalSegmentator);
         var dynamicLabelsPassed =
             ownInputLabelPassed
@@ -165,7 +181,8 @@ public partial class MainWindow : Window
             && cancellationCopyLabelPassed
             && noInputLabelPassed
             && dicomRecoveryLabelPassed
-            && dentalModelLabelPassed;
+            && dentalModelLabelPassed
+            && individualTeethLabelPassed;
         var systemColorsPassed =
             Equals(PrepareButton.Background, SystemColors.HighlightBrush)
             && Equals(Background, SystemColors.WindowBrush);
@@ -1018,6 +1035,8 @@ public partial class MainWindow : Window
             case "model-comparison":
             case "input-dentalseg":
             case "running-dentalseg":
+            case "input-individual-teeth":
+            case "running-individual-teeth":
                 ApplyModelPreviewScenario(scenario);
                 break;
             default:

@@ -15,6 +15,7 @@ from totalsegmentator_wrapper_mac.coordinator_protocol import (
     CAPABILITIES_OPERATION,
     PROTOCOL_VERSION,
     RUN_NIFTI_DENTALSEG_OPERATION,
+    RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
     RUN_NIFTI_TOTALSEG_OPERATION,
     CoordinatorProtocolError,
     CoordinatorRequest,
@@ -47,6 +48,7 @@ def run_coordinator_request(
     should_cancel: ShouldCancel | None = None,
     start_cancel_listener: StartCancelListener | None = None,
     dentalseg_model_root: Path | None = None,
+    individual_teeth_model_root: Path | None = None,
 ) -> int:
     writer.emit("operation_started", operation=request.operation)
     if _cancellation_requested(should_cancel):
@@ -57,6 +59,7 @@ def run_coordinator_request(
             operations=[
                 CAPABILITIES_OPERATION,
                 RUN_NIFTI_DENTALSEG_OPERATION,
+                RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
                 RUN_NIFTI_TOTALSEG_OPERATION,
             ],
             device_policies={
@@ -77,6 +80,7 @@ def run_coordinator_request(
 
     if request.operation not in {
         RUN_NIFTI_DENTALSEG_OPERATION,
+        RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
         RUN_NIFTI_TOTALSEG_OPERATION,
     }:
         return _emit_failure(
@@ -119,15 +123,18 @@ def run_coordinator_request(
     if _cancellation_requested(should_cancel):
         return _emit_cancelled(writer)
 
-    backend = (
-        "dentalsegmentator"
-        if request.operation == RUN_NIFTI_DENTALSEG_OPERATION
-        else "totalsegmentator"
+    is_dentalseg = request.operation == RUN_NIFTI_DENTALSEG_OPERATION
+    is_individual_teeth = (
+        request.operation == RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION
     )
-    task = "craniofacial_structures"
-    progress_route = backend
+    backend = "dentalsegmentator" if is_dentalseg else "totalsegmentator"
+    task = "teeth" if is_individual_teeth else "craniofacial_structures"
+    progress_route = (
+        "individual_teeth_beta" if is_individual_teeth else backend
+    )
     resolved_dentalseg_root: Path | None = None
-    if backend == "dentalsegmentator":
+    resolved_individual_teeth_root: Path | None = None
+    if is_dentalseg:
         resolved_dentalseg_root = _ready_dentalseg_model_root(
             dentalseg_model_root
         )
@@ -137,6 +144,18 @@ def run_coordinator_request(
                 code="dentalseg_prepare_required",
                 safe_reason=(
                     "The app-private DentalSegmentator model is not ready."
+                ),
+            )
+    if is_individual_teeth:
+        resolved_individual_teeth_root = _ready_individual_teeth_model_root(
+            individual_teeth_model_root
+        )
+        if resolved_individual_teeth_root is None:
+            return _emit_failure(
+                writer,
+                code="individual_teeth_prepare_required",
+                safe_reason=(
+                    "The app-private Individual Teeth model is not ready."
                 ),
             )
 
@@ -250,6 +269,16 @@ def run_coordinator_request(
                     ),
                     "dentalseg_folds": ("0",),
                     "dentalseg_disable_tta": True,
+                }
+            )
+        if resolved_individual_teeth_root is not None:
+            runner_kwargs.update(
+                {
+                    "totalseg_home": resolved_individual_teeth_root,
+                    "experimental_teeth": True,
+                    "teeth_crop_margin_mm": 5.0,
+                    "teeth_robust_craniofacial_preflight": True,
+                    "teeth_force_split": False,
                 }
             )
         if prevalidated_device_check is not None:
@@ -471,6 +500,7 @@ def main(
         start_cancel_listener: StartCancelListener | None = None
         if request.operation in {
             RUN_NIFTI_DENTALSEG_OPERATION,
+            RUN_NIFTI_INDIVIDUAL_TEETH_OPERATION,
             RUN_NIFTI_TOTALSEG_OPERATION,
         }:
             cancel_event = threading.Event()
@@ -550,6 +580,34 @@ def _ready_dentalseg_model_root(
     except (OSError, ValueError):
         return None
     return candidate if status.get("model_state") == "ready" else None
+
+
+def _ready_individual_teeth_model_root(
+    configured_root: Path | None,
+) -> Path | None:
+    candidate = configured_root
+    if candidate is None:
+        raw_root = os.environ.get("TOTALSEG_HOME_DIR")
+        if not raw_root:
+            return None
+        candidate = Path(raw_root)
+    candidate = candidate.expanduser()
+    if not candidate.is_absolute():
+        return None
+    try:
+        candidate = candidate.resolve()
+        dataset_root = (
+            candidate
+            / "nnunet"
+            / "results"
+            / "Dataset113_ToothFairy3"
+        )
+        dataset_json = next(dataset_root.rglob("dataset.json"))
+        checkpoint = next(dataset_root.rglob("checkpoint_final.pth"))
+        ready = dataset_json.is_file() and checkpoint.stat().st_size > 0
+    except (OSError, StopIteration):
+        return None
+    return candidate if ready else None
 
 
 def _cancellation_requested(should_cancel: ShouldCancel | None) -> bool:
@@ -688,11 +746,18 @@ def _verify_and_manifest_case(
         ):
             raise ArtifactVerificationError
 
-        segmentation_relative = (
-            Path("segmentations") / "dentalsegmentator"
-            if expected_backend == "dentalsegmentator"
-            else Path("segmentations") / "raw_totalseg"
-        )
+        if expected_task == "teeth":
+            segmentation_relative = (
+                Path("segmentations") / "teeth_experimental"
+            )
+        elif expected_backend == "dentalsegmentator":
+            segmentation_relative = (
+                Path("segmentations") / "dentalsegmentator"
+            )
+        else:
+            segmentation_relative = (
+                Path("segmentations") / "raw_totalseg"
+            )
         segmentation_root = case_directory / segmentation_relative
         segmentation_masks = sorted(segmentation_root.glob("**/*.nii.gz"))
         if not segmentation_masks:

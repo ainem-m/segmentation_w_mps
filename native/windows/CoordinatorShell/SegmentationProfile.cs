@@ -4,6 +4,7 @@ internal enum SegmentationProfile
 {
     TotalSegmentator,
     DentalSegmentator,
+    IndividualTeeth,
 }
 
 internal static class SegmentationProfileExtensions
@@ -16,6 +17,8 @@ internal static class SegmentationProfileExtensions
                 "run_nifti_totalsegmentator",
             SegmentationProfile.DentalSegmentator =>
                 "run_nifti_dentalsegmentator",
+            SegmentationProfile.IndividualTeeth =>
+                "run_nifti_individual_teeth",
             _ => throw new ArgumentOutOfRangeException(nameof(profile)),
         };
     }
@@ -27,6 +30,8 @@ internal static class SegmentationProfileExtensions
             SegmentationProfile.TotalSegmentator => "TotalSegmentator",
             SegmentationProfile.DentalSegmentator =>
                 "DentalSegmentator（実験的）",
+            SegmentationProfile.IndividualTeeth =>
+                "個別歯ベータ",
             _ => throw new ArgumentOutOfRangeException(nameof(profile)),
         };
     }
