@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TotalSegmentatorWrapper.Windows.ProcessSupervisor;
@@ -12,10 +13,8 @@ internal sealed class DicomIntakeSession : IDisposable
         "totalsegmentator_wrapper_mac.dicom_normalizer.audit.v1";
     private const string ConvertSchema =
         "totalsegmentator_wrapper_mac.dicom_normalizer.convert_clean.v1";
-    private const string RescueSchema =
-        "totalsegmentator_wrapper_mac.dicom_normalizer.rescue.v1";
-    private const string RescueValidationSchema =
-        "totalsegmentator_wrapper_mac.dicom_normalizer.rescue_validation.v1";
+    private const string RescueGeometrySchema =
+        "totalsegmentator_wrapper_mac.rescue_geometry.v2";
     private const uint CancelExitCode = 1223;
     private const uint TimeoutExitCode = 124;
     private static readonly TimeSpan AuditTimeout =
@@ -405,7 +404,8 @@ internal sealed class DicomIntakeSession : IDisposable
     internal async Task<DicomRescueResult> PrepareRescueAsync(
         DicomAuditResult audit,
         DicomRescueCandidate candidate,
-        DicomSpacing spacing)
+        DicomSpacing spacing,
+        DicomRescueTransform transform)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!BeginOperation())
@@ -451,6 +451,14 @@ internal sealed class DicomIntakeSession : IDisposable
                     audit.OperationId,
                     audit.WorkspaceDirectory);
             }
+            if (!transform.IsValid)
+            {
+                return DicomRescueResult.Failure(
+                    "dicom_rescue_transform_invalid",
+                    "画像の向きを確認できません。",
+                    audit.OperationId,
+                    audit.WorkspaceDirectory);
+            }
 
             var runtime = _configuration.CheckDicomRuntime();
             if (!runtime.Passed)
@@ -466,22 +474,18 @@ internal sealed class DicomIntakeSession : IDisposable
                 audit.WorkspaceDirectory,
                 $"rescue-{Guid.NewGuid():N}");
             Directory.CreateDirectory(rescueDirectory);
+            var stackDirectory = Path.Combine(
+                rescueDirectory,
+                "stack");
             var arguments = new List<string>
             {
-                "prepare-rescue",
+                "export-rescue-stack",
                 "--dicom-dir",
                 audit.SourceDirectory,
                 "--series-key",
                 knownCandidate.NativeSeriesKey,
-                "--patched-spacing",
-                spacing.CommandValue,
                 "--output",
-                rescueDirectory,
-                "--dcm2niix",
-                _configuration.Dcm2niixPath,
-                "--dcm2niix-timeout-seconds",
-                ((int)ConvertTimeout.TotalSeconds).ToString(
-                    System.Globalization.CultureInfo.InvariantCulture),
+                stackDirectory,
             };
             var execution = await RunJobAsync(
                 _configuration.DicomNormalizerPath,
@@ -491,7 +495,7 @@ internal sealed class DicomIntakeSession : IDisposable
             {
                 return DicomRescueResult.Failure(
                     "dicom_normalizer_start_failed",
-                    "DICOM救済機能を開始できません。",
+                    "DICOM画像の準備機能を開始できません。",
                     audit.OperationId,
                     audit.WorkspaceDirectory);
             }
@@ -507,7 +511,7 @@ internal sealed class DicomIntakeSession : IDisposable
             {
                 return DicomRescueResult.Failure(
                     "dicom_rescue_timeout",
-                    "確認画像の作成が制限時間を超えました。",
+                    "DICOM画像の準備が制限時間を超えました。",
                     audit.OperationId,
                     audit.WorkspaceDirectory);
             }
@@ -523,17 +527,63 @@ internal sealed class DicomIntakeSession : IDisposable
             {
                 return DicomRescueResult.Failure(
                     "dicom_rescue_failed",
-                    "確認画像を作成できませんでした。",
+                    "DICOM画像を安全に準備できませんでした。",
                     audit.OperationId,
                     audit.WorkspaceDirectory);
             }
 
             try
             {
-                var verified = VerifyRescue(
+                var stack = VerifyRescueStack(stackDirectory);
+                var requestPath = Path.Combine(
                     rescueDirectory,
-                    knownCandidate,
-                    spacing);
+                    "rescue-preview-request.json");
+                await WriteRescuePreviewRequestAsync(
+                    requestPath,
+                    stack.ManifestSha256,
+                    spacing,
+                    transform);
+                var previewDirectory = Path.Combine(
+                    rescueDirectory,
+                    "preview");
+                Directory.CreateDirectory(previewDirectory);
+                var previewVolume = Path.Combine(
+                    previewDirectory,
+                    "preview-volume.npy");
+                var previewMetadata = Path.Combine(
+                    previewDirectory,
+                    "preview.json");
+                var previewExecution = await RunJobAsync(
+                    PythonExecutable(),
+                    new[]
+                    {
+                        "-m",
+                        "totalsegmentator_wrapper_mac",
+                        "dicom-rescue-preview",
+                        "--volume",
+                        stack.VolumePath,
+                        "--geometry",
+                        requestPath,
+                        "--output-volume",
+                        previewVolume,
+                        "--output",
+                        previewMetadata,
+                    },
+                    ConvertTimeout);
+                var previewFailure = RescueExecutionFailure(
+                    previewExecution,
+                    audit,
+                    "確認画像");
+                if (previewFailure is not null)
+                {
+                    return previewFailure;
+                }
+                var verified = VerifyRescuePreview(
+                    previewMetadata,
+                    previewDirectory,
+                    stack.ManifestSha256,
+                    spacing,
+                    transform);
                 var manifestPath = Path.Combine(
                     rescueDirectory,
                     "windows-rescue-manifest.json");
@@ -542,14 +592,19 @@ internal sealed class DicomIntakeSession : IDisposable
                     audit.OperationId,
                     knownCandidate,
                     spacing,
-                    execution.ExitCode!.Value,
+                    transform,
+                    previewExecution.ExitCode!.Value,
                     verified);
                 return DicomRescueResult.Success(
                     audit.OperationId,
                     audit.WorkspaceDirectory,
-                    verified.PatchedNiftiPath,
                     manifestPath,
-                    verified.Previews);
+                    verified.Previews,
+                    stack.VolumePath,
+                    previewMetadata,
+                    verified.ConfirmationToken,
+                    spacing,
+                    transform);
             }
             catch (Exception exception) when (
                 exception is IOException
@@ -569,6 +624,461 @@ internal sealed class DicomIntakeSession : IDisposable
         {
             EndOperation();
         }
+    }
+
+    internal async Task<DicomRescueFinalResult> FinalizeRescueAsync(
+        DicomRescueResult preview)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!BeginOperation())
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_intake_busy",
+                "別のDICOM読み込み処理が実行中です。");
+        }
+        try
+        {
+            if (!preview.Succeeded
+                || string.IsNullOrWhiteSpace(preview.OperationId)
+                || string.IsNullOrWhiteSpace(preview.WorkspaceDirectory)
+                || string.IsNullOrWhiteSpace(preview.DecodedVolumePath)
+                || string.IsNullOrWhiteSpace(preview.GeometryPath)
+                || string.IsNullOrWhiteSpace(preview.ConfirmationToken)
+                || preview.ConfirmedSpacing is null
+                || preview.Transform is null
+                || !File.Exists(preview.DecodedVolumePath)
+                || !File.Exists(preview.GeometryPath))
+            {
+                return DicomRescueFinalResult.Failure(
+                    "dicom_rescue_confirmation_invalid",
+                    "現在の形状に対応する確認結果を使用できません。",
+                    preview.OperationId,
+                    preview.WorkspaceDirectory);
+            }
+            var finalDirectory = Path.Combine(
+                Path.GetDirectoryName(preview.GeometryPath)
+                    ?? preview.WorkspaceDirectory,
+                $"final-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(finalDirectory);
+            var niftiPath = Path.Combine(
+                finalDirectory,
+                "rescue-volume.nii");
+            var metadataPath = Path.Combine(
+                finalDirectory,
+                "rescue-geometry.json");
+            var execution = await RunJobAsync(
+                PythonExecutable(),
+                new[]
+                {
+                    "-m",
+                    "totalsegmentator_wrapper_mac",
+                    "dicom-rescue-finalize",
+                    "--volume",
+                    preview.DecodedVolumePath,
+                    "--geometry",
+                    preview.GeometryPath,
+                    "--confirmation-token",
+                    preview.ConfirmationToken,
+                    "--output-nifti",
+                    niftiPath,
+                    "--output",
+                    metadataPath,
+                },
+                ConvertTimeout);
+            var failure = RescueFinalizeExecutionFailure(
+                execution,
+                preview);
+            if (failure is not null)
+            {
+                return failure;
+            }
+            VerifyFinalizedRescue(
+                niftiPath,
+                metadataPath,
+                preview);
+            return DicomRescueFinalResult.Success(
+                preview.OperationId,
+                preview.WorkspaceDirectory,
+                niftiPath,
+                metadataPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or JsonException
+                or InvalidDataException
+                or ArgumentException)
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_rescue_finalize_invalid",
+                "確定した形状を安全に読み直せませんでした。",
+                preview.OperationId,
+                preview.WorkspaceDirectory);
+        }
+        finally
+        {
+            EndOperation();
+        }
+    }
+
+    private string PythonExecutable()
+    {
+        var executable = Path.GetFullPath(
+            Path.Combine(
+                _configuration.CoordinatorWorkingDirectory,
+                "python.exe"));
+        if (!File.Exists(executable))
+        {
+            throw new InvalidDataException(
+                "The app-private Python runtime is unavailable.");
+        }
+        return executable;
+    }
+
+    private static VerifiedRescueStack VerifyRescueStack(
+        string stackDirectory)
+    {
+        var manifestPath = Path.GetFullPath(
+            Path.Combine(stackDirectory, "source_manifest.json"));
+        using var document = JsonDocument.Parse(
+            File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        RequireString(
+            root,
+            "schema",
+            "totalsegmentator_wrapper_mac.rescue_stack.v1");
+        RequireString(root, "status", "success");
+        RequireString(
+            root,
+            "classification",
+            "secondary_capture_rescue_candidate");
+        var array = RequireObject(root, "array");
+        RequireString(array, "file", "preview_stack.npy");
+        var volumePath = Path.GetFullPath(
+            Path.Combine(stackDirectory, "preview_stack.npy"));
+        if (!IsPathWithin(volumePath, stackDirectory)
+            || !File.Exists(volumePath)
+            || new FileInfo(volumePath).Length <= 0)
+        {
+            throw new InvalidDataException(
+                "The decoded rescue volume is invalid.");
+        }
+        var shape = RequireArray(array, "shape_xyz")
+            .EnumerateArray()
+            .Select(item =>
+                item.ValueKind == JsonValueKind.Number
+                    && item.TryGetInt32(out var value)
+                    && value > 0
+                        ? value
+                        : throw new InvalidDataException(
+                            "The rescue volume shape is invalid."))
+            .ToArray();
+        if (shape.Length != 3)
+        {
+            throw new InvalidDataException(
+                "The rescue volume shape is invalid.");
+        }
+        var source = RequireObject(root, "source");
+        var manifestSha256 = RequireNonEmptyString(
+            source,
+            "manifest_sha256").ToLowerInvariant();
+        if (!IsSha256(manifestSha256))
+        {
+            throw new InvalidDataException(
+                "The rescue source manifest hash is invalid.");
+        }
+        return new VerifiedRescueStack(
+            volumePath,
+            manifestPath,
+            manifestSha256,
+            shape);
+    }
+
+    private static async Task WriteRescuePreviewRequestAsync(
+        string requestPath,
+        string manifestSha256,
+        DicomSpacing spacing,
+        DicomRescueTransform transform)
+    {
+        var payload = new
+        {
+            schema = RescueGeometrySchema,
+            workflow_status = "preview_requested",
+            source = new
+            {
+                content_manifest_sha256 = manifestSha256,
+                hash_algorithm = "sha256",
+            },
+            estimate = new
+            {
+                estimated_spacing_xyz = spacing.Values,
+                spacing_source = new[] { "manual_confirmed_candidate" },
+            },
+            confirmed = new
+            {
+                confirmed_spacing_xyz = spacing.Values,
+                manual_changed = true,
+            },
+            transform = new
+            {
+                axis_permutation = transform.AxisNames,
+                rotation_quarter_turns =
+                    transform.RotationQuarterTurns,
+                slice_order_reversed =
+                    transform.SliceOrderReversed,
+                crop_voxels_xyz = (object?)null,
+            },
+            calibrations = Array.Empty<object>(),
+            inference_started = false,
+        };
+        await File.WriteAllTextAsync(
+            requestPath,
+            JsonSerializer.Serialize(
+                payload,
+                new JsonSerializerOptions { WriteIndented = true })
+            + Environment.NewLine,
+            new UTF8Encoding(false));
+    }
+
+    private static VerifiedRescuePreview VerifyRescuePreview(
+        string metadataPath,
+        string previewDirectory,
+        string manifestSha256,
+        DicomSpacing spacing,
+        DicomRescueTransform transform)
+    {
+        using var document = JsonDocument.Parse(
+            File.ReadAllText(metadataPath));
+        var root = document.RootElement;
+        RequireString(root, "schema", RescueGeometrySchema);
+        RequireString(root, "workflow_status", "preview_ready");
+        RequireFalse(root, "inference_started");
+        var source = RequireObject(root, "source");
+        RequireString(
+            source,
+            "content_manifest_sha256",
+            manifestSha256);
+        RequireSpacing(
+            RequireObject(root, "confirmed"),
+            "confirmed_spacing_xyz",
+            spacing);
+        RequireTransform(root, transform);
+        var token = RequireNonEmptyString(
+            root,
+            "confirmation_token").ToLowerInvariant();
+        if (!IsSha256(token))
+        {
+            throw new InvalidDataException(
+                "The rescue confirmation token is invalid.");
+        }
+        var outputs = RequireObject(root, "outputs");
+        RequireFalse(outputs, "inference_started");
+        var previews = ReadVerifiedMprPreviews(
+            RequireArray(outputs, "mpr_preview"),
+            previewDirectory);
+        return new VerifiedRescuePreview(
+            previews,
+            token);
+    }
+
+    private static void VerifyFinalizedRescue(
+        string niftiPath,
+        string metadataPath,
+        DicomRescueResult preview)
+    {
+        if (!File.Exists(niftiPath)
+            || new FileInfo(niftiPath).Length <= 352)
+        {
+            throw new InvalidDataException(
+                "The finalized rescue NIfTI is invalid.");
+        }
+        using var document = JsonDocument.Parse(
+            File.ReadAllText(metadataPath));
+        var root = document.RootElement;
+        RequireString(root, "schema", RescueGeometrySchema);
+        RequireString(root, "workflow_status", "finalized");
+        RequireFalse(root, "inference_started");
+        var source = RequireObject(root, "source");
+        using var previewDocument = JsonDocument.Parse(
+            File.ReadAllText(preview.GeometryPath!));
+        var previewSource = RequireObject(
+            previewDocument.RootElement,
+            "source");
+        RequireString(
+            source,
+            "content_manifest_sha256",
+            RequireNonEmptyString(
+                previewSource,
+                "content_manifest_sha256"));
+        RequireSpacing(
+            RequireObject(root, "confirmed"),
+            "confirmed_spacing_xyz",
+            preview.ConfirmedSpacing!);
+        RequireTransform(root, preview.Transform!);
+        var confirmation = RequireObject(root, "confirmation");
+        RequireTrue(confirmation, "confirmed");
+        var tokenSha256 = RequireNonEmptyString(
+            confirmation,
+            "token_sha256");
+        var expectedTokenSha256 = Convert.ToHexString(
+            SHA256.HashData(
+                Encoding.ASCII.GetBytes(
+                    preview.ConfirmationToken!)))
+            .ToLowerInvariant();
+        if (!string.Equals(
+                tokenSha256,
+                expectedTokenSha256,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "The rescue confirmation readback is invalid.");
+        }
+        var validation = RequireObject(
+            root,
+            "output_validation");
+        RequireTrue(validation, "affine_consistent");
+        RequireTrue(validation, "voxel_payload_consistent");
+        RequireTrue(validation, "input_hash_matches");
+        var expectedNiftiSha256 = RequireNonEmptyString(
+            validation,
+            "nifti_sha256");
+        using var niftiStream = File.OpenRead(niftiPath);
+        var actualNiftiSha256 = Convert.ToHexString(
+            SHA256.HashData(niftiStream))
+            .ToLowerInvariant();
+        if (!string.Equals(
+                expectedNiftiSha256,
+                actualNiftiSha256,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "The finalized rescue NIfTI hash is invalid.");
+        }
+    }
+
+    private static void RequireTransform(
+        JsonElement root,
+        DicomRescueTransform expected)
+    {
+        var transform = RequireObject(root, "transform");
+        var axes = RequireArray(transform, "axis_permutation")
+            .EnumerateArray()
+            .Select(item =>
+                item.ValueKind == JsonValueKind.String
+                    ? item.GetString()
+                    : null)
+            .ToArray();
+        if (!axes.SequenceEqual(
+                expected.AxisNames,
+                StringComparer.Ordinal)
+            || RequireInt32(
+                transform,
+                "rotation_quarter_turns")
+                != expected.RotationQuarterTurns
+            || RequireBoolean(
+                transform,
+                "slice_order_reversed")
+                != expected.SliceOrderReversed)
+        {
+            throw new InvalidDataException(
+                "The rescue transform readback is invalid.");
+        }
+    }
+
+    private static bool IsSha256(string value) =>
+        value.Length == 64
+        && value.All(character =>
+            character is >= '0' and <= '9'
+                or >= 'a' and <= 'f'
+                or >= 'A' and <= 'F');
+
+    private static DicomRescueResult? RescueExecutionFailure(
+        JobExecutionResult execution,
+        DicomAuditResult audit,
+        string operationLabel)
+    {
+        if (!execution.Started)
+        {
+            return DicomRescueResult.Failure(
+                "dicom_rescue_preview_start_failed",
+                $"{operationLabel}の処理を開始できません。",
+                audit.OperationId,
+                audit.WorkspaceDirectory);
+        }
+        if (execution.Cancelled)
+        {
+            return DicomRescueResult.Failure(
+                "dicom_rescue_cancelled",
+                $"{operationLabel}の作成を停止しました。",
+                audit.OperationId,
+                audit.WorkspaceDirectory);
+        }
+        if (execution.TimedOut)
+        {
+            return DicomRescueResult.Failure(
+                "dicom_rescue_timeout",
+                $"{operationLabel}の作成が制限時間を超えました。",
+                audit.OperationId,
+                audit.WorkspaceDirectory);
+        }
+        if (!execution.JobBecameEmpty)
+        {
+            return DicomRescueResult.Failure(
+                "dicom_rescue_process_tree_error",
+                $"{operationLabel}の処理を安全に終了できませんでした。",
+                audit.OperationId,
+                audit.WorkspaceDirectory);
+        }
+        if (execution.ExitCode != 0)
+        {
+            return DicomRescueResult.Failure(
+                "dicom_rescue_preview_failed",
+                $"{operationLabel}を作成できませんでした。",
+                audit.OperationId,
+                audit.WorkspaceDirectory);
+        }
+        return null;
+    }
+
+    private static DicomRescueFinalResult?
+        RescueFinalizeExecutionFailure(
+            JobExecutionResult execution,
+            DicomRescueResult preview)
+    {
+        if (!execution.Started)
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_rescue_finalize_start_failed",
+                "確定した形状の適用を開始できません。",
+                preview.OperationId,
+                preview.WorkspaceDirectory);
+        }
+        if (execution.Cancelled)
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_rescue_finalize_cancelled",
+                "確定した形状の適用を停止しました。",
+                preview.OperationId,
+                preview.WorkspaceDirectory);
+        }
+        if (execution.TimedOut)
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_rescue_finalize_timeout",
+                "確定した形状の適用が制限時間を超えました。",
+                preview.OperationId,
+                preview.WorkspaceDirectory);
+        }
+        if (!execution.JobBecameEmpty
+            || execution.ExitCode != 0)
+        {
+            return DicomRescueFinalResult.Failure(
+                "dicom_rescue_finalize_failed",
+                "確定した形状を3D作成用データへ変換できませんでした。",
+                preview.OperationId,
+                preview.WorkspaceDirectory);
+        }
+        return null;
     }
 
     internal void RequestCancel()
@@ -1063,104 +1573,6 @@ internal sealed class DicomIntakeSession : IDisposable
             previews);
     }
 
-    private static VerifiedRescue VerifyRescue(
-        string rescueDirectory,
-        DicomRescueCandidate candidate,
-        DicomSpacing requestedSpacing)
-    {
-        var metadataPath = Path.Combine(
-            rescueDirectory,
-            "rescue_metadata.json");
-        using (var document = JsonDocument.Parse(
-                   File.ReadAllText(metadataPath)))
-        {
-            var root = document.RootElement;
-            RequireString(root, "schema", RescueSchema);
-            RequireString(root, "status", "success");
-            var selected = RequireObject(root, "selected_series");
-            RequireString(
-                selected,
-                "classification",
-                "secondary_capture_rescue_candidate");
-            RequireString(
-                selected,
-                "series_instance_uid",
-                candidate.NativeSeriesKey);
-            if (RequirePositiveInt32(selected, "file_count")
-                != candidate.FileCount)
-            {
-                throw new InvalidDataException(
-                    "The rescue series file count changed.");
-            }
-            var warnings = RequireObject(root, "warnings");
-            foreach (var warning in new[]
-                     {
-                         "secondary_capture",
-                         "geometry_inferred",
-                         "burned_in_annotation",
-                         "not_segmentation_grade_original_ct",
-                         "manual_spacing_required",
-                     })
-            {
-                RequireTrue(warnings, warning);
-            }
-            RequireSpacing(
-                root,
-                "patched_spacing",
-                requestedSpacing);
-            var dcm2niix = RequireObject(root, "dcm2niix");
-            if (RequireInt32(dcm2niix, "returncode") != 0)
-            {
-                throw new InvalidDataException(
-                    "dcm2niix did not succeed.");
-            }
-        }
-
-        var validationPath = Path.Combine(
-            rescueDirectory,
-            "rescue_validation.json");
-        using var validationDocument = JsonDocument.Parse(
-            File.ReadAllText(validationPath));
-        var validation = validationDocument.RootElement;
-        RequireString(
-            validation,
-            "schema",
-            RescueValidationSchema);
-        RequireString(validation, "status", "success");
-        RequireTrue(
-            validation,
-            "patched_spacing_matches_requested");
-        RequireSpacing(
-            validation,
-            "requested_spacing",
-            requestedSpacing);
-        var patched = RequireObject(validation, "patched_nifti");
-        RequireTrue(patched, "ok");
-        RequireSpacing(patched, "spacing", requestedSpacing);
-        var patchedNifti = Path.GetFullPath(
-            RequireNonEmptyString(patched, "path"));
-        var rescueRoot = Path.GetFullPath(rescueDirectory);
-        if (!IsPathWithin(patchedNifti, rescueRoot)
-            || !File.Exists(patchedNifti)
-            || new FileInfo(patchedNifti).Length <= 0
-            || !IsNifti(patchedNifti))
-        {
-            throw new InvalidDataException(
-                "The rescue NIfTI output is invalid.");
-        }
-
-        var mpr = RequireObject(validation, "mpr_preview");
-        RequireTrue(mpr, "written");
-        var previewRoot = Path.GetFullPath(
-            Path.Combine(rescueDirectory, "mpr_preview"));
-        var previews = ReadVerifiedMprPreviews(
-            RequireArray(mpr, "previews"),
-            previewRoot);
-        return new VerifiedRescue(
-            patchedNifti,
-            previews);
-    }
-
     private static IReadOnlyList<DicomMprPreview>
         ReadVerifiedMprPreviews(
             JsonElement previewArray,
@@ -1274,8 +1686,9 @@ internal sealed class DicomIntakeSession : IDisposable
         string operationId,
         DicomRescueCandidate candidate,
         DicomSpacing spacing,
+        DicomRescueTransform transform,
         uint normalizerExitCode,
-        VerifiedRescue verified)
+        VerifiedRescuePreview verified)
     {
         var payload = new
         {
@@ -1291,6 +1704,15 @@ internal sealed class DicomIntakeSession : IDisposable
                 classification = candidate.Classification,
             },
             confirmed_spacing_xyz = spacing.Values,
+            transform = new
+            {
+                axis_permutation = transform.AxisNames,
+                rotation_quarter_turns =
+                    transform.RotationQuarterTurns,
+                slice_order_reversed =
+                    transform.SliceOrderReversed,
+                crop_voxels_xyz = (object?)null,
+            },
             warning_flags = new
             {
                 secondary_capture = true,
@@ -1306,7 +1728,7 @@ internal sealed class DicomIntakeSession : IDisposable
             },
             output_validation = new
             {
-                patched_nifti_nonempty = true,
+                confirmation_token_bound = true,
                 preview_count = verified.Previews.Count,
                 preview_planes = verified.Previews
                     .Select(preview => preview.Plane)
@@ -1613,9 +2035,15 @@ internal sealed class DicomIntakeSession : IDisposable
         int Dcm2niixExitCode,
         IReadOnlyList<DicomMprPreview> Previews);
 
-    private sealed record VerifiedRescue(
-        string PatchedNiftiPath,
-        IReadOnlyList<DicomMprPreview> Previews);
+    private sealed record VerifiedRescueStack(
+        string VolumePath,
+        string ManifestPath,
+        string ManifestSha256,
+        IReadOnlyList<int> Shape);
+
+    private sealed record VerifiedRescuePreview(
+        IReadOnlyList<DicomMprPreview> Previews,
+        string ConfirmationToken);
 
     private sealed record ParsedDicomAudit(
         IReadOnlyList<DicomCleanCandidate> CleanCandidates,
@@ -1768,23 +2196,37 @@ internal sealed record DicomRescueResult(
     string? NiftiPath,
     string? ManifestPath,
     IReadOnlyList<DicomMprPreview> Previews,
+    string? DecodedVolumePath,
+    string? GeometryPath,
+    string? ConfirmationToken,
+    DicomSpacing? ConfirmedSpacing,
+    DicomRescueTransform? Transform,
     string? ErrorCode,
     string? SafeMessage)
 {
     internal static DicomRescueResult Success(
         string operationId,
         string workspaceDirectory,
-        string niftiPath,
         string manifestPath,
-        IReadOnlyList<DicomMprPreview> previews)
+        IReadOnlyList<DicomMprPreview> previews,
+        string decodedVolumePath,
+        string geometryPath,
+        string confirmationToken,
+        DicomSpacing confirmedSpacing,
+        DicomRescueTransform transform)
     {
         return new DicomRescueResult(
             true,
             operationId,
             workspaceDirectory,
-            niftiPath,
+            null,
             manifestPath,
             previews,
+            decodedVolumePath,
+            geometryPath,
+            confirmationToken,
+            confirmedSpacing,
+            transform,
             null,
             null);
     }
@@ -1802,9 +2244,75 @@ internal sealed record DicomRescueResult(
             null,
             null,
             Array.Empty<DicomMprPreview>(),
+            null,
+            null,
+            null,
+            null,
+            null,
             errorCode,
             safeMessage);
     }
+}
+
+internal sealed record DicomRescueFinalResult(
+    bool Succeeded,
+    string? OperationId,
+    string? WorkspaceDirectory,
+    string? NiftiPath,
+    string? MetadataPath,
+    string? ErrorCode,
+    string? SafeMessage)
+{
+    internal static DicomRescueFinalResult Success(
+        string operationId,
+        string workspaceDirectory,
+        string niftiPath,
+        string metadataPath) =>
+        new(
+            true,
+            operationId,
+            workspaceDirectory,
+            niftiPath,
+            metadataPath,
+            null,
+            null);
+
+    internal static DicomRescueFinalResult Failure(
+        string errorCode,
+        string safeMessage,
+        string? operationId = null,
+        string? workspaceDirectory = null) =>
+        new(
+            false,
+            operationId,
+            workspaceDirectory,
+            null,
+            null,
+            errorCode,
+            safeMessage);
+}
+
+internal sealed record DicomRescueTransform(
+    string AxisPermutation,
+    int RotationQuarterTurns,
+    bool SliceOrderReversed)
+{
+    private static readonly string[] AllowedPermutations =
+        ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
+
+    public bool IsValid =>
+        AllowedPermutations.Contains(
+            AxisPermutation,
+            StringComparer.Ordinal)
+        && RotationQuarterTurns is >= 0 and <= 3;
+
+    public string[] AxisNames =>
+        AxisPermutation
+            .Select(character => character.ToString())
+            .ToArray();
+
+    internal static DicomRescueTransform Identity { get; } =
+        new("xyz", 0, false);
 }
 
 internal sealed record DicomConversionResult(

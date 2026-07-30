@@ -273,7 +273,15 @@
                 automation:AutomationProperties.Name="手元のCTデータを使う"
                 automation:AutomationProperties.HelpText="NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。">
               <StackPanel>
-                <TextBlock Text="□" FontSize="26" Margin="0,0,0,14" />
+                <Path
+                    Width="30"
+                    Height="24"
+                    Margin="0,0,0,14"
+                    HorizontalAlignment="Left"
+                    Stretch="Fill"
+                    Fill="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
+                    Data="M1,5 L11,5 L14,9 L29,9 L29,23 L1,23 Z M1,3 L12,3 L15,7 L29,7 L29,9 L14,9 L11,5 L1,5 Z"
+                    automation:AutomationProperties.Name="CTデータのフォルダ" />
                 <TextBlock Text="手元のCTデータを使う" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <TextBlock Text="NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。" Style="{StaticResource MutedTextStyle}" />
               </StackPanel>
@@ -494,6 +502,13 @@
                       <TextBlock Text="通常（TotalSegmentator）" FontSize="17" FontWeight="SemiBold" />
                       <Image Source="/model_comparison/totalseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="通常のTotalSegmentatorによる3D分割結果" />
                       <TextBlock Text="顎骨と歯列をまとめて作成します。比較的速く、最初に試す方法です。" TextWrapping="Wrap" />
+                      <TextBlock
+                          x:Name="StandardReadinessText"
+                          Text="準備済み"
+                          Foreground="#187A38"
+                          FontWeight="SemiBold"
+                          Margin="0,5,0,0"
+                          automation:AutomationProperties.Name="通常TotalSegmentatorの準備状況" />
                       <Button
                           x:Name="SelectStandardModelButton"
                           Content="この方法を選ぶ"
@@ -509,6 +524,12 @@
                       <Image Source="/model_comparison/dentalseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="DentalSegmentatorによる3D分割結果" />
                       <TextBlock Text="上下の歯列・顎骨・下顎管を5領域に分ける追加モデルです。" TextWrapping="Wrap" />
                       <TextBlock Text="実験的。検証済みの追加モデルが必要です。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <TextBlock
+                          x:Name="DentalReadinessText"
+                          FontWeight="SemiBold"
+                          Margin="0,5,0,0"
+                          TextWrapping="Wrap"
+                          automation:AutomationProperties.Name="DentalSegmentatorの準備状況" />
                       <Button
                           x:Name="SelectDentalSegmentatorButton"
                           Content="この方法を選ぶ"
@@ -524,6 +545,12 @@
                       <Image Source="/model_comparison/individual.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="個別歯ベータによる3D分割結果" />
                       <TextBlock Text="TotalSegmentatorの旧個別歯経路で、歯を1本ずつ表示します。" TextWrapping="Wrap" />
                       <TextBlock Text="ベータ機能です。通常の表示より時間がかかります。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <TextBlock
+                          x:Name="IndividualReadinessText"
+                          FontWeight="SemiBold"
+                          Margin="0,5,0,0"
+                          TextWrapping="Wrap"
+                          automation:AutomationProperties.Name="個別歯ベータの準備状況" />
                       <Button
                           x:Name="SelectIndividualTeethButton"
                           Content="この方法を選ぶ"
@@ -539,6 +566,12 @@
                       <Image Source="/model_comparison/toothseg.png" Height="130" Stretch="UniformToFill" Margin="0,9,0,9" automation:AutomationProperties.Name="高精細歯ToothSegによる3D分割結果" />
                       <TextBlock Text="歯を1本ずつ分け、FDI歯式番号を付ける高精細推論です。" TextWrapping="Wrap" />
                       <TextBlock Text="実験的な追加機能です。通常より長い処理時間とVRAMを必要とします。" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                      <TextBlock
+                          x:Name="ToothSegReadinessText"
+                          FontWeight="SemiBold"
+                          Margin="0,5,0,0"
+                          TextWrapping="Wrap"
+                          automation:AutomationProperties.Name="ToothSegの準備状況" />
                       <Button
                           x:Name="SelectToothSegButton"
                           Content="この方法を選ぶ"
@@ -554,7 +587,47 @@
             </Border>
             <TextBlock Text="GPU  NVIDIA CUDA (cuda:0)を必須として使用" Margin="0,0,0,8" FontWeight="SemiBold" />
             <TextBlock Text="CPUへ自動的に切り替えません。" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,14" />
-            <TextBlock x:Name="OutputDisplayName" Text="保存先: runs" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,14" />
+            <Grid Margin="0,0,0,12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock
+                  x:Name="OutputDisplayName"
+                  Text="保存先: runs"
+                  Style="{StaticResource MutedTextStyle}"
+                  VerticalAlignment="Center" />
+              <Button
+                  x:Name="ChangeOutputRootButton"
+                  Grid.Column="1"
+                  Content="変更"
+                  Click="ChangeOutputRootButton_Click"
+                  automation:AutomationProperties.Name="結果の保存先を変更" />
+            </Grid>
+            <CheckBox
+                x:Name="HigherOrderResamplingCheckBox"
+                Content="表面をなめらかに仕上げる"
+                Margin="0,0,0,10"
+                Click="HigherOrderResamplingCheckBox_Click"
+                automation:AutomationProperties.Name="表面をなめらかに仕上げる"
+                automation:AutomationProperties.HelpText="標準TotalSegmentatorでhigher-order resamplingを使用します。" />
+            <Expander
+                x:Name="InputDetailsExpander"
+                Header="入力と保存の詳細"
+                Margin="0,0,0,14"
+                Expanded="InputDetailsExpander_Expanded"
+                automation:AutomationProperties.Name="入力と保存の詳細">
+              <Border
+                  Padding="10"
+                  BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                  BorderThickness="1"
+                  CornerRadius="6">
+                <TextBlock
+                    x:Name="InputDetailsText"
+                    TextWrapping="Wrap"
+                    Style="{StaticResource MutedTextStyle}" />
+              </Border>
+            </Expander>
             <TextBlock
                 x:Name="SampleNotice"
                 Text="同梱Sample 1はUI確認・動作確認用です。診断、治療方針の決定、治療計画、定量的な精度評価、または臨床利用には使用できません。"
@@ -888,6 +961,47 @@
                 Style="{StaticResource MutedTextStyle}"
                 Margin="0,0,0,16"
                 TextWrapping="Wrap" />
+            <Button
+                x:Name="ShowRescueOrientationButton"
+                Content="画像の向きを修正"
+                HorizontalAlignment="Left"
+                Margin="0,0,0,10"
+                Click="ShowRescueOrientationButton_Click"
+                automation:AutomationProperties.Name="画像の向きを修正" />
+            <GroupBox
+                x:Name="RescueOrientationPanel"
+                Header="画像の向き"
+                Visibility="Collapsed"
+                Margin="0,0,0,14">
+              <WrapPanel Margin="10">
+                <TextBlock Text="軸の対応" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox
+                    x:Name="RescueAxisPermutationComboBox"
+                    Width="90"
+                    SelectedIndex="0"
+                    SelectionChanged="RescueAxisPermutationComboBox_SelectionChanged"
+                    automation:AutomationProperties.Name="救済画像の軸の対応">
+                  <ComboBoxItem Content="XYZ" Tag="xyz" />
+                  <ComboBoxItem Content="XZY" Tag="xzy" />
+                  <ComboBoxItem Content="YXZ" Tag="yxz" />
+                  <ComboBoxItem Content="YZX" Tag="yzx" />
+                  <ComboBoxItem Content="ZXY" Tag="zxy" />
+                  <ComboBoxItem Content="ZYX" Tag="zyx" />
+                </ComboBox>
+                <Button
+                    x:Name="RotateRescueImageButton"
+                    Content="90°回転"
+                    Margin="10,0,10,0"
+                    Click="RotateRescueImageButton_Click"
+                    automation:AutomationProperties.Name="救済画像を90度回転" />
+                <CheckBox
+                    x:Name="ReverseRescueSlicesCheckBox"
+                    Content="スライス順を反転"
+                    VerticalAlignment="Center"
+                    Click="ReverseRescueSlicesCheckBox_Click"
+                    automation:AutomationProperties.Name="救済画像のスライス順を反転" />
+              </WrapPanel>
+            </GroupBox>
             <TextBlock
                 x:Name="RescuePreviewStatusText"
                 Text="確認画像はまだ作成されていません。AI推論は開始しません。"
@@ -898,7 +1012,10 @@
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="12" />
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <Button
@@ -917,10 +1034,18 @@
                   x:Name="CreateRescuePreviewButton"
                   Grid.Column="3"
                   Content="この形状で確認画像を作る"
-                  Style="{StaticResource PrimaryButtonStyle}"
                   Click="CreateRescuePreviewButton_Click"
                   automation:AutomationProperties.Name="この形状で確認画像を作る"
                   automation:AutomationProperties.HelpText="Secondary Captureの確認用pseudo-volumeと三方向画像を作ります。AI推論は開始しません。" />
+              <Button
+                  x:Name="ConfirmRescueAndRunButton"
+                  Grid.Column="6"
+                  Content="この形状で作成"
+                  IsEnabled="False"
+                  Style="{StaticResource PrimaryButtonStyle}"
+                  Click="ConfirmRescueAndRunButton_Click"
+                  automation:AutomationProperties.Name="確認済みの形状で3Dプレビューを作る"
+                  automation:AutomationProperties.HelpText="確認tokenに結び付いたNIfTIを検証後、strict CUDAで3Dプレビューを作ります。" />
             </Grid>
           </StackPanel>
         </ScrollViewer>
@@ -997,7 +1122,55 @@
                   TabIndex="4"
                   automation:AutomationProperties.Name="詳細情報を見る"
                   automation:AutomationProperties.HelpText="安全なprotocol event要約だけを表示します。" />
+              <Button
+                  x:Name="ExportSlicerButton"
+                  Content="3D Slicer用に書き出す"
+                  Click="ExportSlicerButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="5"
+                  Visibility="Collapsed"
+                  automation:AutomationProperties.Name="3D Slicer用に書き出す"
+                  automation:AutomationProperties.HelpText="推論を再実行せず、検証済み結果からSlicer用ファイルを作成します。" />
+              <Button
+                  x:Name="RebuildPreviewButton"
+                  Content="3Dプレビューを再生成"
+                  Click="RebuildPreviewButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="6"
+                  Visibility="Collapsed"
+                  automation:AutomationProperties.Name="3Dプレビューを再生成"
+                  automation:AutomationProperties.HelpText="推論を再実行せず、保存済み結果からoffline previewを再生成します。" />
             </WrapPanel>
+            <TextBlock
+                x:Name="ResultToolStatusText"
+                Visibility="Collapsed"
+                Style="{StaticResource MutedTextStyle}"
+                TextWrapping="Wrap"
+                Margin="0,0,0,10"
+                automation:AutomationProperties.Name="結果ツールの状態" />
+            <Expander
+                x:Name="ArtifactListExpander"
+                Header="保存されたファイル"
+                Visibility="Collapsed"
+                Expanded="ArtifactListExpander_Expanded"
+                Margin="0,0,0,14"
+                automation:AutomationProperties.Name="保存されたファイル一覧">
+              <Border
+                  Padding="10"
+                  BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                  BorderThickness="1"
+                  CornerRadius="6">
+                <TextBox
+                    x:Name="ArtifactListText"
+                    IsReadOnly="True"
+                    TextWrapping="NoWrap"
+                    MinHeight="80"
+                    MaxHeight="220"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Auto"
+                    automation:AutomationProperties.Name="artifact manifestの相対パスとサイズ" />
+              </Border>
+            </Expander>
             <Border
                 x:Name="SafeDetailsPanel"
                 Visibility="Collapsed"

@@ -27,13 +27,18 @@ internal enum ShellScreen
 public partial class MainWindow : Window
 {
     private readonly ShellConfiguration _configuration;
+    private readonly ShellPreferences _preferences = new();
     private readonly DispatcherTimer _elapsedTimer;
     private readonly List<string> _safeEventLog = [];
     private CoordinatorSession? _session;
+    private ResultToolsSession? _resultToolsSession;
     private CoordinatorSessionResult? _lastResult;
+    private string? _resultPreviewPath;
     private string? _inputPath;
     private DateTime _runStartedUtc;
     private ShellScreen _screen;
+    private string _selectedOutputRoot = string.Empty;
+    private bool _higherOrderResampling;
 
     internal MainWindow(
         ShellConfiguration configuration,
@@ -41,6 +46,9 @@ public partial class MainWindow : Window
     {
         _configuration = configuration;
         InitializeComponent();
+        _selectedOutputRoot =
+            _preferences.LoadOutputRoot()
+            ?? _configuration.OutputRoot;
         _elapsedTimer = new DispatcherTimer(
             TimeSpan.FromSeconds(1),
             DispatcherPriority.Background,
@@ -49,11 +57,13 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _dicomSession?.Dispose();
+            _resultToolsSession?.Dispose();
             _session?.Dispose();
         };
         OutputDisplayName.Text =
-            $"保存先: {Path.GetFileName(_configuration.OutputRoot)}";
+            $"保存先: {Path.GetFileName(_selectedOutputRoot)}";
         InitializeModelSelection();
+        UpdateInputDetails();
         SetScreen(ShellScreen.Setup, "待機中");
         if (previewScenario is not null)
         {
@@ -90,8 +100,12 @@ public partial class MainWindow : Window
             [ChooseAnotherCtFromRescueButton] =
                 "形状確認から別のCTを選ぶ",
             [ResetRescueSpacingButton] = "推定形状に戻す",
+            [ShowRescueOrientationButton] = "画像の向きを修正",
+            [RotateRescueImageButton] = "救済画像を90度回転",
             [CreateRescuePreviewButton] =
                 "この形状で確認画像を作る",
+            [ConfirmRescueAndRunButton] =
+                "確認済みの形状で3Dプレビューを作る",
             [StandardModelCardButton] = "標準モデルを選ぶ",
             [OtherModelsCardButton] = "その他のモデルを比較",
             [CloseModelComparisonButton] =
@@ -105,11 +119,14 @@ public partial class MainWindow : Window
             [SelectToothSegButton] =
                 "高精細歯ToothSegを選ぶ",
             [RunButton] = "Sampleで3Dプレビューを作る",
+            [ChangeOutputRootButton] = "結果の保存先を変更",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
             [OpenOutputButton] = "結果フォルダを開く",
             [CopyErrorButton] = "エラー情報をコピー",
             [ShowDetailsButton] = "詳細情報を見る",
+            [ExportSlicerButton] = "3D Slicer用に書き出す",
+            [RebuildPreviewButton] = "3Dプレビューを再生成",
             [ReturnToInputButton] = "入力と作成内容へ戻る",
             [ChooseAnotherResultInputButton] =
                 "結果画面から別のCTを選ぶ",
@@ -505,6 +522,68 @@ public partial class MainWindow : Window
         await StartRunAsync();
     }
 
+    private void ChangeOutputRootButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "結果の保存先を選ぶ",
+            Multiselect = false,
+            InitialDirectory = _selectedOutputRoot,
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+        _selectedOutputRoot = Path.GetFullPath(dialog.FolderName);
+        _preferences.SaveOutputRoot(_selectedOutputRoot);
+        OutputDisplayName.Text =
+            $"保存先: {Path.GetFileName(_selectedOutputRoot)}";
+        UpdateInputDetails();
+    }
+
+    private void HigherOrderResamplingCheckBox_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        _higherOrderResampling =
+            HigherOrderResamplingCheckBox.IsChecked == true;
+        UpdateInputDetails();
+    }
+
+    private void InputDetailsExpander_Expanded(
+        object sender,
+        RoutedEventArgs e)
+    {
+        UpdateInputDetails();
+    }
+
+    private void UpdateInputDetails()
+    {
+        if (InputDetailsText is null)
+        {
+            return;
+        }
+        var inputName = string.IsNullOrWhiteSpace(_inputPath)
+            ? "未選択"
+            : Path.GetFileName(_inputPath);
+        var smoothing =
+            _selectedSegmentationProfile
+                == SegmentationProfile.TotalSegmentator
+            && _higherOrderResampling
+                ? "有効"
+                : "無効";
+        InputDetailsText.Text = string.Join(
+            Environment.NewLine,
+            $"入力: {inputName}",
+            $"形式: NIfTI / DICOM変換後NIfTI",
+            $"作成方法: {SelectedModelDisplayName}",
+            "device: strict CUDA (cuda:0)",
+            $"仕上がり平滑化: {smoothing}",
+            $"保存先: {Path.GetFileName(_selectedOutputRoot)}");
+    }
+
     private async void RerunButton_Click(
         object sender,
         RoutedEventArgs e)
@@ -556,10 +635,143 @@ public partial class MainWindow : Window
             return;
         }
         OpenLocalPath(
-            Path.Combine(
-                _lastResult.FinalDirectory,
-                "surface_preview",
-                "index.html"));
+            _resultPreviewPath
+            ?? Path.Combine(
+                    _lastResult.FinalDirectory,
+                    "surface_preview",
+                    "index.html"));
+    }
+
+    private async void ExportSlicerButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_lastResult is null)
+        {
+            return;
+        }
+        SetResultToolBusy(true, "3D Slicer用ファイルを作成しています。");
+        _resultToolsSession?.Dispose();
+        _resultToolsSession = new ResultToolsSession(_configuration);
+        ResultToolResult result;
+        try
+        {
+            result = await _resultToolsSession.ExportSlicerAsync(
+                _lastResult.FinalDirectory);
+        }
+        finally
+        {
+            SetResultToolBusy(false, null);
+        }
+        ResultToolStatusText.Text = result.Succeeded
+            ? "3D Slicer用ファイルを作成しました。"
+            : $"作成できませんでした（{result.ErrorCode}）。";
+        ResultToolStatusText.Visibility = Visibility.Visible;
+        if (result.Succeeded && result.OutputDirectory is not null)
+        {
+            OpenLocalPath(result.OutputDirectory);
+        }
+    }
+
+    private async void RebuildPreviewButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_lastResult is null)
+        {
+            return;
+        }
+        SetResultToolBusy(true, "3Dプレビューを再生成しています。");
+        _resultToolsSession?.Dispose();
+        _resultToolsSession = new ResultToolsSession(_configuration);
+        ResultToolResult result;
+        try
+        {
+            result = await _resultToolsSession.RebuildPreviewAsync(
+                _lastResult.FinalDirectory);
+        }
+        finally
+        {
+            SetResultToolBusy(false, null);
+        }
+        ResultToolStatusText.Text = result.Succeeded
+            ? "3Dプレビューを再生成しました。元の結果は変更していません。"
+            : $"再生成できませんでした（{result.ErrorCode}）。";
+        ResultToolStatusText.Visibility = Visibility.Visible;
+        if (result.Succeeded && result.OutputDirectory is not null)
+        {
+            _resultPreviewPath = Path.Combine(
+                result.OutputDirectory,
+                "index.html");
+            OpenPreviewButton.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SetResultToolBusy(bool busy, string? status)
+    {
+        ExportSlicerButton.IsEnabled = !busy;
+        RebuildPreviewButton.IsEnabled = !busy;
+        if (status is not null)
+        {
+            ResultToolStatusText.Text = status;
+            ResultToolStatusText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void ArtifactListExpander_Expanded(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ArtifactListText.Text = ReadSafeArtifactList();
+    }
+
+    private string ReadSafeArtifactList()
+    {
+        if (_lastResult is null)
+        {
+            return "保存結果はありません。";
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(
+                File.ReadAllText(
+                    Path.Combine(
+                        _lastResult.FinalDirectory,
+                        "artifact-manifest.json")));
+            var root = document.RootElement;
+            if (!root.TryGetProperty("artifacts", out var artifacts)
+                || artifacts.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidDataException();
+            }
+            var entries = new List<string>();
+            foreach (var artifact in artifacts.EnumerateArray())
+            {
+                var relativePath =
+                    artifact.GetProperty("relative_path").GetString();
+                var size = artifact.GetProperty("size_bytes").GetInt64();
+                if (string.IsNullOrWhiteSpace(relativePath)
+                    || Path.IsPathRooted(relativePath)
+                    || relativePath.Split('/', '\\').Contains("..")
+                    || size <= 0)
+                {
+                    throw new InvalidDataException();
+                }
+                entries.Add($"{relativePath}  ({size:N0} bytes)");
+            }
+            return entries.Count == 0
+                ? "保存ファイルはありません。"
+                : string.Join(Environment.NewLine, entries);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or JsonException
+                or InvalidDataException
+                or KeyNotFoundException)
+        {
+            return "artifact manifestを安全に読み取れませんでした。";
+        }
     }
 
     private void OpenOutputButton_Click(object sender, RoutedEventArgs e)
@@ -776,7 +988,9 @@ public partial class MainWindow : Window
         {
             _lastResult = await _session.RunAsync(
                 _inputPath,
-                _selectedSegmentationProfile);
+                _selectedSegmentationProfile,
+                _selectedOutputRoot,
+                _higherOrderResampling);
         }
         catch (Exception exception) when (
             exception is IOException
@@ -898,6 +1112,7 @@ public partial class MainWindow : Window
             dicomFailure: false);
         if (result.TerminalEvent == "operation_completed")
         {
+            _resultPreviewPath = null;
             ResultTitle.Text = "3Dプレビューを作成しました";
             ResultReason.Text =
                 _selectedDicomCandidate is null
@@ -908,12 +1123,19 @@ public partial class MainWindow : Window
             OpenOutputButton.Visibility = Visibility.Visible;
             CopyErrorButton.Visibility = Visibility.Collapsed;
             RerunButton.Visibility = Visibility.Visible;
+            ExportSlicerButton.Visibility = Visibility.Visible;
+            RebuildPreviewButton.Visibility = Visibility.Visible;
+            ArtifactListExpander.Visibility = Visibility.Visible;
+            ResultToolStatusText.Visibility = Visibility.Collapsed;
             SetCopyInformationButtonForCancellation(cancelled: false);
             SetScreen(ShellScreen.Result, "完了");
             return;
         }
 
         OpenPreviewButton.Visibility = Visibility.Collapsed;
+        ExportSlicerButton.Visibility = Visibility.Collapsed;
+        RebuildPreviewButton.Visibility = Visibility.Collapsed;
+        ArtifactListExpander.Visibility = Visibility.Collapsed;
         OpenOutputButton.Visibility = Visibility.Collapsed;
         CopyErrorButton.Visibility = Visibility.Visible;
         RerunButton.Visibility = Visibility.Collapsed;

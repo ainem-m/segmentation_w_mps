@@ -14,6 +14,8 @@ public partial class MainWindow
     private DicomConversionResult? _lastDicomConversion;
     private DicomRescueResult? _lastDicomRescue;
     private DicomSpacing? _initialDicomRescueSpacing;
+    private DicomRescueTransform _rescueTransform =
+        DicomRescueTransform.Identity;
     private DicomUiFailure? _lastDicomFailure;
     private bool _dicomOperationActive;
     private bool _dicomStopRequested;
@@ -181,8 +183,109 @@ public partial class MainWindow
             return;
         }
         SetRescueSpacingControls(_initialDicomRescueSpacing);
+        SetRescueTransform(DicomRescueTransform.Identity);
         RescueValidationText.Text =
             "候補値へ戻しました。確認後に確認画像を作ってください。";
+    }
+
+    private void ShowRescueOrientationButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var expanded =
+            RescueOrientationPanel.Visibility != Visibility.Visible;
+        RescueOrientationPanel.Visibility = expanded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ShowRescueOrientationButton.Content = expanded
+            ? "画像の向き修正を閉じる"
+            : "画像の向きを修正";
+        AutomationProperties.SetName(
+            ShowRescueOrientationButton,
+            expanded
+                ? "画像の向き修正を閉じる"
+                : "画像の向きを修正");
+    }
+
+    private void RescueAxisPermutationComboBox_SelectionChanged(
+        object sender,
+        System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (RescueAxisPermutationComboBox.SelectedItem
+            is not System.Windows.Controls.ComboBoxItem item
+            || item.Tag is not string permutation)
+        {
+            return;
+        }
+        SetRescueTransform(
+            _rescueTransform with
+            {
+                AxisPermutation = permutation,
+            });
+    }
+
+    private void RotateRescueImageButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        SetRescueTransform(
+            _rescueTransform with
+            {
+                RotationQuarterTurns =
+                    (_rescueTransform.RotationQuarterTurns + 1) % 4,
+            });
+    }
+
+    private void ReverseRescueSlicesCheckBox_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        SetRescueTransform(
+            _rescueTransform with
+            {
+                SliceOrderReversed =
+                    ReverseRescueSlicesCheckBox.IsChecked == true,
+            });
+    }
+
+    private void SetRescueTransform(DicomRescueTransform transform)
+    {
+        _rescueTransform = transform;
+        if (RescueAxisPermutationComboBox is null
+            || ReverseRescueSlicesCheckBox is null
+            || RotateRescueImageButton is null
+            || ConfirmRescueAndRunButton is null)
+        {
+            return;
+        }
+        if (RescueAxisPermutationComboBox.SelectedItem
+                is not System.Windows.Controls.ComboBoxItem selected
+            || !string.Equals(
+                selected.Tag as string,
+                transform.AxisPermutation,
+                StringComparison.Ordinal))
+        {
+            foreach (var item
+                in RescueAxisPermutationComboBox.Items
+                    .OfType<System.Windows.Controls.ComboBoxItem>())
+            {
+                if (string.Equals(
+                        item.Tag as string,
+                        transform.AxisPermutation,
+                        StringComparison.Ordinal))
+                {
+                    RescueAxisPermutationComboBox.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        ReverseRescueSlicesCheckBox.IsChecked =
+            transform.SliceOrderReversed;
+        RotateRescueImageButton.Content =
+            transform.RotationQuarterTurns == 0
+                ? "90°回転"
+                : $"回転 {transform.RotationQuarterTurns * 90}°";
+        ClearRescuePreview();
     }
 
     private void RescueCandidateComboBox_SelectionChanged(
@@ -197,6 +300,7 @@ public partial class MainWindow
         _selectedDicomRescueCandidate = candidate;
         _initialDicomRescueSpacing = candidate.InitialSpacing;
         SetRescueSpacingControls(candidate.InitialSpacing);
+        SetRescueTransform(DicomRescueTransform.Identity);
         RescueReasonText.Text = candidate.SliceThickness.HasValue
             ? "X/Yは編集用の仮初期値です。ZはDICOMに残っているスライス厚を候補に使います。推定の確かさ: 低。"
             : "X/Y/Zはすべて編集用の仮初期値です。寸法は確認できていません。推定の確かさ: 不明。";
@@ -237,7 +341,8 @@ public partial class MainWindow
             result = await _dicomSession.PrepareRescueAsync(
                 _dicomAudit,
                 _selectedDicomRescueCandidate,
-                spacing);
+                spacing,
+                _rescueTransform);
         }
         finally
         {
@@ -281,6 +386,7 @@ public partial class MainWindow
             return;
         }
         _lastDicomRescue = result;
+        ConfirmRescueAndRunButton.IsEnabled = true;
         AddSafeDicomEvent(
             "rescue_preview_completed",
             result.OperationId,
@@ -294,6 +400,61 @@ public partial class MainWindow
             "確認画像を作成しました");
     }
 
+    private async void ConfirmRescueAndRunButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_dicomSession is null
+            || _lastDicomRescue is not { Succeeded: true } preview)
+        {
+            ShowDicomFailure(
+                "dicom_rescue_confirmation_invalid",
+                "現在の形状に対応する確認画像を作成してください。",
+                _dicomAudit?.OperationId,
+                stage: "rescue");
+            return;
+        }
+
+        _dicomStopRequested = false;
+        BeginDicomProgress(
+            "形状を確定中",
+            "確認済みの形状と寸法を読み直しています。推論は検証完了後に開始します。",
+            "確認tokenとNIfTIを検証しています。");
+        DicomRescueFinalResult finalized;
+        try
+        {
+            finalized = await _dicomSession.FinalizeRescueAsync(preview);
+        }
+        finally
+        {
+            EndDicomProgress();
+        }
+        if (!finalized.Succeeded
+            || string.IsNullOrWhiteSpace(finalized.NiftiPath))
+        {
+            ShowDicomFailure(
+                finalized.ErrorCode
+                    ?? "dicom_rescue_finalize_failed",
+                finalized.SafeMessage
+                    ?? "確定した形状を使用できませんでした。",
+                finalized.OperationId,
+                stage: "rescue");
+            return;
+        }
+
+        _inputPath = finalized.NiftiPath;
+        SetSelectedSegmentationProfile(
+            SegmentationProfile.TotalSegmentator);
+        InputDisplayName.Text = "DICOM形状確認済みCT";
+        SetInputButtonsForSample(sampleSelected: false);
+        RunButton.IsEnabled = true;
+        AddSafeDicomEvent(
+            "rescue_shape_confirmed",
+            finalized.OperationId,
+            "confirmation_readback=verified");
+        await StartRunAsync();
+    }
+
     private void ShowDicomRescue(
         DicomRescueCandidate candidate)
     {
@@ -305,6 +466,7 @@ public partial class MainWindow
         _selectedDicomRescueCandidate = candidate;
         _initialDicomRescueSpacing = candidate.InitialSpacing;
         SetRescueSpacingControls(candidate.InitialSpacing);
+        SetRescueTransform(DicomRescueTransform.Identity);
         ClearRescuePreview();
         RescueReasonPanel.Visibility = Visibility.Collapsed;
         ShowRescueReasonButton.Content = "理由を見る";
@@ -527,6 +689,7 @@ public partial class MainWindow
     private void ClearRescuePreview()
     {
         _lastDicomRescue = null;
+        ConfirmRescueAndRunButton.IsEnabled = false;
         RescueAxialImage.Source = null;
         RescueCoronalImage.Source = null;
         RescueSagittalImage.Source = null;
@@ -548,6 +711,7 @@ public partial class MainWindow
         _lastDicomConversion = null;
         _lastDicomRescue = null;
         _initialDicomRescueSpacing = null;
+        _rescueTransform = DicomRescueTransform.Identity;
         _lastDicomFailure = null;
 
         BeginDicomProgress(
@@ -1272,7 +1436,8 @@ public partial class MainWindow
             rescue = await _dicomSession.PrepareRescueAsync(
                 audit,
                 candidate,
-                spacing);
+                spacing,
+                _rescueTransform);
             if (rescue.Succeeded)
             {
                 ShowRescuePreviews(rescue.Previews);
@@ -1287,10 +1452,14 @@ public partial class MainWindow
         var manifestExists =
             rescue?.ManifestPath is { } manifestPath
             && File.Exists(manifestPath);
-        var niftiExists =
-            rescue?.NiftiPath is { } niftiPath
-            && File.Exists(niftiPath)
-            && new FileInfo(niftiPath).Length > 0;
+        var decodedVolumeExists =
+            rescue?.DecodedVolumePath is { } decodedVolumePath
+            && File.Exists(decodedVolumePath)
+            && new FileInfo(decodedVolumePath).Length > 0;
+        var confirmationBound =
+            rescue?.ConfirmationToken is { Length: 64 }
+            && rescue.ConfirmedSpacing == spacing
+            && rescue.Transform == _rescueTransform;
         var previewPlanes = rescue?.Previews
             .Select(preview => preview.Plane)
             .Order(StringComparer.Ordinal)
@@ -1301,7 +1470,8 @@ public partial class MainWindow
             && coordinatorWasNotStarted
             && rescue?.Succeeded == true
             && manifestExists
-            && niftiExists
+            && decodedVolumeExists
+            && confirmationBound
             && previewPlanes.SequenceEqual(
                 new[] { "axial", "coronal", "sagittal" })
             && _lastResult is null
@@ -1311,7 +1481,7 @@ public partial class MainWindow
             new
             {
                 schema =
-                    "totalsegmentator_wrapper.windows_wpf_dicom_rescue_preview.v1",
+                    "totalsegmentator_wrapper.windows_wpf_dicom_rescue_preview.v2",
                 status = passed ? "pass" : "fail",
                 source_kind =
                     "dicom_secondary_capture",
@@ -1334,8 +1504,10 @@ public partial class MainWindow
                     rescue?.Succeeded == true,
                 rescue_manifest_exists =
                     manifestExists,
-                patched_nifti_nonempty =
-                    niftiExists,
+                decoded_volume_nonempty =
+                    decodedVolumeExists,
+                confirmation_token_bound =
+                    confirmationBound,
                 preview_count =
                     rescue?.Previews.Count,
                 preview_planes = previewPlanes,

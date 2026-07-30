@@ -25,7 +25,9 @@ internal sealed class CoordinatorSession : IDisposable
     internal async Task<CoordinatorSessionResult> RunAsync(
         string inputPath,
         SegmentationProfile profile =
-            SegmentationProfile.TotalSegmentator)
+            SegmentationProfile.TotalSegmentator,
+        string? outputRoot = null,
+        bool higherOrderResampling = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         lock (_gate)
@@ -40,13 +42,20 @@ internal sealed class CoordinatorSession : IDisposable
 
         var operationId = Guid.NewGuid().ToString("D");
         ActiveOperationId = operationId;
+        var selectedOutputRoot = Path.GetFullPath(
+            outputRoot ?? _configuration.OutputRoot);
+        if (!Directory.Exists(selectedOutputRoot))
+        {
+            throw new DirectoryNotFoundException(
+                "The selected output directory is unavailable.");
+        }
         var finalDirectoryName =
             $"case-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{operationId[..8]}";
         var finalDirectory = Path.Combine(
-            _configuration.OutputRoot,
+            selectedOutputRoot,
             finalDirectoryName);
         var hostEvidenceDirectory = Path.Combine(
-            _configuration.OutputRoot,
+            selectedOutputRoot,
             ".host-evidence",
             operationId);
         Directory.CreateDirectory(hostEvidenceDirectory);
@@ -85,7 +94,10 @@ internal sealed class CoordinatorSession : IDisposable
                         robust_crop =
                             profile
                                 == SegmentationProfile.TotalSegmentator,
-                        higher_order_resampling = false,
+                        higher_order_resampling =
+                            profile
+                                == SegmentationProfile.TotalSegmentator
+                            && higherOrderResampling,
                     },
                 }),
             new UTF8Encoding(false));

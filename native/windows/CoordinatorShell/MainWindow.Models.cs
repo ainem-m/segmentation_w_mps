@@ -16,8 +16,35 @@ public partial class MainWindow
 
     private void InitializeModelSelection()
     {
+        UpdateModelReadiness();
         SetSelectedSegmentationProfile(
             SegmentationProfile.TotalSegmentator);
+    }
+
+    private void UpdateModelReadiness()
+    {
+        ApplyReadiness(
+            DentalReadinessText,
+            _configuration.CheckDentalSegmentatorRuntime());
+        ApplyReadiness(
+            IndividualReadinessText,
+            _configuration.CheckIndividualTeethRuntime());
+        ApplyReadiness(
+            ToothSegReadinessText,
+            _configuration.CheckToothSegRuntime());
+    }
+
+    private static void ApplyReadiness(
+        TextBlock target,
+        RuntimeCheckResult result)
+    {
+        target.Text = result.Passed
+            ? "準備済み"
+            : "未準備（app-private runtimeを確認してください）";
+        target.Foreground = result.Passed
+            ? new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(24, 122, 56))
+            : SystemColors.GrayTextBrush;
     }
 
     private void StandardModelCardButton_Click(
@@ -133,6 +160,12 @@ public partial class MainWindow
             profile == SegmentationProfile.IndividualTeeth;
         var toothSegSelected =
             profile == SegmentationProfile.ToothSeg;
+        HigherOrderResamplingCheckBox.IsEnabled = standardSelected;
+        if (!standardSelected)
+        {
+            HigherOrderResamplingCheckBox.IsChecked = false;
+            _higherOrderResampling = false;
+        }
         StandardModelCardTitle.Text =
             standardSelected ? "✓  標準モデル" : "標準モデル";
         OtherModelsCardTitle.Text =
@@ -202,10 +235,15 @@ public partial class MainWindow
         AutomationProperties.SetHelpText(
             RunButton,
             $"strict CUDAで{profile.DisplayName()}処理を開始します。");
+        UpdateInputDetails();
     }
 
     private void SetModelComparisonExpanded(bool expanded)
     {
+        if (expanded)
+        {
+            UpdateModelReadiness();
+        }
         ModelComparisonPanel.Visibility =
             expanded ? Visibility.Visible : Visibility.Collapsed;
         if (expanded)

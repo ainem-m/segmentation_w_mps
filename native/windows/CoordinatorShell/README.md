@@ -58,13 +58,13 @@ mechanism.
 `DicomIntakeSession` audits a selected folder and exposes series classified as
 either `original_ct_geometry_ok` / `convert_clean` or
 `secondary_capture_rescue_candidate` /
-`prepare_rescue_with_explicit_spacing`, requiring no external tool. A clean
+`export-rescue-stack`, requiring no public-index dependency resolution. A clean
 candidate always takes priority. The rescue lane requires the user to confirm
-finite X/Y/Z spacing with three sliders, runs the existing `prepare-rescue`,
-verifies warning flags,
-patched NIfTI spacing readback, and three local PGM MPR images, and leaves the
-coordinator stopped. It does not promote the pseudo-volume as clean CT or
-start segmentation.
+finite X/Y/Z spacing with linked sliders and an explicit orientation transform.
+It verifies a confirmation token, transform/spacing readback, and three local
+PGM MPR images while leaving the coordinator stopped. Only the separate user
+confirmation action may finalize the NIfTI and start the existing strict-CUDA
+coordinator operation; failed readback never starts segmentation.
 Audit and conversion children are created suspended, assigned to a Job Object,
 then resumed. Cancellation or the fixed 120-second audit / 900-second conversion
 limit terminates the whole Job. Process stdout and stderr are drained but never
@@ -105,9 +105,12 @@ explicitly invokes the unchanged strict-CUDA NIfTI run. Its evidence JSON
 contains no input path, series key/UID, description, or native process output.
 
 `--evidence-run-dicom-rescue` uses the visible Secondary Capture audit and
-manual-spacing preview implementation. It verifies a non-empty patched NIfTI,
-all three PGM preview planes, Job completion, and the safe rescue manifest.
-Evidence contains no paths, DICOM UIDs/descriptions, or raw native output, and
+manual-spacing/orientation preview implementation. It verifies the decoded
+volume, confirmation-token binding, all three PGM preview planes, Job
+completion, and the safe rescue manifest. The interactive confirmation action
+finalizes a NIfTI only after readback validation, then hands it to the existing
+strict-CUDA coordinator path. Evidence contains no paths, DICOM
+UIDs/descriptions, or raw native output, and
 records `segmentation_started=false` and
 `rescue_output_promoted_as_clean_ct=false`.
 

@@ -46,6 +46,12 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"run_nifti_toothseg"', profiles)
         self.assertIn('mode = "cuda_required"', session)
         self.assertIn('index = 0', session)
+        self.assertIn("selectedOutputRoot", session)
+        self.assertIn("higherOrderResampling", session)
+        self.assertIn(
+            "profile\n                                == SegmentationProfile.TotalSegmentator",
+            session,
+        )
         self.assertNotIn("dicom", session.lower())
         self.assertNotIn('mode = "auto"', session)
         self.assertNotIn('mode = "cpu"', session)
@@ -83,8 +89,9 @@ class WindowsWpfContractTests(unittest.TestCase):
 
         self.assertIn('"audit"', intake)
         self.assertIn('"convert-clean"', intake)
-        self.assertIn('"prepare-rescue"', intake)
-        self.assertIn('"--patched-spacing"', intake)
+        self.assertIn('"export-rescue-stack"', intake)
+        self.assertIn('"dicom-rescue-preview"', intake)
+        self.assertIn('"dicom-rescue-finalize"', intake)
         self.assertIn('"--series-key"', intake)
         self.assertNotIn('"--series-number"', intake)
         self.assertIn('"series_instance_uid"', intake)
@@ -99,10 +106,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn('"original_ct_geometry_ok"', intake)
         self.assertIn('"convert_clean"', intake)
         self.assertIn('"requires_external_tool"', intake)
-        for unsupported_command in (
-            '"export-rescue-stack"',
-            '"prepare-viewer-export"',
-        ):
+        for unsupported_command in ('"prepare-viewer-export"',):
             with self.subTest(unsupported_command=unsupported_command):
                 self.assertNotIn(unsupported_command, intake)
         self.assertNotIn("CoordinatorSession", intake)
@@ -116,11 +120,11 @@ class WindowsWpfContractTests(unittest.TestCase):
             intake,
         )
         self.assertIn(
-            '"prepare_rescue_with_explicit_spacing"',
+            '"confirmation_token"',
             intake,
         )
         self.assertIn(
-            '"totalsegmentator_wrapper.windows_dicom_rescue_preview.v1"',
+            '"totalsegmentator_wrapper_mac.rescue_geometry.v2"',
             intake,
         )
         self.assertIn("segmentation_started = false", intake)
@@ -128,7 +132,8 @@ class WindowsWpfContractTests(unittest.TestCase):
             "rescue_output_promoted_as_clean_ct = false",
             intake,
         )
-        self.assertIn("patched_spacing_matches_requested", intake)
+        self.assertIn("confirmation_token_bound", intake)
+        self.assertIn("FinalizeRescueAsync", intake)
         self.assertIn("PgmBitmapLoader.Load", shell)
 
         self.assertIn("DrainAsync(process.StandardOutput)", intake)
@@ -190,7 +195,10 @@ class WindowsWpfContractTests(unittest.TestCase):
             "形状候補の理由を見る",
             "形状確認から別のCTを選ぶ",
             "推定形状に戻す",
+            "画像の向きを修正",
+            "救済画像を90度回転",
             "この形状で確認画像を作る",
+            "確認済みの形状で3Dプレビューを作る",
             "標準モデルを選ぶ",
             "その他のモデルを比較",
             "作成方法の比較を閉じる",
@@ -199,11 +207,14 @@ class WindowsWpfContractTests(unittest.TestCase):
             "個別歯ベータを選ぶ",
             "高精細歯ToothSegを選ぶ",
             "Sampleで3Dプレビューを作る",
+            "結果の保存先を変更",
             "停止",
             "3Dプレビューを開く",
             "結果フォルダを開く",
             "エラー情報をコピー",
             "詳細情報を見る",
+            "3D Slicer用に書き出す",
+            "3Dプレビューを再生成",
             "入力と作成内容へ戻る",
             "結果画面から別のCTを選ぶ",
             "同じ入力でもう一度作成",
@@ -253,7 +264,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 34)
+        self.assertEqual(len(buttons), 40)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
@@ -273,6 +284,8 @@ class WindowsWpfContractTests(unittest.TestCase):
                 self.assertIn(slider, xaml)
         self.assertIn("ToRescueSliderPosition", dicom_code)
         self.assertIn("RescueSpacingFromSlider", dicom_code)
+        self.assertIn("DicomRescueTransform", dicom_code)
+        self.assertIn("FinalizeRescueAsync", dicom_code)
         self.assertIn(
             "RescueSpacingXCoronalSlider.Value = e.NewValue",
             dicom_code,
@@ -308,6 +321,14 @@ class WindowsWpfContractTests(unittest.TestCase):
         self.assertIn("RerunButton_Click", code)
         self.assertIn("ChooseAnotherResultInputButton_Click", code)
         self.assertNotIn("WebView", xaml + code)
+        self.assertIn("ChangeOutputRootButton_Click", code)
+        self.assertIn("ReadSafeArtifactList", code)
+        result_tools = (SHELL / "ResultToolsSession.cs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"slicer-export"', result_tools)
+        self.assertIn('"surface-preview"', result_tools)
+        self.assertNotIn("run_nifti_", result_tools)
 
     def test_runtime_gate_requires_privacy_config_and_cached_models(self) -> None:
         configuration = (SHELL / "ShellConfiguration.cs").read_text(
