@@ -17,8 +17,18 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include "gdcm_import.h"
 #include "rescue_stack.h"
@@ -42,6 +52,7 @@ struct Args {
     std::string group_id;
     std::array<double, 3> patched_spacing{0.0, 0.0, 0.0};
     fs::path dcm2niix;
+    int dcm2niix_timeout_seconds = 3600;
 };
 
 struct OptionalTools {
@@ -247,6 +258,60 @@ std::string join(const std::vector<std::string>& values, std::string_view separa
     return out.str();
 }
 
+#ifdef _WIN32
+std::string wide_to_utf8(std::wstring_view value) {
+    if (value.empty()) {
+        return {};
+    }
+    const int size = WideCharToMultiByte(
+        CP_UTF8,
+        WC_ERR_INVALID_CHARS,
+        value.data(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (size <= 0) {
+        throw std::runtime_error("cannot encode Windows path as UTF-8");
+    }
+    std::string output(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            value.data(),
+            static_cast<int>(value.size()),
+            output.data(),
+            size,
+            nullptr,
+            nullptr)
+        != size) {
+        throw std::runtime_error("cannot encode Windows path as UTF-8");
+    }
+    return output;
+}
+
+std::optional<std::wstring> windows_environment_value(const wchar_t* name) {
+    wchar_t* value = nullptr;
+    std::size_t size = 0;
+    if (_wdupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return std::nullopt;
+    }
+    const std::wstring result(value);
+    std::free(value);
+    return result;
+}
+#endif
+
+std::string path_to_utf8(const fs::path& path) {
+#ifdef _WIN32
+    return wide_to_utf8(path.native());
+#else
+    return path.string();
+#endif
+}
+
+#ifndef _WIN32
 std::string shell_quote(const fs::path& path) {
     std::string input = path.string();
     std::string out = "'";
@@ -260,6 +325,7 @@ std::string shell_quote(const fs::path& path) {
     out += "'";
     return out;
 }
+#endif
 
 std::string shell_quote_string(const std::string& value) {
     std::string out = "'";
@@ -338,7 +404,7 @@ std::string hex_u64(std::uint64_t value) {
 }
 
 std::string json_path_optional(const std::optional<fs::path>& path) {
-    return path.has_value() ? json_string(path->string()) : "null";
+    return path.has_value() ? json_string(path_to_utf8(*path)) : "null";
 }
 
 std::string json_number_array3(const std::array<double, 3>& values) {
@@ -373,13 +439,40 @@ std::string json_int_array3(const std::array<int, 3>& values) {
 }
 
 std::optional<fs::path> find_executable(const std::string& name) {
+#ifdef _WIN32
+    if (const auto disable =
+            windows_environment_value(
+                L"TOTALSEGMENTATOR_WRAPPER_MAC_DISABLE_EXTERNAL_DICOM_TOOLS");
+        disable.has_value() && *disable == L"1") {
+        return std::nullopt;
+    }
+#else
     if (const char* disable = std::getenv("TOTALSEGMENTATOR_WRAPPER_MAC_DISABLE_EXTERNAL_DICOM_TOOLS")) {
         if (std::string(disable) == "1") {
             return std::nullopt;
         }
     }
+#endif
 
     std::vector<fs::path> candidates;
+#ifdef _WIN32
+    if (const auto path_env = windows_environment_value(L"PATH")) {
+        std::wstringstream input(*path_env);
+        std::wstring part;
+        std::wstring executable_name(name.begin(), name.end());
+        if (!executable_name.ends_with(L".exe")) {
+            executable_name += L".exe";
+        }
+        while (std::getline(input, part, L';')) {
+            if (part.size() >= 2 && part.front() == L'"' && part.back() == L'"') {
+                part = part.substr(1, part.size() - 2);
+            }
+            if (!part.empty()) {
+                candidates.push_back(fs::path(part) / executable_name);
+            }
+        }
+    }
+#else
     if (const char* path_env = std::getenv("PATH")) {
         for (const auto& part : split_char(path_env, ':')) {
             if (!part.empty()) {
@@ -389,11 +482,19 @@ std::optional<fs::path> find_executable(const std::string& name) {
     }
     candidates.push_back(fs::path("/opt/homebrew/bin") / name);
     candidates.push_back(fs::path("/usr/local/bin") / name);
+#endif
 
     for (const auto& candidate : candidates) {
+#ifdef _WIN32
+        std::error_code error;
+        if (fs::is_regular_file(candidate, error) && !error) {
+            return fs::absolute(candidate);
+        }
+#else
         if (fs::exists(candidate) && access(candidate.c_str(), X_OK) == 0) {
             return fs::absolute(candidate);
         }
+#endif
     }
     return std::nullopt;
 }
@@ -410,7 +511,7 @@ std::string path_hash_fnv1a64(const fs::path& path) {
     // Stable non-cryptographic hash to avoid recording PHI-bearing full paths
     // in the initial standalone audit JSON. A future release can replace this
     // with SHA-256 when a small vetted hash implementation is introduced.
-    const auto text = path.lexically_normal().string();
+    const auto text = path_to_utf8(path.lexically_normal());
     uint64_t hash = 1469598103934665603ULL;
     for (unsigned char ch : text) {
         hash ^= static_cast<uint64_t>(ch);
@@ -1271,7 +1372,7 @@ std::vector<std::string> mpr_preview_paths(const std::vector<MprPreviewInfo>& pr
     std::vector<std::string> paths;
     for (const auto& preview : previews) {
         if (!preview.path.empty()) {
-            paths.push_back(preview.path.string());
+            paths.push_back(path_to_utf8(preview.path));
         }
     }
     return paths;
@@ -1289,7 +1390,7 @@ std::string mpr_preview_info_array_json(const std::vector<MprPreviewInfo>& previ
         }
         out << "\n" << pad2 << "{";
         out << "\"plane\": " << json_string(preview.plane) << ", ";
-        out << "\"path\": " << json_string(preview.path.string()) << ", ";
+        out << "\"path\": " << json_string(path_to_utf8(preview.path)) << ", ";
         out << "\"width\": " << preview.width << ", ";
         out << "\"height\": " << preview.height << ", ";
         out << "\"min\": " << preview.min_value << ", ";
@@ -1307,16 +1408,16 @@ std::string mpr_preview_info_array_json(const std::vector<MprPreviewInfo>& previ
 std::vector<uint8_t> read_file_with_limit(const fs::path& path, std::size_t limit_bytes) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        throw std::runtime_error("cannot open file: " + path.string());
+        throw std::runtime_error("cannot open file: " + path_to_utf8(path));
     }
     std::vector<uint8_t> data;
     in.seekg(0, std::ios::end);
     const auto size = in.tellg();
     if (size < 0) {
-        throw std::runtime_error("cannot size file: " + path.string());
+        throw std::runtime_error("cannot size file: " + path_to_utf8(path));
     }
     if (static_cast<std::uintmax_t>(size) > limit_bytes) {
-        throw std::runtime_error("file exceeds read limit: " + path.string());
+        throw std::runtime_error("file exceeds read limit: " + path_to_utf8(path));
     }
     data.resize(static_cast<std::size_t>(size));
     in.seekg(0, std::ios::beg);
@@ -1405,7 +1506,7 @@ DicomdirSummary audit_dicomdirs(const fs::path& dir) {
         if (!entry.is_regular_file()) {
             continue;
         }
-        if (upper(entry.path().filename().string()) != "DICOMDIR") {
+        if (upper(path_to_utf8(entry.path().filename())) != "DICOMDIR") {
             continue;
         }
         DicomMeta meta = parse_dicom_file(entry.path());
@@ -1870,7 +1971,7 @@ std::string audit_json(
     out << "  \"dicom_backend\": {\"name\": \"GDCM\", \"version\": "
         << json_string(dicom_normalizer::gdcm_version()) << "},\n";
     out << "  \"dicom_dir\": {\n";
-    out << "    \"basename\": " << json_string(dicom_dir.filename().string()) << ",\n";
+    out << "    \"basename\": " << json_string(path_to_utf8(dicom_dir.filename())) << ",\n";
     out << "    \"path_hash_fnv1a64\": " << json_string(path_hash_fnv1a64(dicom_dir)) << "\n";
     out << "  },\n";
     out << "  \"file_count\": " << file_count << ",\n";
@@ -1909,10 +2010,10 @@ std::string audit_json(
 
 std::vector<SeriesSummary> audit_directory(const fs::path& dir, int& skipped) {
     if (!fs::exists(dir)) {
-        throw std::runtime_error("DICOM directory does not exist: " + dir.string());
+        throw std::runtime_error("DICOM directory does not exist: " + path_to_utf8(dir));
     }
     if (!fs::is_directory(dir)) {
-        throw std::runtime_error("Not a directory: " + dir.string());
+        throw std::runtime_error("Not a directory: " + path_to_utf8(dir));
     }
 
     std::map<std::string, SeriesSummary> grouped;
@@ -1954,7 +2055,7 @@ void write_text(const fs::path& path, const std::string& text) {
     }
     std::ofstream out(path);
     if (!out) {
-        throw std::runtime_error("cannot write output: " + path.string());
+        throw std::runtime_error("cannot write output: " + path_to_utf8(path));
     }
     out << text;
 }
@@ -2028,10 +2129,21 @@ std::string requested_series_description(const Args& args) {
 
 fs::path find_dcm2niix(const fs::path& explicit_path) {
     if (!explicit_path.empty()) {
-        return explicit_path;
+        return fs::absolute(explicit_path);
     }
+#ifdef _WIN32
+    if (const auto env =
+            windows_environment_value(L"TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX");
+        env.has_value() && !env->empty()) {
+        return fs::absolute(fs::path(*env));
+    }
+    if (const auto detected = find_executable("dcm2niix")) {
+        return *detected;
+    }
+    throw std::runtime_error("dcm2niix executable not found");
+#else
     if (const char* env = std::getenv("TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX")) {
-        return fs::path(env);
+        return fs::absolute(fs::path(env));
     }
     for (const auto& candidate : {
              fs::path("/opt/homebrew/bin/dcm2niix"),
@@ -2042,6 +2154,7 @@ fs::path find_dcm2niix(const fs::path& explicit_path) {
         }
     }
     return fs::path("dcm2niix");
+#endif
 }
 
 std::vector<fs::path> isolate_series(const SeriesSummary& series, const fs::path& isolated_dir) {
@@ -2170,7 +2283,7 @@ std::string nifti_header_json(const fs::path& path, const NiftiHeaderInfo& info,
     const std::string pad2(indent + 2, ' ');
     std::ostringstream out;
     out << pad << "{\n";
-    out << pad2 << "\"path\": " << json_optional_string(path.string()) << ",\n";
+    out << pad2 << "\"path\": " << json_optional_string(path_to_utf8(path)) << ",\n";
     out << pad2 << "\"ok\": " << json_bool(info.ok) << ",\n";
     out << pad2 << "\"error\": " << json_optional_string(info.error) << ",\n";
     out << pad2 << "\"shape\": " << json_int_array3(info.shape) << ",\n";
@@ -2237,7 +2350,7 @@ MprPreviewInfo write_pgm(
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
     if (!out) {
-        throw std::runtime_error("cannot write PGM: " + path.string());
+        throw std::runtime_error("cannot write PGM: " + path_to_utf8(path));
     }
     out << "P5\n" << width << " " << height << "\n255\n";
     for (double value : values) {
@@ -2335,7 +2448,7 @@ void patch_nifti_spacing_identity_affine(
 ) {
     std::ifstream in(source_nii, std::ios::binary);
     if (!in) {
-        throw std::runtime_error("cannot open raw NIfTI: " + source_nii.string());
+        throw std::runtime_error("cannot open raw NIfTI: " + path_to_utf8(source_nii));
     }
     std::vector<uint8_t> data(
         (std::istreambuf_iterator<char>(in)),
@@ -2380,7 +2493,7 @@ void patch_nifti_spacing_identity_affine(
     }
     std::ofstream out(output_nii, std::ios::binary);
     if (!out) {
-        throw std::runtime_error("cannot write patched NIfTI: " + output_nii.string());
+        throw std::runtime_error("cannot write patched NIfTI: " + path_to_utf8(output_nii));
     }
     out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
@@ -2391,15 +2504,319 @@ std::string spacing_text(const std::array<double, 3>& spacing) {
     return out.str();
 }
 
+#ifdef _WIN32
+class UniqueHandle {
+public:
+    explicit UniqueHandle(HANDLE value = nullptr) : value_(value) {}
+    ~UniqueHandle() {
+        if (valid()) {
+            CloseHandle(value_);
+        }
+    }
+
+    UniqueHandle(const UniqueHandle&) = delete;
+    UniqueHandle& operator=(const UniqueHandle&) = delete;
+
+    bool valid() const {
+        return value_ != nullptr && value_ != INVALID_HANDLE_VALUE;
+    }
+
+    HANDLE get() const {
+        return value_;
+    }
+
+private:
+    HANDLE value_;
+};
+
+class ThreadAttributeList {
+public:
+    explicit ThreadAttributeList(const std::array<HANDLE, 2>& inherited_handles) {
+        SIZE_T bytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+        storage_.resize(bytes);
+        list_ = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(storage_.data());
+        if (!InitializeProcThreadAttributeList(list_, 1, 0, &bytes)) {
+            throw std::runtime_error(
+                "InitializeProcThreadAttributeList failed with Windows error "
+                + std::to_string(GetLastError()));
+        }
+        if (!UpdateProcThreadAttribute(
+                list_,
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                const_cast<HANDLE*>(inherited_handles.data()),
+                inherited_handles.size() * sizeof(HANDLE),
+                nullptr,
+                nullptr)) {
+            const DWORD error = GetLastError();
+            DeleteProcThreadAttributeList(list_);
+            list_ = nullptr;
+            throw std::runtime_error(
+                "UpdateProcThreadAttribute failed with Windows error "
+                + std::to_string(error));
+        }
+    }
+
+    ~ThreadAttributeList() {
+        if (list_ != nullptr) {
+            DeleteProcThreadAttributeList(list_);
+        }
+    }
+
+    ThreadAttributeList(const ThreadAttributeList&) = delete;
+    ThreadAttributeList& operator=(const ThreadAttributeList&) = delete;
+
+    PPROC_THREAD_ATTRIBUTE_LIST get() const {
+        return list_;
+    }
+
+private:
+    std::vector<unsigned char> storage_;
+    PPROC_THREAD_ATTRIBUTE_LIST list_ = nullptr;
+};
+
+bool wait_for_job_empty(HANDLE job, DWORD timeout_milliseconds) {
+    const ULONGLONG deadline = GetTickCount64() + timeout_milliseconds;
+    while (true) {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!QueryInformationJobObject(
+                job,
+                JobObjectBasicAccountingInformation,
+                &accounting,
+                sizeof(accounting),
+                nullptr)) {
+            throw std::runtime_error(
+                "QueryInformationJobObject failed with Windows error "
+                + std::to_string(GetLastError()));
+        }
+        if (accounting.ActiveProcesses == 0) {
+            return true;
+        }
+        if (GetTickCount64() >= deadline) {
+            return false;
+        }
+        Sleep(10);
+    }
+}
+
+void terminate_job_and_wait(
+    HANDLE job,
+    HANDLE root_process,
+    DWORD exit_code
+) {
+    if (!TerminateJobObject(job, exit_code)) {
+        throw std::runtime_error(
+            "TerminateJobObject failed with Windows error "
+            + std::to_string(GetLastError()));
+    }
+    if (WaitForSingleObject(root_process, 5000) != WAIT_OBJECT_0) {
+        throw std::runtime_error("dcm2niix root did not exit after Job termination");
+    }
+    if (!wait_for_job_empty(job, 5000)) {
+        throw std::runtime_error("dcm2niix Job did not become empty after termination");
+    }
+}
+
+std::wstring quote_windows_argument(const std::wstring& value) {
+    std::wstring quoted(1, L'"');
+    std::size_t backslashes = 0;
+    for (const wchar_t ch : value) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            quoted.append(backslashes * 2 + 1, L'\\');
+            quoted.push_back(L'"');
+            backslashes = 0;
+            continue;
+        }
+        quoted.append(backslashes, L'\\');
+        backslashes = 0;
+        quoted.push_back(ch);
+    }
+    quoted.append(backslashes * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+std::wstring extended_length_path(const fs::path& path) {
+    std::wstring absolute = fs::absolute(path).native();
+    if (absolute.starts_with(LR"(\\?\)")) {
+        return absolute;
+    }
+    if (absolute.starts_with(LR"(\\)")) {
+        return LR"(\\?\UNC\)" + absolute.substr(2);
+    }
+    return LR"(\\?\)" + absolute;
+}
+
+std::wstring dcm2niix_command_line(
+    const fs::path& executable,
+    const fs::path& isolated_dir,
+    const fs::path& output_dir,
+    const std::string& output_name
+) {
+    const std::array<std::wstring, 9> arguments{
+        executable.native(),
+        L"-z",
+        L"n",
+        L"-b",
+        L"n",
+        L"-f",
+        std::wstring(output_name.begin(), output_name.end()),
+        L"-o",
+        extended_length_path(output_dir),
+    };
+    std::wstring command_line;
+    for (const auto& argument : arguments) {
+        if (!command_line.empty()) {
+            command_line.push_back(L' ');
+        }
+        command_line += quote_windows_argument(argument);
+    }
+    command_line.push_back(L' ');
+    command_line += quote_windows_argument(extended_length_path(isolated_dir));
+    return command_line;
+}
+#endif
+
 int run_dcm2niix(
     const fs::path& dcm2niix,
     const fs::path& isolated_dir,
     const fs::path& output_dir,
     const fs::path& log_path,
-    const std::string& output_name
+    const std::string& output_name,
+    int timeout_seconds
 ) {
     fs::create_directories(output_dir);
     fs::create_directories(log_path.parent_path());
+#ifdef _WIN32
+    SECURITY_ATTRIBUTES inheritable{};
+    inheritable.nLength = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+
+    UniqueHandle log(CreateFileW(
+        log_path.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_DELETE,
+        &inheritable,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr));
+    if (!log.valid()) {
+        throw std::runtime_error(
+            "cannot open dcm2niix log; Windows error "
+            + std::to_string(GetLastError()));
+    }
+    UniqueHandle null_input(CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &inheritable,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr));
+    if (!null_input.valid()) {
+        throw std::runtime_error(
+            "cannot open NUL for dcm2niix; Windows error "
+            + std::to_string(GetLastError()));
+    }
+    UniqueHandle job(CreateJobObjectW(nullptr, nullptr));
+    if (!job.valid()) {
+        throw std::runtime_error(
+            "CreateJobObjectW failed with Windows error "
+            + std::to_string(GetLastError()));
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limits{};
+    job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(
+            job.get(),
+            JobObjectExtendedLimitInformation,
+            &job_limits,
+            sizeof(job_limits))) {
+        throw std::runtime_error(
+            "SetInformationJobObject failed with Windows error "
+            + std::to_string(GetLastError()));
+    }
+
+    const std::array<HANDLE, 2> inherited_handles{log.get(), null_input.get()};
+    ThreadAttributeList attributes(inherited_handles);
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = null_input.get();
+    startup.StartupInfo.hStdOutput = log.get();
+    startup.StartupInfo.hStdError = log.get();
+    startup.lpAttributeList = attributes.get();
+
+    std::wstring command_line =
+        dcm2niix_command_line(dcm2niix, isolated_dir, output_dir, output_name);
+    PROCESS_INFORMATION process_info{};
+    if (!CreateProcessW(
+            dcm2niix.c_str(),
+            command_line.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT
+                | EXTENDED_STARTUPINFO_PRESENT,
+            nullptr,
+            nullptr,
+            &startup.StartupInfo,
+            &process_info)) {
+        throw std::runtime_error(
+            "CreateProcessW failed with Windows error "
+            + std::to_string(GetLastError()));
+    }
+    UniqueHandle process(process_info.hProcess);
+    UniqueHandle thread(process_info.hThread);
+    if (!AssignProcessToJobObject(job.get(), process.get())) {
+        const DWORD error = GetLastError();
+        TerminateProcess(process.get(), 127);
+        WaitForSingleObject(process.get(), 5000);
+        throw std::runtime_error(
+            "AssignProcessToJobObject failed with Windows error "
+            + std::to_string(error));
+    }
+    if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
+        const DWORD error = GetLastError();
+        terminate_job_and_wait(job.get(), process.get(), 127);
+        throw std::runtime_error(
+            "ResumeThread failed with Windows error " + std::to_string(error));
+    }
+
+    const DWORD timeout_milliseconds =
+        static_cast<DWORD>(static_cast<unsigned long long>(timeout_seconds) * 1000ULL);
+    const DWORD wait_status = WaitForSingleObject(process.get(), timeout_milliseconds);
+    if (wait_status == WAIT_TIMEOUT) {
+        terminate_job_and_wait(job.get(), process.get(), 124);
+        std::cerr << "dcm2niix timed out\n";
+        return 124;
+    }
+    if (wait_status != WAIT_OBJECT_0) {
+        const DWORD error = GetLastError();
+        terminate_job_and_wait(job.get(), process.get(), 127);
+        throw std::runtime_error(
+            "WaitForSingleObject failed with Windows error "
+            + std::to_string(error));
+    }
+    DWORD exit_code = 127;
+    if (!GetExitCodeProcess(process.get(), &exit_code)) {
+        throw std::runtime_error(
+            "GetExitCodeProcess failed with Windows error "
+            + std::to_string(GetLastError()));
+    }
+    if (!wait_for_job_empty(job.get(), 5000)) {
+        terminate_job_and_wait(job.get(), process.get(), 127);
+        throw std::runtime_error(
+            "dcm2niix Job descendants remained active after root exit");
+    }
+    FlushFileBuffers(log.get());
+    return static_cast<int>(exit_code);
+#else
+    (void)timeout_seconds;
     const std::string command =
         shell_quote(dcm2niix)
         + " -z n -b n -f "
@@ -2419,6 +2836,7 @@ int run_dcm2niix(
         return WEXITSTATUS(raw_status);
     }
     return raw_status;
+#endif
 }
 
 std::string rescue_metadata_json(
@@ -2439,7 +2857,7 @@ std::string rescue_metadata_json(
     out << "  \"tool\": {\"name\": \"totalsegmentator-wrapper-dicom-normalizer\", \"version\": "
         << json_string(std::string(kVersion)) << "},\n";
     out << "  \"dicom_dir\": {\n";
-    out << "    \"basename\": " << json_string(dicom_dir.filename().string()) << ",\n";
+    out << "    \"basename\": " << json_string(path_to_utf8(dicom_dir.filename())) << ",\n";
     out << "    \"path_hash_fnv1a64\": " << json_string(path_hash_fnv1a64(dicom_dir)) << "\n";
     out << "  },\n";
     out << "  \"selected_series\": {\n";
@@ -2458,11 +2876,11 @@ std::string rescue_metadata_json(
     out << "  },\n";
     out << "  \"patched_spacing\": [" << spacing[0] << ", " << spacing[1] << ", " << spacing[2] << "],\n";
     out << "  \"outputs\": {\n";
-    out << "    \"isolated_series_dir\": " << json_string(isolated_dir.string()) << ",\n";
-    out << "    \"dcm2niix_dir\": " << json_string(dcm2niix_dir.string()) << ",\n";
-    out << "    \"dcm2niix_log\": " << json_string(dcm2niix_log.string()) << ",\n";
-    out << "    \"raw_nifti\": " << json_optional_string(raw_nii.string()) << ",\n";
-    out << "    \"patched_nifti\": " << json_optional_string(patched_nii.string()) << "\n";
+    out << "    \"isolated_series_dir\": " << json_string(path_to_utf8(isolated_dir)) << ",\n";
+    out << "    \"dcm2niix_dir\": " << json_string(path_to_utf8(dcm2niix_dir)) << ",\n";
+    out << "    \"dcm2niix_log\": " << json_string(path_to_utf8(dcm2niix_log)) << ",\n";
+    out << "    \"raw_nifti\": " << json_optional_string(path_to_utf8(raw_nii)) << ",\n";
+    out << "    \"patched_nifti\": " << json_optional_string(path_to_utf8(patched_nii)) << "\n";
     out << "  },\n";
     out << "  \"dcm2niix\": {\"returncode\": " << dcm2niix_returncode << "},\n";
     out << "  \"status\": " << json_string(patched_nii.empty() ? "failed" : "success") << "\n";
@@ -2495,7 +2913,7 @@ std::string validation_json(
     out << "    \"file_count\": " << series.files.size() << ",\n";
     out << "    \"classification\": " << json_string(classification.status) << "\n";
     out << "  },\n";
-    out << "  \"dcm2niix_log\": " << json_string(dcm2niix_log.string()) << ",\n";
+    out << "  \"dcm2niix_log\": " << json_string(path_to_utf8(dcm2niix_log)) << ",\n";
     out << "  \"requested_spacing\": " << json_number_array3(requested_spacing) << ",\n";
     out << "  \"raw_nifti\": " << nifti_header_json(raw_nii, raw_header, 2) << ",\n";
     out << "  \"patched_nifti\": " << nifti_header_json(patched_nii, patched_header, 2) << ",\n";
@@ -2532,7 +2950,7 @@ std::string convert_clean_metadata_json(
     out << "  \"tool\": {\"name\": \"totalsegmentator-wrapper-dicom-normalizer\", \"version\": "
         << json_string(std::string(kVersion)) << "},\n";
     out << "  \"dicom_dir\": {\n";
-    out << "    \"basename\": " << json_string(dicom_dir.filename().string()) << ",\n";
+    out << "    \"basename\": " << json_string(path_to_utf8(dicom_dir.filename())) << ",\n";
     out << "    \"path_hash_fnv1a64\": " << json_string(path_hash_fnv1a64(dicom_dir)) << "\n";
     out << "  },\n";
     out << "  \"selected_series\": {\n";
@@ -2543,10 +2961,10 @@ std::string convert_clean_metadata_json(
     out << "    \"classification\": " << json_string(classification.status) << "\n";
     out << "  },\n";
     out << "  \"outputs\": {\n";
-    out << "    \"isolated_series_dir\": " << json_string(isolated_dir.string()) << ",\n";
-    out << "    \"dcm2niix_dir\": " << json_string(dcm2niix_dir.string()) << ",\n";
-    out << "    \"dcm2niix_log\": " << json_string(dcm2niix_log.string()) << ",\n";
-    out << "    \"nifti\": " << json_optional_string(nifti.string()) << "\n";
+    out << "    \"isolated_series_dir\": " << json_string(path_to_utf8(isolated_dir)) << ",\n";
+    out << "    \"dcm2niix_dir\": " << json_string(path_to_utf8(dcm2niix_dir)) << ",\n";
+    out << "    \"dcm2niix_log\": " << json_string(path_to_utf8(dcm2niix_log)) << ",\n";
+    out << "    \"nifti\": " << json_optional_string(path_to_utf8(nifti)) << "\n";
     out << "  },\n";
     out << "  \"dcm2niix\": {\"returncode\": " << dcm2niix_returncode << "},\n";
     out << "  \"product_boundary\": {\n";
@@ -2609,7 +3027,7 @@ std::string viewer_export_metadata_json(
 
     std::vector<std::string> nifti_strings;
     for (const auto& path : niftis) {
-        nifti_strings.push_back(path.string());
+        nifti_strings.push_back(path_to_utf8(path));
     }
     std::vector<std::string> mpr_strings = mpr_preview_paths(mpr_previews);
 
@@ -2619,7 +3037,7 @@ std::string viewer_export_metadata_json(
     out << "  \"tool\": {\"name\": \"totalsegmentator-wrapper-dicom-normalizer\", \"version\": "
         << json_string(std::string(kVersion)) << "},\n";
     out << "  \"dicom_dir\": {\n";
-    out << "    \"basename\": " << json_string(dicom_dir.filename().string()) << ",\n";
+    out << "    \"basename\": " << json_string(path_to_utf8(dicom_dir.filename())) << ",\n";
     out << "    \"path_hash_fnv1a64\": " << json_string(path_hash_fnv1a64(dicom_dir)) << "\n";
     out << "  },\n";
     out << "  \"selected_series\": {\n";
@@ -2640,11 +3058,11 @@ std::string viewer_export_metadata_json(
     out << "    \"sorted_by\": \"dot(ImagePositionPatient, normal)\"\n";
     out << "  },\n";
     out << "  \"outputs\": {\n";
-    out << "    \"isolated_group_dir\": " << json_string(isolated_dir.string()) << ",\n";
-    out << "    \"dcm2niix_dir\": " << json_string(dcm2niix_dir.string()) << ",\n";
-    out << "    \"dcm2niix_log\": " << json_string(dcm2niix_log.string()) << ",\n";
+    out << "    \"isolated_group_dir\": " << json_string(path_to_utf8(isolated_dir)) << ",\n";
+    out << "    \"dcm2niix_dir\": " << json_string(path_to_utf8(dcm2niix_dir)) << ",\n";
+    out << "    \"dcm2niix_log\": " << json_string(path_to_utf8(dcm2niix_log)) << ",\n";
     out << "    \"niftis\": " << json_array_strings(nifti_strings) << ",\n";
-    out << "    \"nifti\": " << json_optional_string(nifti.string()) << ",\n";
+    out << "    \"nifti\": " << json_optional_string(path_to_utf8(nifti)) << ",\n";
     out << "    \"mpr_preview_paths\": " << json_array_strings(mpr_strings) << ",\n";
     out << "    \"mpr_preview\": " << mpr_preview_info_array_json(mpr_previews, 4) << "\n";
     out << "  },\n";
@@ -2711,7 +3129,12 @@ int prepare_viewer_export(const Args& args) {
 
     const fs::path dcm2niix = find_dcm2niix(args.dcm2niix);
     const int returncode = run_dcm2niix(
-        dcm2niix, isolated_dir, dcm2niix_dir, dcm2niix_log, "viewer_export_rescue");
+        dcm2niix,
+        isolated_dir,
+        dcm2niix_dir,
+        dcm2niix_log,
+        "viewer_export_rescue",
+        args.dcm2niix_timeout_seconds);
     const std::vector<fs::path> niftis = returncode == 0 ? find_niftis(dcm2niix_dir) : std::vector<fs::path>{};
     const fs::path nifti = niftis.size() == 1 ? niftis.front() : fs::path{};
     std::vector<MprPreviewInfo> mpr_paths;
@@ -2900,7 +3323,12 @@ int prepare_rescue(const Args& args) {
 
     const fs::path dcm2niix = find_dcm2niix(args.dcm2niix);
     const int returncode = run_dcm2niix(
-        dcm2niix, isolated_dir, dcm2niix_dir, dcm2niix_log, "rescue_raw");
+        dcm2niix,
+        isolated_dir,
+        dcm2niix_dir,
+        dcm2niix_log,
+        "rescue_raw",
+        args.dcm2niix_timeout_seconds);
     const fs::path raw_nii = returncode == 0 ? find_first_nifti(dcm2niix_dir) : fs::path{};
     fs::path patched_nii;
     std::vector<MprPreviewInfo> mpr_paths;
@@ -2977,7 +3405,12 @@ int convert_clean(const Args& args) {
 
     const fs::path dcm2niix = find_dcm2niix(args.dcm2niix);
     const int returncode = run_dcm2niix(
-        dcm2niix, isolated_dir, dcm2niix_dir, dcm2niix_log, "clean_raw");
+        dcm2niix,
+        isolated_dir,
+        dcm2niix_dir,
+        dcm2niix_log,
+        "clean_raw",
+        args.dcm2niix_timeout_seconds);
     const fs::path nifti = returncode == 0 ? find_first_nifti(dcm2niix_dir) : fs::path{};
     write_text(
         metadata_path,
@@ -3001,30 +3434,42 @@ int convert_clean(const Args& args) {
 }
 
 void print_usage() {
+#ifdef _WIN32
+    constexpr const char* timeout_usage =
+        " [--dcm2niix-timeout-seconds <n>]";
+#else
+    constexpr const char* timeout_usage = "";
+#endif
     std::cout
         << "totalsegmentator-wrapper-dicom-normalizer " << kVersion << "\n\n"
         << "Usage:\n"
         << "  totalsegmentator-wrapper-dicom-normalizer doctor [--output <doctor.json>]\n"
         << "  totalsegmentator-wrapper-dicom-normalizer audit --dicom-dir <dir> --output <audit.json>\n"
         << "  totalsegmentator-wrapper-dicom-normalizer convert-clean --dicom-dir <dir> (--series-number <n>|--series-key <key>) "
-        << "--output <artifact_dir>\n"
+        << "--output <artifact_dir>" << timeout_usage << "\n"
         << "  totalsegmentator-wrapper-dicom-normalizer prepare-rescue --dicom-dir <dir> (--series-number <n>|--series-key <key>) "
-        << "--patched-spacing X,Y,Z --output <artifact_dir>\n\n"
+        << "--patched-spacing X,Y,Z --output <artifact_dir>" << timeout_usage << "\n\n"
         << "  totalsegmentator-wrapper-dicom-normalizer export-rescue-stack --dicom-dir <dir> "
         << "(--series-number <n>|--series-key <key>) --output <artifact_dir>\n"
         << "  totalsegmentator-wrapper-dicom-normalizer prepare-viewer-export --dicom-dir <dir> "
-        << "(--series-number <n>|--series-key <key>) --group-id <gNNN> --output <artifact_dir>\n\n"
+        << "(--series-number <n>|--series-key <key>) --group-id <gNNN> --output <artifact_dir> "
+        << timeout_usage << "\n\n"
         << "Current phase:\n"
         << "  audit, clean CT conversion, secondary-capture rescue, and viewer/MPR export rescue.\n";
 }
 
-Args parse_args(int argc, char** argv) {
-    if (argc <= 1) {
+struct CommandLineArg {
+    std::string text;
+    fs::path path;
+};
+
+Args parse_args(const std::vector<CommandLineArg>& argv) {
+    if (argv.size() <= 1) {
         print_usage();
         std::exit(0);
     }
     Args args;
-    args.command = argv[1];
+    args.command = argv[1].text;
     if (args.command == "--help" || args.command == "-h") {
         print_usage();
         std::exit(0);
@@ -3041,22 +3486,31 @@ Args parse_args(int argc, char** argv) {
         && args.command != "prepare-viewer-export") {
         throw std::runtime_error("unsupported command: " + args.command);
     }
-    for (int index = 2; index < argc; ++index) {
-        const std::string flag = argv[index];
-        if (flag == "--dicom-dir" && index + 1 < argc) {
-            args.dicom_dir = argv[++index];
-        } else if (flag == "--output" && index + 1 < argc) {
-            args.output = argv[++index];
-        } else if (flag == "--series-number" && index + 1 < argc) {
-            args.series_number = std::stoi(argv[++index]);
-        } else if (flag == "--series-key" && index + 1 < argc) {
-            args.series_key = argv[++index];
-        } else if (flag == "--group-id" && index + 1 < argc) {
-            args.group_id = argv[++index];
-        } else if (flag == "--patched-spacing" && index + 1 < argc) {
-            args.patched_spacing = parse_spacing(argv[++index]);
-        } else if (flag == "--dcm2niix" && index + 1 < argc) {
-            args.dcm2niix = argv[++index];
+    for (std::size_t index = 2; index < argv.size(); ++index) {
+        const std::string& flag = argv[index].text;
+        if (flag == "--dicom-dir" && index + 1 < argv.size()) {
+            args.dicom_dir = argv[++index].path;
+        } else if (flag == "--output" && index + 1 < argv.size()) {
+            args.output = argv[++index].path;
+        } else if (flag == "--series-number" && index + 1 < argv.size()) {
+            args.series_number = std::stoi(argv[++index].text);
+        } else if (flag == "--series-key" && index + 1 < argv.size()) {
+            args.series_key = argv[++index].text;
+        } else if (flag == "--group-id" && index + 1 < argv.size()) {
+            args.group_id = argv[++index].text;
+        } else if (flag == "--patched-spacing" && index + 1 < argv.size()) {
+            args.patched_spacing = parse_spacing(argv[++index].text);
+        } else if (flag == "--dcm2niix" && index + 1 < argv.size()) {
+            args.dcm2niix = argv[++index].path;
+#ifdef _WIN32
+        } else if (flag == "--dcm2niix-timeout-seconds" && index + 1 < argv.size()) {
+            args.dcm2niix_timeout_seconds = std::stoi(argv[++index].text);
+            if (args.dcm2niix_timeout_seconds <= 0
+                || args.dcm2niix_timeout_seconds > 86400) {
+                throw std::runtime_error(
+                    "--dcm2niix-timeout-seconds must be between 1 and 86400");
+            }
+#endif
         } else if (flag == "--help" || flag == "-h") {
             print_usage();
             std::exit(0);
@@ -3076,11 +3530,9 @@ Args parse_args(int argc, char** argv) {
     return args;
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
+int run_entrypoint(const std::vector<CommandLineArg>& argv) {
     try {
-        const Args args = parse_args(argc, argv);
+        const Args args = parse_args(argv);
         if (args.command == "doctor") {
             const auto json = doctor_json(detect_optional_tools());
             if (!args.output.empty()) {
@@ -3117,3 +3569,26 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+
+}  // namespace
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    std::vector<CommandLineArg> arguments;
+    arguments.reserve(static_cast<std::size_t>(argc));
+    for (int index = 0; index < argc; ++index) {
+        const fs::path path(argv[index]);
+        arguments.push_back({path_to_utf8(path), path});
+    }
+    return run_entrypoint(arguments);
+}
+#else
+int main(int argc, char** argv) {
+    std::vector<CommandLineArg> arguments;
+    arguments.reserve(static_cast<std::size_t>(argc));
+    for (int index = 0; index < argc; ++index) {
+        arguments.push_back({argv[index], fs::path(argv[index])});
+    }
+    return run_entrypoint(arguments);
+}
+#endif

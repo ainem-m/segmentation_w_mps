@@ -1,0 +1,26 @@
+Windows DICOM/MSVC technical spike baseline
+Date: 2026-07-30
+Repository: https://github.com/ainem-m/segmentation_w_mps
+Branch: agent/windows-dicom-msvc-spike
+Base branch: origin/agent/windows-coordinator-vertical-slice
+Base commit: 79537b6f66d5268b10f0517681a22ec3be6dd44e
+Initial tracked worktree: clean
+
+Host:
+- Windows 10 IoT Enterprise 22H2
+- OS build 19045.6456
+- Architecture: x64
+- LongPathsEnabled: 1
+
+Scope:
+- Existing native DICOM helper MSVC feasibility
+- Existing classification and rescue semantics preserved
+- Synthetic DICOM only; no patient data
+- Windows 10 engineering evidence only
+
+Explicitly unverified:
+- Windows 11
+- Cross-host macOS semantic comparison
+- Clean-machine packaging
+- Redistribution approval
+- WPF, installer, signing, update, and rollback

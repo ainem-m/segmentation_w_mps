@@ -27,7 +27,7 @@ Windows runtime proof: Windows 10 engineering pass; Windows 11 unverified
 Windows CUDA proof: Windows 10 engineering pass; Windows 11 unverified
 Windows process-tree proof: Windows 10 engineering pass; Windows 11 unverified
 Windows coordinator vertical slice: Windows 10 engineering pass; Windows 11 unverified
-Windows DICOM native build: unverified
+Windows DICOM native build: Windows 10 engineering pass; Windows 11 and cross-host semantic parity unverified
 Windows installer/signing: unverified
 ```
 

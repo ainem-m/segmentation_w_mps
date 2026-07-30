@@ -56,11 +56,17 @@ public:
         const std::uint64_t total_bits = total_bytes_ * 8U;
         block_[block_size_++] = 0x80U;
         if (block_size_ > 56) {
-            std::fill(block_.begin() + static_cast<std::ptrdiff_t>(block_size_), block_.end(), 0U);
+            std::fill(
+                block_.begin() + static_cast<std::ptrdiff_t>(block_size_),
+                block_.end(),
+                std::uint8_t{0});
             transform(block_.data());
             block_size_ = 0;
         }
-        std::fill(block_.begin() + static_cast<std::ptrdiff_t>(block_size_), block_.begin() + 56, 0U);
+        std::fill(
+            block_.begin() + static_cast<std::ptrdiff_t>(block_size_),
+            block_.begin() + 56,
+            std::uint8_t{0});
         for (std::size_t index = 0; index < 8; ++index) {
             block_[63 - index] = static_cast<std::uint8_t>(total_bits >> (index * 8U));
         }

@@ -1,0 +1,44 @@
+Windows native DICOM test summary
+
+PASS existing semantic harness:
+- doctor and optional-tool detection
+- clean CT classification
+- CT without ORIGINAL image type when geometry is complete
+- malformed compressed input never falls back
+- enhanced CT remains geometry-blocked
+- DICOMDIR and implicit VR
+- secondary-capture variants
+- geometry and secondary-capture references
+- partial geometry rescue candidacy
+- path-independent ordered-content checksum
+- rescue-stack voxel ordering and MONOCHROME1
+- unsupported rescue-stack inputs fail
+- convert-clean and prepare-rescue
+- viewer-export MPR mixed candidate
+- viewer-export without axial group
+
+PASS Windows-specific cases:
+- spaces and Japanese input/output paths
+- Japanese child executable path
+- greater-than-260-character input and output paths
+- read-only source hashes, timestamps, and attributes unchanged
+- malformed neighbor file skipped without weakening classification
+- bounded timeout returns dcm2niix return code 124
+- timeout kills a spawned fake grandchild before returning
+- CreateProcessW uses no shell and explicit inherited handles
+
+PASS real codec corpus:
+- JPEG
+- JPEG-LS
+- JPEG 2000
+- RLE
+
+PASS real dcm2niix:
+- synthetic 32-slice CT
+- greater-than-260-character paths with spaces and Japanese
+- shape 32 x 32 x 32
+- int16
+- spacing 0.5 x 0.5 x 1.0
+- finite affine and voxel data
+- qform and sform present
+- voxel range 0 through 31

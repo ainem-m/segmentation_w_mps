@@ -1,0 +1,35 @@
+Windows DICOM normalizer Release build
+
+Configure: PASS
+- Generator: Ninja
+- Exact GDCM package version: 3.2.6
+- GDCM static library source: approved internal binary wheel
+- Optional real dcm2niix integration executable: configured
+- Source build used: no
+
+Build: PASS
+- MSVC 19.44.35228.0
+- C++20
+- /W4
+- GDCM and codec static link complete
+- Windows system libraries: rpcrt4, ws2_32
+- PE longPathAware manifest embedded
+
+Unsafe shared-DLL negative configure: PASS
+- Omitting the approved static library directory fails configuration.
+- The official VS2013 GDCM DLL build cannot be selected silently.
+
+Representative sanitized configure arguments:
+  -DGDCM_DIR=<exact-gdcm-3.2.6-sdk>/lib/gdcm-3.2
+  -DDICOM_NORMALIZER_GDCM_STATIC_LIB_DIR=<app-private-python>/Lib/site-packages/_gdcm
+  -DPython3_EXECUTABLE=<app-private-python>/python.exe
+  -DDICOM_NORMALIZER_TEST_REAL_DCM2NIIX=<approved-dcm2niix>/dcm2niix.exe
+
+CTest: PASS
+- dicom_normalizer_synthetic: 1/1
+- Includes real dcm2niix, real compressed-codec corpus, Unicode/long paths,
+  timeout descendant cleanup, and existing synthetic semantics.
+
+Final binary:
+- SHA-256: caf1e1adeb8a2d96827e4a894ea9e8a76d216316270e3026cea2c8cfa5d3f8ce
+- Size: 3762688 bytes

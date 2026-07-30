@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "probe": "dicom_normalizer_job_object_cancellation",
+  "passed": true,
+  "launch": {
+    "created_suspended": true,
+    "assigned_before_resume": true,
+    "resumed": true,
+    "active_process_count_while_suspended": 1
+  },
+  "cancellation": {
+    "child_process_observed": true,
+    "maximum_active_process_count": 2,
+    "terminate_job_object_invoked": true,
+    "requested_exit_code": 1223,
+    "root_process_exited": true,
+    "root_process_exit_code": 1223,
+    "final_active_process_count": 0,
+    "elapsed_milliseconds": 24
+  },
+  "artifacts": {
+    "metadata_exists": false,
+    "success_metadata_exists": false,
+    "nifti_exists": false
+  },
+  "captured_output": {
+    "stdout_line_count": 0,
+    "stderr_line_count": 0,
+    "raw_output_recorded": false
+  },
+  "synthetic_input": {
+    "slice_count": 32,
+    "contains_patient_data": false
+  }
+}

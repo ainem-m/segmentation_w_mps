@@ -1,0 +1,59 @@
+{
+  "schema": "totalsegmentator_wrapper.windows_dicom_dependencies.v1",
+  "platform": "windows-10-x64-engineering",
+  "gdcm": {
+    "version": "3.2.6",
+    "release_commit": "9c71b163416130ffdec26534444e9b85fcf0682a",
+    "sdk": {
+      "source": "official-github-release",
+      "url": "https://github.com/malaterre/GDCM/releases/download/v3.2.6/GDCM-3.2.6-Windows-x86_64.zip",
+      "sha256": "a93e3ff6e534aaa09f83254bac857a82b8891b2a8a75971d5fb2cb875a7cdf43",
+      "bytes": 6597424,
+      "use": "exact-version headers, CMake config, and test gdcmconv"
+    },
+    "approved_binary_wheel": {
+      "source": "internal-wheelhouse",
+      "filename": "python_gdcm-3.2.6-cp312-cp312-win_amd64.whl",
+      "sha256": "3ad86fffde082e068a9ebef940be21079c5d80dae30787eaaccf822ecaac964d",
+      "bytes": 34239099,
+      "binary_only": true,
+      "static_library_toolset": "v140 (_MSC_VER=1900)",
+      "linked_with": "v143",
+      "libraries": {
+        "gdcmMSFF.lib": "3779cec40132368838ec5fed7dccf5c842d545ab07b22eddcd6b94ec9d5f6c76",
+        "gdcmIOD.lib": "7335d5d43528f819fc8a6f08588f12e8004369b8f8d24fd58366b816a110584e",
+        "gdcmDSED.lib": "f4414bf4be076d539a779a1fcd336378aa0e70a2ea301dddde10c34fcb6288b4",
+        "gdcmDICT.lib": "49a40cbead6f16b78a4c7dcbb29fffb9673686bf180b8722396d5d908194e235",
+        "gdcmCommon.lib": "83c21db6d8c10e089a3cf6eed89741bba682f9eb2e3758432d7d84fc98186c2b",
+        "gdcmcharls.lib": "225aa708a4725258bd713f52b24fe9aa9319905f3eff4aefbbdcbf1952501b7c",
+        "gdcmjpeg8.lib": "995cde65fcc0b2edb3869c145d74e73d04fa21a9fd4fd01d4eb28cc7ce992652",
+        "gdcmjpeg12.lib": "4c2337419346553ca68a90b470c79a3632c3f14cb54ef4d7133bdccb8b142561",
+        "gdcmjpeg16.lib": "b1e8658bd4db4157888bcb4c87aedc2cfb2bcd4bc113bbfb051a0efa4957312e",
+        "gdcmopenjp2.lib": "6a907c539d09d9b48e5701b2169b820004a9978682d148f07e51161fa2ea92aa",
+        "gdcmzlib.lib": "fed1c133d838d14f6135f1ab17b347f4d2889c0dbb2ff2ab16e9bc72317d8d50",
+        "gdcmexpat.lib": "aea58513e2fbe62e682b1d0ac54128b6f4fb52871f4a2090c5cc8f8091752d29"
+      }
+    },
+    "rejected_primary_candidate": {
+      "artifact": "official GDCM 3.2.6 shared DLLs",
+      "toolset": "VS2013 / v120",
+      "reason": "C++ ABI is not compatible with the supported v143 consumer",
+      "linked_by_final_binary": false
+    }
+  },
+  "dcm2niix": {
+    "version": "v1.0.20260724",
+    "source": "official-github-release",
+    "url": "https://github.com/rordenlab/dcm2niix/releases/download/v1.0.20260724/dcm2niix_win.zip",
+    "archive_sha256": "8310549ef7340b1b169c26f4721aeac69423fd73643fbbd22eec47b36cc70ada",
+    "executable_sha256": "de2466c1e31bb0114ad2c5a3fdfa08be62447b25beb4f4f6a426c314797e48d8",
+    "executable_bytes": 1694208
+  },
+  "normalizer": {
+    "sha256": "caf1e1adeb8a2d96827e4a894ea9e8a76d216316270e3026cea2c8cfa5d3f8ce",
+    "bytes": 3762688,
+    "gdcm_linkage": "static",
+    "gdcm_dynamic_dependencies": []
+  },
+  "license_and_redistribution_review": "unverified"
+}

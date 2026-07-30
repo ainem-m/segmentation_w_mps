@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -21,6 +22,8 @@ CT_SOP = "1.2.840.10008.5.1.4.1.1.2"
 ENHANCED_CT_SOP = "1.2.840.10008.5.1.4.1.1.2.1"
 SC_SOP = "1.2.840.10008.5.1.4.1.1.7"
 DICOMDIR_SOP = "1.2.840.10008.1.3.10"
+WINDOWS_FAKE_DCM2NIIX: Path | None = None
+WINDOWS_REAL_DCM2NIIX: Path | None = None
 
 
 def elem_explicit(group: int, element: int, vr: str, value: bytes | str | int) -> bytes:
@@ -176,7 +179,14 @@ def write_fake_dcm2niix(
     *,
     shape: tuple[int, int, int] = (4, 5, 6),
     spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
-) -> None:
+) -> tuple[Path, dict[str, str]]:
+    if WINDOWS_FAKE_DCM2NIIX is not None:
+        return WINDOWS_FAKE_DCM2NIIX, {
+            "DICOM_NORMALIZER_TEST_FAKE_SHAPE": ",".join(str(value) for value in shape),
+            "DICOM_NORMALIZER_TEST_FAKE_SPACING": ",".join(
+                str(value) for value in spacing
+            ),
+        }
     script = f"""#!/usr/bin/env python3
 import os, struct, sys
 out_dir = sys.argv[sys.argv.index('-o') + 1]
@@ -198,6 +208,7 @@ print('fake dcm2niix wrote nifti')
 """
     path.write_text(script, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path, {}
 
 
 def run(binary: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -393,7 +404,9 @@ def test_real_compressed_codecs_and_native_transcode(binary: Path, gdcmconv: Pat
 
         jpeg_uid = "1.2.826.0.1.3680043.10.543.880"
         fake = root / "fake_dcm2niix.py"
-        write_fake_dcm2niix(fake, shape=(32, 32, 32), spacing=(0.5, 0.5, 1.0))
+        fake, fake_env = write_fake_dcm2niix(
+            fake, shape=(32, 32, 32), spacing=(0.5, 0.5, 1.0)
+        )
         output = root / "converted"
         proc = run(
             binary,
@@ -406,6 +419,7 @@ def test_real_compressed_codecs_and_native_transcode(binary: Path, gdcmconv: Pat
             str(output),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert proc.returncode == 0, proc.stderr
         isolated_payload = load_audit(binary, output / "isolated_series")
@@ -597,9 +611,10 @@ def test_partial_geometry_ct_is_rescue_candidate(binary: Path) -> None:
         assert proc.returncode == 0, proc.stderr
         manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
         assert manifest["classification"] == "geometry_rescue_candidate"
-        assert stat.S_IMODE(output.stat().st_mode) == 0o700
-        assert stat.S_IMODE((output / "preview_stack.npy").stat().st_mode) == 0o600
-        assert stat.S_IMODE((output / "source_manifest.json").stat().st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE(output.stat().st_mode) == 0o700
+            assert stat.S_IMODE((output / "preview_stack.npy").stat().st_mode) == 0o600
+            assert stat.S_IMODE((output / "source_manifest.json").stat().st_mode) == 0o600
 
 
 def test_ordered_content_sha256_manifest_is_path_independent(binary: Path) -> None:
@@ -918,7 +933,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         fake = root / "fake_dcm2niix.py"
-        write_fake_dcm2niix(fake)
+        fake, fake_env = write_fake_dcm2niix(fake)
         for index in range(32):
             write_dicom(root / "clean" / f"ct_{index:04d}.dcm", series_number=11, series_uid="1.2.3.convert")
         clean_out = root / "clean_out"
@@ -933,6 +948,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(clean_out),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert proc.returncode == 0, proc.stderr
         clean_meta = json.loads((clean_out / "convert_clean_metadata.json").read_text(encoding="utf-8"))
@@ -956,6 +972,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(clean_key_out),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert proc.returncode == 0, proc.stderr
         clean_key_meta = json.loads((clean_key_out / "convert_clean_metadata.json").read_text(encoding="utf-8"))
@@ -989,6 +1006,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(rescue_out),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert proc.returncode == 0, proc.stderr
         validation = json.loads((rescue_out / "rescue_validation.json").read_text(encoding="utf-8"))
@@ -1009,6 +1027,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(root / "bad_convert"),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert bad_convert.returncode != 0
         assert "convert-clean requires original_ct_geometry_ok" in bad_convert.stderr
@@ -1026,6 +1045,7 @@ def test_convert_clean_and_prepare_rescue(binary: Path) -> None:
             str(root / "bad_rescue"),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert bad_rescue.returncode != 0
         assert "prepare-rescue requires a geometry rescue candidate" in bad_rescue.stderr
@@ -1083,7 +1103,9 @@ def test_viewer_export_mpr_mixed_candidate_and_prepare(binary: Path) -> None:
         assert recommended[0]["ai_eligibility"]["status"] == "rescue_go_with_warning"
 
         fake = root / "fake_dcm2niix.py"
-        write_fake_dcm2niix(fake, shape=(72, 72, 32), spacing=(0.5, 0.5, 1.0))
+        fake, fake_env = write_fake_dcm2niix(
+            fake, shape=(72, 72, 32), spacing=(0.5, 0.5, 1.0)
+        )
         out = root / "viewer_export_out"
         proc = run(
             binary,
@@ -1098,6 +1120,7 @@ def test_viewer_export_mpr_mixed_candidate_and_prepare(binary: Path) -> None:
             str(out),
             "--dcm2niix",
             str(fake),
+            env=fake_env,
         )
         assert proc.returncode == 0, proc.stderr
         metadata = json.loads((out / "viewer_export_metadata.json").read_text(encoding="utf-8"))
@@ -1147,12 +1170,317 @@ def test_viewer_export_without_axial_group_is_not_ai_rescue_candidate(binary: Pa
         assert "viewer_export_mpr_mixed_candidate" not in statuses
 
 
+def test_windows_paths_read_only_and_timeout(binary: Path) -> None:
+    if os.name != "nt":
+        return
+    assert WINDOWS_FAKE_DCM2NIIX is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dicom = root / "input with spaces" / "日本語 入力"
+        files: list[Path] = []
+        for index in range(32):
+            path = dicom / f"slice {index:04d}.dcm"
+            write_dicom(
+                path,
+                series_number=310,
+                series_uid="1.2.3.windows.paths",
+                instance_number=index + 1,
+            )
+            path.chmod(stat.S_IREAD)
+            files.append(path)
+        (dicom / "malformed.bin").write_bytes(b"not a dicom")
+
+        before = {
+            path: (
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+                path.stat().st_mtime_ns,
+                path.stat().st_file_attributes,
+            )
+            for path in files
+        }
+        try:
+            audit_output = root / "日本語 出力" / "audit result.json"
+            audit_output.parent.mkdir(parents=True)
+            proc = run(
+                binary,
+                "audit",
+                "--dicom-dir",
+                str(dicom),
+                "--output",
+                str(audit_output),
+            )
+            assert proc.returncode == 0, proc.stderr
+            payload = json.loads(audit_output.read_text(encoding="utf-8"))
+            assert payload["dicom_dir"]["basename"] == "日本語 入力"
+            series = series_by_uid(payload, "1.2.3.windows.paths")
+            assert series["classification"]["status"] == "original_ct_geometry_ok"
+            assert payload["skipped_file_count"] == 1
+
+            tool_dir = root / "実行 ツール with spaces"
+            tool_dir.mkdir()
+            fake = tool_dir / "fake dcm2niix.exe"
+            shutil.copyfile(WINDOWS_FAKE_DCM2NIIX, fake)
+            converted = root / "変換 出力 with spaces"
+            fake_env = {
+                "DICOM_NORMALIZER_TEST_FAKE_SHAPE": "32,32,32",
+                "DICOM_NORMALIZER_TEST_FAKE_SPACING": "0.5,0.5,1",
+            }
+            proc = run(
+                binary,
+                "convert-clean",
+                "--dicom-dir",
+                str(dicom),
+                "--series-number",
+                "310",
+                "--output",
+                str(converted),
+                "--dcm2niix",
+                str(fake),
+                env=fake_env,
+            )
+            assert proc.returncode == 0, proc.stderr
+            metadata = json.loads(
+                (converted / "convert_clean_metadata.json").read_text(encoding="utf-8")
+            )
+            assert metadata["status"] == "success"
+            assert (converted / "dcm2niix" / "clean_raw.nii").is_file()
+
+            after = {
+                path: (
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    path.stat().st_mtime_ns,
+                    path.stat().st_file_attributes,
+                )
+                for path in files
+            }
+            assert before == after
+            assert all(
+                attributes & stat.FILE_ATTRIBUTE_READONLY
+                for _, _, attributes in after.values()
+            )
+
+            timeout_output = root / "timeout output"
+            child_marker = root / "fake child survived.marker"
+            started = time.monotonic()
+            proc = run(
+                binary,
+                "convert-clean",
+                "--dicom-dir",
+                str(dicom),
+                "--series-number",
+                "310",
+                "--output",
+                str(timeout_output),
+                "--dcm2niix",
+                str(fake),
+                "--dcm2niix-timeout-seconds",
+                "1",
+                env={
+                    **fake_env,
+                    "DICOM_NORMALIZER_TEST_FAKE_SLEEP_SECONDS": "5",
+                    "DICOM_NORMALIZER_TEST_FAKE_CHILD_SLEEP_SECONDS": "2",
+                    "DICOM_NORMALIZER_TEST_FAKE_CHILD_MARKER": str(child_marker),
+                },
+            )
+            elapsed = time.monotonic() - started
+            assert proc.returncode != 0
+            assert elapsed < 4
+            assert "dcm2niix timed out" in proc.stderr
+            timeout_metadata = json.loads(
+                (timeout_output / "convert_clean_metadata.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert timeout_metadata["status"] == "failed"
+            assert timeout_metadata["dcm2niix"]["returncode"] == 124
+            assert not list(timeout_output.rglob("*.nii"))
+            time.sleep(1.5)
+            assert not child_marker.exists()
+        finally:
+            for path in files:
+                path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+        long_dir = root
+        component = 0
+        while len(str((long_dir / "slice_0000.dcm").resolve())) <= 280:
+            long_dir /= f"long-path-component-{component:02d}-" + ("x" * 36)
+            component += 1
+        for index in range(32):
+            write_dicom(
+                long_dir / f"slice_{index:04d}.dcm",
+                series_number=311,
+                series_uid="1.2.3.windows.longpath",
+                instance_number=index + 1,
+            )
+        assert len(str((long_dir / "slice_0000.dcm").resolve())) > 260
+        long_output = root / "long-path-audit.json"
+        proc = run(
+            binary,
+            "audit",
+            "--dicom-dir",
+            str(long_dir),
+            "--output",
+            str(long_output),
+        )
+        assert proc.returncode == 0, proc.stderr
+        long_payload = json.loads(long_output.read_text(encoding="utf-8"))
+        assert series_by_uid(
+            long_payload, "1.2.3.windows.longpath"
+        )["classification"]["status"] == "original_ct_geometry_ok"
+        long_conversion = long_dir / "conversion output"
+        proc = run(
+            binary,
+            "convert-clean",
+            "--dicom-dir",
+            str(long_dir),
+            "--series-number",
+            "311",
+            "--output",
+            str(long_conversion),
+            "--dcm2niix",
+            str(WINDOWS_FAKE_DCM2NIIX),
+            env={
+                "DICOM_NORMALIZER_TEST_FAKE_SHAPE": "32,32,32",
+                "DICOM_NORMALIZER_TEST_FAKE_SPACING": "0.5,0.5,1",
+            },
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert (
+            long_conversion / "dcm2niix" / "clean_raw.nii"
+        ).is_file()
+
+
+def test_windows_real_dcm2niix(binary: Path) -> None:
+    if os.name != "nt" or WINDOWS_REAL_DCM2NIIX is None:
+        return
+    import nibabel as nib
+    import numpy as np
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        component = 0
+        while len(
+            str(
+                (
+                    root
+                    / "real-dcm2niix-output"
+                    / "dcm2niix"
+                    / "clean_raw.nii"
+                ).resolve()
+            )
+        ) <= 280:
+            root /= (
+                f"real-dcm2niix-long-path-{component:02d}-"
+                + ("x" * 36)
+            )
+            component += 1
+        root.mkdir(parents=True)
+        dicom = root / "実 DICOM input with spaces"
+        for index in range(32):
+            write_dicom(
+                dicom / f"slice {index:04d}.dcm",
+                series_number=320,
+                series_uid="1.2.3.windows.real.dcm2niix",
+                study_uid="1.2.3.windows.real.study",
+                frame_of_reference_uid="1.2.3.windows.real.frame",
+                instance_number=index + 1,
+                pixel_bytes=struct.pack("<h", index) * (32 * 32),
+                pixel_spacing="0.5\\0.5",
+                image_position=f"0\\0\\{index}",
+            )
+        output = root / "実 NIfTI output with spaces"
+        assert len(str((dicom / "slice 0000.dcm").resolve())) > 260
+        assert len(
+            str((output / "dcm2niix" / "clean_raw.nii").resolve())
+        ) > 260
+        proc = run(
+            binary,
+            "convert-clean",
+            "--dicom-dir",
+            str(dicom),
+            "--series-number",
+            "320",
+            "--output",
+            str(output),
+            "--dcm2niix",
+            str(WINDOWS_REAL_DCM2NIIX),
+        )
+        assert proc.returncode == 0, proc.stderr
+        metadata = json.loads(
+            (output / "convert_clean_metadata.json").read_text(encoding="utf-8")
+        )
+        assert metadata["status"] == "success"
+        assert metadata["dcm2niix"]["returncode"] == 0
+        niftis = list((output / "dcm2niix").glob("*.nii"))
+        assert len(niftis) == 1
+        image = nib.load(niftis[0], mmap=False)
+        data = np.asanyarray(image.dataobj)
+        assert image.shape == (32, 32, 32)
+        assert image.get_data_dtype() == np.dtype("<i2")
+        assert np.allclose(image.header.get_zooms()[:3], (0.5, 0.5, 1.0))
+        assert int(image.header["qform_code"]) > 0
+        assert int(image.header["sform_code"]) > 0
+        assert np.isfinite(image.affine).all()
+        assert np.isfinite(data).all()
+        assert int(data.min()) == 0
+        assert int(data.max()) == 31
+        if evidence_path := os.environ.get("DICOM_NORMALIZER_TEST_REAL_EVIDENCE"):
+            summary = {
+                "schema": "totalsegmentator_wrapper.dicom_windows_real_conversion.v1",
+                "status": "pass",
+                "input": {"kind": "synthetic", "file_count": 32},
+                "path_cases": {
+                    "spaces": True,
+                    "japanese": True,
+                    "input_length_gt_260": True,
+                    "output_length_gt_260": True,
+                },
+                "classification": "original_ct_geometry_ok",
+                "dcm2niix": {
+                    "returncode": 0,
+                    "sha256": hashlib.sha256(
+                        WINDOWS_REAL_DCM2NIIX.read_bytes()
+                    ).hexdigest(),
+                },
+                "nifti": {
+                    "sha256": hashlib.sha256(niftis[0].read_bytes()).hexdigest(),
+                    "shape": list(image.shape),
+                    "dtype": str(image.get_data_dtype()),
+                    "spacing": [
+                        float(value) for value in image.header.get_zooms()[:3]
+                    ],
+                    "orientation": [
+                        str(value) for value in nib.aff2axcodes(image.affine)
+                    ],
+                    "affine": image.affine.tolist(),
+                    "qform_code": int(image.header["qform_code"]),
+                    "sform_code": int(image.header["sform_code"]),
+                    "finite": True,
+                    "minimum": int(data.min()),
+                    "maximum": int(data.max()),
+                },
+            }
+            Path(evidence_path).write_text(
+                json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: test_normalizer.py <binary> <gdcmconv>", file=sys.stderr)
+    global WINDOWS_FAKE_DCM2NIIX, WINDOWS_REAL_DCM2NIIX
+    if len(sys.argv) not in {3, 4, 5}:
+        print(
+            "usage: test_normalizer.py <binary> <gdcmconv> "
+            "[<fake-dcm2niix> [<real-dcm2niix>]]",
+            file=sys.stderr,
+        )
         return 2
     binary = Path(sys.argv[1])
     gdcmconv = Path(sys.argv[2])
+    if len(sys.argv) >= 4:
+        WINDOWS_FAKE_DCM2NIIX = Path(sys.argv[3])
+    if len(sys.argv) == 5:
+        WINDOWS_REAL_DCM2NIIX = Path(sys.argv[4])
     tests = [
         test_doctor,
         test_clean_ct,
@@ -1170,7 +1498,10 @@ def main() -> int:
         test_convert_clean_and_prepare_rescue,
         test_viewer_export_mpr_mixed_candidate_and_prepare,
         test_viewer_export_without_axial_group_is_not_ai_rescue_candidate,
+        test_windows_paths_read_only_and_timeout,
     ]
+    if os.name == "nt" and WINDOWS_REAL_DCM2NIIX is not None:
+        tests.append(test_windows_real_dcm2niix)
     for test in tests:
         test(binary)
         print(f"ok {test.__name__}")

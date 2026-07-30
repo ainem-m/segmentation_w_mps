@@ -1,0 +1,27 @@
+Final normalizer PE direct dependencies
+
+RPCRT4.dll
+KERNEL32.dll
+MSVCP140.dll
+VCRUNTIME140.dll
+VCRUNTIME140_1.dll
+api-ms-win-crt-runtime-l1-1-0.dll
+api-ms-win-crt-math-l1-1-0.dll
+api-ms-win-crt-heap-l1-1-0.dll
+api-ms-win-crt-environment-l1-1-0.dll
+api-ms-win-crt-convert-l1-1-0.dll
+api-ms-win-crt-stdio-l1-1-0.dll
+api-ms-win-crt-filesystem-l1-1-0.dll
+api-ms-win-crt-string-l1-1-0.dll
+api-ms-win-crt-time-l1-1-0.dll
+api-ms-win-crt-utility-l1-1-0.dll
+api-ms-win-crt-locale-l1-1-0.dll
+
+Checks:
+- GDCM DLL dependency: absent
+- MSVCP120/MSVCR120 dependency: absent
+- Approved GDCM and codec libraries: statically linked
+- Final binary SHA-256: caf1e1adeb8a2d96827e4a894ea9e8a76d216316270e3026cea2c8cfa5d3f8ce
+- Final binary size: 3762688 bytes
+
+Clean-machine VC++ Redistributable packaging remains unverified.

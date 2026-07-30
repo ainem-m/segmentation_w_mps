@@ -7,6 +7,13 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <gdcmConfigure.h>
+// The approved Windows wheel supplies GDCM as static libraries. The exact
+// version-matched SDK headers otherwise mark the same API as dllimport.
+#undef GDCM_BUILD_SHARED_LIBS
+#endif
+
 #include <gdcmByteValue.h>
 #include <gdcmDataSet.h>
 #include <gdcmFile.h>
@@ -31,6 +38,17 @@ namespace dicom_normalizer {
 namespace {
 
 constexpr unsigned long kMaxDecodedBytes = 2UL * 1024UL * 1024UL * 1024UL;
+
+std::string gdcm_path(const fs::path& path) {
+#ifdef _WIN32
+    const auto utf8 = path.u8string();
+    return std::string(
+        reinterpret_cast<const char*>(utf8.data()),
+        utf8.size());
+#else
+    return path.string();
+#endif
+}
 
 std::string trim(std::string value) {
     while (!value.empty()
@@ -191,8 +209,9 @@ bool assign_first_nested(
 GdcmProbe probe_dicom_file(const fs::path& path) {
     GdcmProbe result;
     try {
+        const auto filename = gdcm_path(path);
         gdcm::Reader reader;
-        reader.SetFileName(path.c_str());
+        reader.SetFileName(filename.c_str());
         if (!reader.Read()) {
             result.error = "gdcm_reader_failed";
             return result;
@@ -243,7 +262,7 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
 
         result.pixel_decode_attempted = true;
         gdcm::ImageReader image_reader;
-        image_reader.SetFileName(path.c_str());
+        image_reader.SetFileName(filename.c_str());
         if (!image_reader.Read()) {
             result.error = "gdcm_image_reader_failed";
             return result;
@@ -293,8 +312,9 @@ GdcmProbe probe_dicom_file(const fs::path& path) {
 GdcmDecodedImage decode_dicom_image(const fs::path& path) {
     GdcmDecodedImage result;
     try {
+        const auto filename = gdcm_path(path);
         gdcm::ImageReader reader;
-        reader.SetFileName(path.c_str());
+        reader.SetFileName(filename.c_str());
         if (!reader.Read()) {
             result.error = "gdcm_image_reader_failed";
             return result;
@@ -339,8 +359,9 @@ bool transcode_to_explicit_little_endian(
     const fs::path& output,
     std::string& error) {
     try {
+        const auto input_filename = gdcm_path(input);
         gdcm::ImageReader reader;
-        reader.SetFileName(input.c_str());
+        reader.SetFileName(input_filename.c_str());
         if (!reader.Read()) {
             error = "gdcm_image_reader_failed";
             return false;
@@ -357,7 +378,8 @@ bool transcode_to_explicit_little_endian(
         gdcm::ImageWriter writer;
         writer.SetFile(reader.GetFile());
         writer.SetImage(changer.GetOutput());
-        writer.SetFileName(output.c_str());
+        const auto output_filename = gdcm_path(output);
+        writer.SetFileName(output_filename.c_str());
         if (!writer.Write()) {
             error = "gdcm_image_writer_failed";
             return false;

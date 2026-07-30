@@ -33,9 +33,9 @@ clean Windows 11 x64 standard-user machine
 | Job Object containment | real child/grandchild membership evidence | partial: synthetic tree and real TotalSegmentator descendants pass on the Windows 10 engineering host; Windows 11 unverified |
 | Authoritative cancellation | no surviving inference/GPU processes | partial: model-load and `Predicting` cancellation leave zero Job/GPU survivors on the Windows 10 engineering host; Windows 11 unverified |
 | Staging commit | incomplete output never promoted | partial: real Windows 10 normal completion promotes verified output, while cancellation retains staging without final promotion; race/fault injection and Windows 11 remain unverified |
-| C++ helper MSVC build | reproducible configure/build log | unverified |
-| DICOM synthetic parity | Windows and macOS semantic comparison | unverified |
-| Japanese/long paths | runtime, coordinator and DICOM cases | unverified |
+| C++ helper MSVC build | reproducible configure/build log | partial: exact GDCM 3.2.6 static libraries from the approved binary wheel and MSVC Release build pass on the Windows 10 engineering host without a GDCM DLL dependency; clean Windows 11 and distributable package closure unverified |
+| DICOM synthetic parity | Windows and macOS semantic comparison | partial: the Windows synthetic harness, compressed codec corpus, real dcm2niix conversion, timeout, and Job Object cancellation pass; cross-host macOS semantic comparison unverified |
+| Japanese/long paths | runtime, coordinator and DICOM cases | partial: DICOM input, output, and child executable paths with spaces/Japanese plus a greater-than-260-character input path pass on the Windows 10 engineering host; remaining product surfaces and Windows 11 unverified |
 | WPF representative UI | keyboard, UIA, high contrast, DPI | unverified |
 | Standard-user install | clean-machine install without elevation | unverified |
 | Offline second launch | no network after completed setup | unverified |

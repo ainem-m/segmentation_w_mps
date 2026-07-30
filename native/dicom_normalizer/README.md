@@ -1,6 +1,6 @@
 # totalsegmentator-wrapper-dicom-normalizer
 
-Mac-oriented C++ DICOM intake and rescue binary for TotalSegmentator Wrapper workflows.
+C++ DICOM intake and rescue binary for TotalSegmentator Wrapper workflows.
 
 The parser and pixel decoder use GDCM. JPEG, JPEG-LS, JPEG 2000, and RLE
 transfer syntaxes are decoded in-process; successful metadata parsing alone is
@@ -25,6 +25,25 @@ GDCM 3.x development files are required to build. On macOS,
 `scripts/build_dicom_normalizer_mac.sh` also bundles the complete native runtime
 under `build/dicom_normalizer/lib` and rewrites load paths to `@loader_path`, so
 the shipped helper does not require Homebrew on the user's Mac.
+
+On Windows, the build requires the exact GDCM 3.2.6 SDK headers/CMake config
+and the approved `python_gdcm-3.2.6-cp312-cp312-win_amd64.whl` static
+libraries. The official GDCM Windows DLL build uses the VS2013 runtime and is
+intentionally rejected as an unsafe C++ ABI boundary. Configure from an MSVC
+x64 developer shell:
+
+```powershell
+cmake -S native/dicom_normalizer -B build/dicom_normalizer-win `
+  -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DGDCM_DIR="<GDCM SDK>\lib\gdcm-3.2" `
+  -DDICOM_NORMALIZER_GDCM_STATIC_LIB_DIR="<app-private Python>\Lib\site-packages\_gdcm"
+cmake --build build/dicom_normalizer-win
+ctest --test-dir build/dicom_normalizer-win --output-on-failure
+```
+
+The Windows child-process path uses `CreateProcessW`, explicit inherited
+handles, UTF-16 paths, a bounded wait, and a kill-on-close Job Object. It does
+not invoke a shell. The executable embeds `longPathAware=true`.
 
 The binary is:
 
@@ -138,3 +157,9 @@ hard `pixel_decode_failed` result; it never silently falls back to metadata-only
 acceptance. Enhanced CT pixel data is decoded, but the series remains
 `enhanced_ct_geometry_unverified` until every per-frame functional-group geometry
 item can be validated.
+
+Windows 10 MSVC build and synthetic conversion evidence is recorded under
+`artifacts/spike/windows-dicom-msvc/`. The resulting helper has GDCM and its
+codecs statically linked and has no GDCM/VS2013 runtime dependency. Windows 11,
+clean-machine packaging, redistribution approval, and cross-host macOS
+semantic comparison remain unverified.
