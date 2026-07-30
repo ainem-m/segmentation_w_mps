@@ -5,6 +5,8 @@
   "automation_names": true,
   "keyboard_focusable": true,
   "dynamic_system_colors": true,
+  "dynamic_labels": true,
+  "button_count": 12,
   "per_monitor_v2_manifest": true,
   "long_path_aware_manifest": true,
   "external_ui_automation": "unverified"

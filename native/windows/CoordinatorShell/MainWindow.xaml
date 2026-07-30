@@ -212,6 +212,11 @@
                 x:Name="RuntimeErrorCode"
                 Visibility="Collapsed"
                 FontFamily="Cascadia Mono, Consolas"
+                Margin="0,0,0,8" />
+            <TextBlock
+                x:Name="RuntimeRecoveryMessage"
+                Visibility="Collapsed"
+                Style="{StaticResource MutedTextStyle}"
                 Margin="0,0,0,18" />
             <Button
                 x:Name="PrepareButton"
@@ -274,11 +279,12 @@
               </Grid.ColumnDefinitions>
               <TextBlock x:Name="InputDisplayName" Text="Sample 1" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
               <Button
+                  x:Name="ChooseInputButton"
                   Grid.Column="1"
-                  Content="別のCTを選ぶ"
+                  Content="手元のCTを選ぶ"
                   Click="ChooseInputButton_Click"
                   TabIndex="1"
-                  automation:AutomationProperties.Name="別のCTを選ぶ" />
+                  automation:AutomationProperties.Name="手元のCTを選ぶ" />
             </Grid>
             <TextBlock Text="作成する3Dプレビュー" Style="{StaticResource SectionTitleStyle}" />
             <Border
@@ -408,12 +414,14 @@
             </Border>
             <WrapPanel>
               <Button
+                  x:Name="ReturnToInputButton"
                   Content="入力と作成内容へ戻る"
                   Click="ReturnToInputButton_Click"
                   Margin="0,0,8,8"
                   TabIndex="5"
                   automation:AutomationProperties.Name="入力と作成内容へ戻る" />
               <Button
+                  x:Name="ReturnToStartButton"
                   Content="最初に戻る"
                   Click="ReturnToStartButton_Click"
                   Margin="0,0,8,8"

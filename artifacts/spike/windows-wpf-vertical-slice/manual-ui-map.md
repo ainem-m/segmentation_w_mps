@@ -20,14 +20,18 @@ The visual and wording references were read before implementation:
 | running | `screen-running.png` | stage, progress, elapsed time and stop |
 | success | `screen-success.png`, `wpf-real-result.png` | local preview/output and next actions |
 | typed failure | `screen-failure.png`, `wpf-negative-hidden-gpu.png` | safe reason, error code and no CPU fallback |
+| typed cancellation | `wpf-real-cancel-result.png` | safe reason code and cancellation-specific copy action |
 
 The four visible stages remain `目的`, `入力`, `実行`, and `結果`. Canonical
 Sample and non-clinical wording is tested against the shared Python constants.
 The shell uses one WPF window and no external UI framework, embedded browser,
 service layer, updater, DICOM flow, or extra model selection.
 
-Internal automation names, focusable controls, dynamic system brushes,
-PerMonitorV2 declaration, long-path declaration, and 96-DPI rendering passed.
+All 12 visible buttons are covered by the WPF contract. The contract also
+checks the Swift-reference dynamic labels for Sample/user CT selection,
+details open/close, stop requested, and typed cancellation. Internal
+automation names, focusable controls, dynamic system brushes, PerMonitorV2
+declaration, long-path declaration, and 96-DPI rendering passed.
 External UI Automation, actual keyboard traversal, high-contrast interaction,
 other DPI/viewport sizes, native file-dialog interaction, and future DICOM
 image interaction remain UNVERIFIED.

@@ -64,16 +64,16 @@ internal sealed record ShellConfiguration(
     internal RuntimeCheckResult CheckRuntime()
     {
         var failures = new List<string>();
-        CheckFile(SupervisorPath, "Windows process supervisor", failures);
-        CheckFile(CoordinatorPath, "production coordinator", failures);
+        CheckFile(SupervisorPath, "Windowsの処理管理機能", failures);
+        CheckFile(CoordinatorPath, "3Dプレビュー作成機能", failures);
         CheckDirectory(
             CoordinatorWorkingDirectory,
-            "app-private runtime",
+            "同梱済みの実行環境",
             failures);
-        CheckFile(BundledSamplePath, "bundled Sample 1", failures);
+        CheckFile(BundledSamplePath, "同梱Sample 1", failures);
         CheckDirectory(
             TotalSegmentatorHome,
-            "TotalSegmentator model cache",
+            "同梱済みのモデル",
             failures);
         CheckTotalSegmentatorCache(failures);
         try
@@ -91,11 +91,15 @@ internal sealed record ShellConfiguration(
             ? new RuntimeCheckResult(
                 true,
                 "実行環境を確認しました。通信や依存関係の再解決は行っていません。",
+                null,
                 null)
             : new RuntimeCheckResult(
                 false,
-                "実行環境を確認できませんでした。",
-                "runtime_unavailable");
+                string.Join(
+                    " ",
+                    failures.Distinct(StringComparer.Ordinal)),
+                "runtime_unavailable",
+                "アプリの配置と保存先を確認してから、「準備を始める」をもう一度押してください。");
     }
 
     private static string RequireAbsolute(string? value, string name)
@@ -204,4 +208,5 @@ internal sealed record ShellConfiguration(
 internal sealed record RuntimeCheckResult(
     bool Passed,
     string Message,
-    string? ErrorCode);
+    string? ErrorCode,
+    string? RecoveryMessage);

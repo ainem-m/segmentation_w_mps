@@ -57,6 +57,10 @@ respective criteria.
 - macOS single-JSON stdout, `RUN_STAGE`, and `RUN_PROGRESS` regression
 - .NET Release builds with zero warnings/errors
 - WPF contract self-test
+- all 12 WPF buttons and state-dependent Automation names
+- typed cancellation-specific copy action without `error_code=unknown`
+- setup failure safe reason and separate recovery guidance
+- Swift-reference Sample/user CT and details open/close wording
 - `git diff --check`
 - documentation limits the result to a Windows 10 engineering slice
 - excluded scope and minimal implementation boundary preserved
@@ -87,3 +91,19 @@ None.
 **Windows 10 WPF coordinator engineering slice: PASS.**
 
 This does not mean that the Windows product is complete.
+
+## Swift-reference four-point follow-up audit
+
+The final read-only audit found no blocking issue:
+
+| Done criterion | Result |
+| --- | --- |
+| typed cancellation-specific copy semantics | PASS |
+| setup failure safe reason and separate recovery suggestion | PASS |
+| Swift-reference CT selection and details labels | PASS |
+| all 12 buttons and dynamic-label contract coverage | PASS |
+
+DICOM UI and additional-model selection remain UNVERIFIED for the next
+separate stage. External UI Automation, actual keyboard traversal, and
+automated clipboard interaction also remain UNVERIFIED and are non-blocking
+for this follow-up.

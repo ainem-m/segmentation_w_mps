@@ -37,6 +37,8 @@ public partial class App : Application
                     automation_names = ui.AutomationNames,
                     keyboard_focusable = ui.KeyboardFocusable,
                     dynamic_system_colors = ui.DynamicSystemColors,
+                    dynamic_labels = ui.DynamicLabels,
+                    button_count = ui.ButtonCount,
                     per_monitor_v2_manifest = true,
                     long_path_aware_manifest = true,
                     external_ui_automation = "unverified",

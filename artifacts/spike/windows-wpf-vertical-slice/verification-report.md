@@ -77,6 +77,29 @@ evidence with zero survivors, rather than hanging or reporting success.
 - .NET Release builds: PASS, zero warnings/errors.
 - Synthetic normal/cancel stdout: valid JSONL and equal to `events.jsonl`.
 
+### Swift-reference four-point follow-up
+
+The requested follow-up stayed within the existing WPF shell:
+
+- typed cancellation now uses `停止情報をコピー` and copies
+  `status=cancelled` plus `reason_code`, without `error_code=unknown`;
+- setup failure displays safe component-level reasons and a separate recovery
+  suggestion without exposing a path or exception text;
+- Sample/user CT selection and details open/close labels now follow the Swift
+  state-dependent wording, including matching Automation names;
+- the executable WPF contract covers all 12 buttons and the four dynamic label
+  transitions.
+
+The contract rerun passed with `button_count=12` and `dynamic_labels=true`.
+The Release build passed with zero warnings/errors, the focused tests passed
+15/15, and the full Python suite passed 276 tests with 3 skips. Real typed
+cancellation operation `8aff65cd-1287-4d28-835f-4a46d124e413` was rerun for
+the changed result UI: it emitted one `operation_cancelled`, coordinator exit
+was 3, resolved device remained `cuda:0`, fallback remained false/false, no
+final output was promoted, and the Job had zero survivors.
+
+DICOM UI and additional-model selection were not added and remain UNVERIFIED.
+
 ## Packaging boundary and unverified work
 
 The private .NET SDK did not contain the offline win-x64 runtime pack required

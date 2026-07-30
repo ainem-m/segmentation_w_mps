@@ -56,29 +56,76 @@ public partial class MainWindow : Window
 
     internal UiContractResult UiContractEvidence()
     {
+        SetInputButtonsForSample(sampleSelected: true);
+        SetStopButtonRequested(requested: false);
+        SetDetailsExpanded(expanded: false);
+        SetCopyInformationButtonForCancellation(cancelled: false);
         var expectedNames = new Dictionary<Button, string>
         {
             [PrepareButton] = "準備を始める",
             [SampleChoiceButton] = "Sampleから始める",
             [OwnDataChoiceButton] = "手元のCTデータを使う",
+            [ChooseInputButton] = "手元のCTを選ぶ",
             [RunButton] = "Sampleで3Dプレビューを作る",
             [StopButton] = "停止",
             [OpenPreviewButton] = "3Dプレビューを開く",
             [OpenOutputButton] = "結果フォルダを開く",
             [CopyErrorButton] = "エラー情報をコピー",
+            [ShowDetailsButton] = "詳細情報を見る",
+            [ReturnToInputButton] = "入力と作成内容へ戻る",
+            [ReturnToStartButton] = "最初に戻る",
         };
         var namesPassed = expectedNames.All(
             pair => AutomationProperties.GetName(pair.Key) == pair.Value);
         var keyboardPassed = expectedNames.Keys.All(
             button => button.Focusable && KeyboardNavigation.GetIsTabStop(button));
+        SetInputButtonsForSample(sampleSelected: false);
+        var ownInputLabelPassed =
+            Equals(ChooseInputButton.Content, "別のCTを選ぶ")
+            && AutomationProperties.GetName(ChooseInputButton)
+                == "別のCTを選ぶ"
+            && Equals(RunButton.Content, "このCTで3Dプレビューを作る")
+            && AutomationProperties.GetName(RunButton)
+                == "このCTで3Dプレビューを作る";
+        SetInputButtonsForSample(sampleSelected: true);
+        SetDetailsExpanded(expanded: true);
+        var detailsExpandedLabelPassed =
+            Equals(ShowDetailsButton.Content, "詳細情報を閉じる")
+            && AutomationProperties.GetName(ShowDetailsButton)
+                == "詳細情報を閉じる";
+        SetDetailsExpanded(expanded: false);
+        SetStopButtonRequested(requested: true);
+        var stopRequestedLabelPassed =
+            Equals(
+                StopButton.Content,
+                "停止要求済み。終了処理中です。")
+            && AutomationProperties.GetName(StopButton)
+                == "停止要求済み。終了処理中です。";
+        SetStopButtonRequested(requested: false);
+        SetCopyInformationButtonForCancellation(cancelled: true);
+        var cancellationCopyLabelPassed =
+            Equals(CopyErrorButton.Content, "停止情報をコピー")
+            && AutomationProperties.GetName(CopyErrorButton)
+                == "停止情報をコピー";
+        SetCopyInformationButtonForCancellation(cancelled: false);
+        var dynamicLabelsPassed =
+            ownInputLabelPassed
+            && detailsExpandedLabelPassed
+            && stopRequestedLabelPassed
+            && cancellationCopyLabelPassed;
         var systemColorsPassed =
             Equals(PrepareButton.Background, SystemColors.HighlightBrush)
             && Equals(Background, SystemColors.WindowBrush);
         return new UiContractResult(
-            namesPassed && keyboardPassed && systemColorsPassed,
+            namesPassed
+                && keyboardPassed
+                && dynamicLabelsPassed
+                && systemColorsPassed,
             namesPassed,
             keyboardPassed,
-            systemColorsPassed);
+            systemColorsPassed,
+            dynamicLabelsPassed,
+            expectedNames.Count);
     }
 
     internal void CapturePng(string outputPath)
@@ -293,10 +340,17 @@ public partial class MainWindow : Window
         {
             RuntimeErrorCode.Text = $"error_code={result.ErrorCode}";
             RuntimeErrorCode.Visibility = Visibility.Visible;
+            RuntimeRecoveryMessage.Text =
+                result.RecoveryMessage ?? string.Empty;
+            RuntimeRecoveryMessage.Visibility =
+                string.IsNullOrWhiteSpace(result.RecoveryMessage)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
             StatusPillText.Text = "準備できません";
             return;
         }
         RuntimeErrorCode.Visibility = Visibility.Collapsed;
+        RuntimeRecoveryMessage.Visibility = Visibility.Collapsed;
         SetScreen(ShellScreen.Start, "準備済み");
     }
 
@@ -328,7 +382,7 @@ public partial class MainWindow : Window
     private async Task RequestStopAsync()
     {
         StopButton.IsEnabled = false;
-        StopButton.Content = "停止要求済み。終了処理中です。";
+        SetStopButtonRequested(requested: true);
         StatusPillText.Text = "停止要求済み";
         SubProgressText.Text = "終了処理中です。画面が切り替わるまで待ってください。";
         if (_session is not null)
@@ -379,6 +433,18 @@ public partial class MainWindow : Window
         var fallbackOccurred = _lastResult.FallbackOccurred is { } occurred
             ? occurred.ToString().ToLowerInvariant()
             : "unverified";
+        if (_lastResult.TerminalEvent == "operation_cancelled")
+        {
+            Clipboard.SetText(
+                string.Join(
+                    Environment.NewLine,
+                    "status=cancelled",
+                    $"reason_code={_lastResult.ReasonCode ?? "cancel_requested"}",
+                    $"operation_id={_lastResult.OperationId}",
+                    $"fallback_allowed={fallbackAllowed}",
+                    $"fallback_occurred={fallbackOccurred}"));
+            return;
+        }
         Clipboard.SetText(
             string.Join(
                 Environment.NewLine,
@@ -390,10 +456,51 @@ public partial class MainWindow : Window
 
     private void ShowDetailsButton_Click(object sender, RoutedEventArgs e)
     {
+        SetDetailsExpanded(
+            SafeDetailsPanel.Visibility != Visibility.Visible);
+    }
+
+    private void SetInputButtonsForSample(bool sampleSelected)
+    {
+        var chooseLabel = sampleSelected
+            ? "手元のCTを選ぶ"
+            : "別のCTを選ぶ";
+        ChooseInputButton.Content = chooseLabel;
+        AutomationProperties.SetName(ChooseInputButton, chooseLabel);
+        var runLabel = sampleSelected
+            ? "Sampleで3Dプレビューを作る"
+            : "このCTで3Dプレビューを作る";
+        RunButton.Content = runLabel;
+        AutomationProperties.SetName(RunButton, runLabel);
+    }
+
+    private void SetStopButtonRequested(bool requested)
+    {
+        var label = requested
+            ? "停止要求済み。終了処理中です。"
+            : "停止";
+        StopButton.Content = label;
+        AutomationProperties.SetName(StopButton, label);
+    }
+
+    private void SetDetailsExpanded(bool expanded)
+    {
         SafeDetailsPanel.Visibility =
-            SafeDetailsPanel.Visibility == Visibility.Visible
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            expanded ? Visibility.Visible : Visibility.Collapsed;
+        var label = expanded
+            ? "詳細情報を閉じる"
+            : "詳細情報を見る";
+        ShowDetailsButton.Content = label;
+        AutomationProperties.SetName(ShowDetailsButton, label);
+    }
+
+    private void SetCopyInformationButtonForCancellation(bool cancelled)
+    {
+        var label = cancelled
+            ? "停止情報をコピー"
+            : "エラー情報をコピー";
+        CopyErrorButton.Content = label;
+        AutomationProperties.SetName(CopyErrorButton, label);
     }
 
     private void ReturnToInputButton_Click(object sender, RoutedEventArgs e)
@@ -411,10 +518,7 @@ public partial class MainWindow : Window
     {
         _inputPath = _configuration.BundledSamplePath;
         InputDisplayName.Text = "Sample 1";
-        RunButton.Content = "Sampleで3Dプレビューを作る";
-        AutomationProperties.SetName(
-            RunButton,
-            "Sampleで3Dプレビューを作る");
+        SetInputButtonsForSample(sampleSelected: true);
         SampleNotice.Visibility = Visibility.Visible;
         SetScreen(ShellScreen.Input, "プレビュー作成準備完了");
     }
@@ -447,10 +551,7 @@ public partial class MainWindow : Window
         }
         _inputPath = dialog.FileName;
         InputDisplayName.Text = Path.GetFileName(dialog.FileName);
-        RunButton.Content = "このCTで3Dプレビューを作る";
-        AutomationProperties.SetName(
-            RunButton,
-            "このCTで3Dプレビューを作る");
+        SetInputButtonsForSample(sampleSelected: false);
         SampleNotice.Visibility = Visibility.Collapsed;
         SetScreen(ShellScreen.Input, "プレビュー作成準備完了");
     }
@@ -479,9 +580,9 @@ public partial class MainWindow : Window
         _lastResult = null;
         _safeEventLog.Clear();
         SafeEventLogTextBox.Clear();
-        SafeDetailsPanel.Visibility = Visibility.Collapsed;
+        SetDetailsExpanded(expanded: false);
         StopButton.IsEnabled = true;
-        StopButton.Content = "停止";
+        SetStopButtonRequested(requested: false);
         RunProgressBar.IsIndeterminate = true;
         RunProgressBar.Value = 0;
         RunningTitle.Text = "実行準備";
@@ -622,6 +723,7 @@ public partial class MainWindow : Window
             OpenPreviewButton.Visibility = Visibility.Visible;
             OpenOutputButton.Visibility = Visibility.Visible;
             CopyErrorButton.Visibility = Visibility.Collapsed;
+            SetCopyInformationButtonForCancellation(cancelled: false);
             SetScreen(ShellScreen.Result, "完了");
             return;
         }
@@ -632,6 +734,7 @@ public partial class MainWindow : Window
         ResultErrorCode.Visibility = Visibility.Visible;
         if (result.TerminalEvent == "operation_cancelled")
         {
+            SetCopyInformationButtonForCancellation(cancelled: true);
             ResultTitle.Text = "処理を停止しました";
             ResultReason.Text =
                 "入力データは変更されていません。結果はfinal directoryへ保存していません。";
@@ -641,6 +744,7 @@ public partial class MainWindow : Window
         }
         else
         {
+            SetCopyInformationButtonForCancellation(cancelled: false);
             ResultTitle.Text = "3Dプレビューを作成できませんでした";
             ResultReason.Text = FailureMessage(result.ErrorCode);
             ResultErrorCode.Text =
@@ -896,4 +1000,6 @@ internal sealed record UiContractResult(
     bool Passed,
     bool AutomationNames,
     bool KeyboardFocusable,
-    bool DynamicSystemColors);
+    bool DynamicSystemColors,
+    bool DynamicLabels,
+    int ButtonCount);

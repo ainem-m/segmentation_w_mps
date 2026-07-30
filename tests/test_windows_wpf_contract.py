@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -51,9 +52,52 @@ class WindowsWpfContractTests(unittest.TestCase):
         xaml = (SHELL / "MainWindow.xaml").read_text(encoding="utf-8")
         code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
 
-        for label in ("目的", "入力", "実行", "結果", "Sampleから始める", "停止"):
+        labels = (
+            "準備を始める",
+            "Sampleから始める",
+            "手元のCTデータを使う",
+            "手元のCTを選ぶ",
+            "Sampleで3Dプレビューを作る",
+            "停止",
+            "3Dプレビューを開く",
+            "結果フォルダを開く",
+            "エラー情報をコピー",
+            "詳細情報を見る",
+            "入力と作成内容へ戻る",
+            "最初に戻る",
+        )
+        for label in labels:
             with self.subTest(label=label):
                 self.assertIn(label, xaml)
+        root = ET.fromstring(xaml)
+        presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        automation = (
+            "clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        )
+        automation_name = f"{{{automation}}}AutomationProperties.Name"
+        buttons = root.findall(f".//{{{presentation}}}Button")
+        self.assertEqual(len(buttons), 12)
+        self.assertTrue(all(button.get("Click") for button in buttons))
+        self.assertEqual(
+            {button.get(automation_name) for button in buttons},
+            set(labels),
+        )
+        for dynamic_label in (
+            "別のCTを選ぶ",
+            "このCTで3Dプレビューを作る",
+            "詳細情報を閉じる",
+            "停止要求済み。終了処理中です。",
+            "停止情報をコピー",
+        ):
+            with self.subTest(dynamic_label=dynamic_label):
+                self.assertIn(dynamic_label, code)
+        self.assertIn('"status=cancelled"', code)
+        self.assertIn('"reason_code=', code)
+        self.assertNotIn(
+            '"error_code={_lastResult.ErrorCode ?? "unknown"}"',
+            code.split('if (_lastResult.TerminalEvent == "operation_cancelled")')[1]
+            .split("return;", 1)[0],
+        )
         self.assertIn('"surface_preview"', code)
         self.assertIn('"index.html"', code)
         self.assertNotIn("WebView", xaml + code)
@@ -71,6 +115,26 @@ class WindowsWpfContractTests(unittest.TestCase):
             configuration,
         )
         self.assertIn('"checkpoint_final.pth"', configuration)
+        self.assertIn("RecoveryMessage", configuration)
+        self.assertIn("failures.Distinct(StringComparer.Ordinal)", configuration)
+        for safe_component in (
+            "Windowsの処理管理機能",
+            "3Dプレビュー作成機能",
+            "同梱済みの実行環境",
+            "同梱Sample 1",
+            "同梱済みのモデル",
+        ):
+            with self.subTest(safe_component=safe_component):
+                self.assertIn(safe_component, configuration)
+
+    def test_runtime_ui_contract_covers_all_buttons_and_dynamic_labels(self) -> None:
+        app = (SHELL / "App.xaml.cs").read_text(encoding="utf-8")
+        code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+
+        self.assertIn("expectedNames.Count", code)
+        self.assertIn("dynamicLabelsPassed", code)
+        self.assertIn("dynamic_labels = ui.DynamicLabels", app)
+        self.assertIn("button_count = ui.ButtonCount", app)
 
     def test_interactive_cancel_records_typed_terminal_and_exit_code(self) -> None:
         supervisor = SUPERVISOR.read_text(encoding="utf-8")

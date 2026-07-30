@@ -1,7 +1,7 @@
 {
   "schema": "totalsegmentator_wrapper.windows_wpf_cancel_evidence.v1",
   "status": "pass",
-  "operation_id": "b77ddd14-1689-465a-9147-de5eed06ab1b",
+  "operation_id": "8aff65cd-1287-4d28-835f-4a46d124e413",
   "cancel_trigger_reached": true,
   "terminal_event": "operation_cancelled",
   "supervisor_exit_code": 0,

@@ -1,7 +1,7 @@
 {
   "schema": "totalsegmentator_wrapper.windows_process_supervisor.v1",
   "mode": "supervised_process",
-  "operation_id": "b77ddd14-1689-465a-9147-de5eed06ab1b",
+  "operation_id": "8aff65cd-1287-4d28-835f-4a46d124e413",
   "status": "pass",
   "kill_on_job_close": true,
   "created_suspended": true,
@@ -12,13 +12,13 @@
   "cancel_trigger": "interactive_stdin",
   "job_members_at_cancel": 7,
   "job_member_pids_at_cancel": [
-    21680,
-    2804,
-    22832,
-    2824,
-    21460,
-    5392,
-    11700
+    16296,
+    8532,
+    8244,
+    23056,
+    7744,
+    616,
+    13944
   ],
   "root_exited_during_grace": true,
   "members_after_grace": 1,
