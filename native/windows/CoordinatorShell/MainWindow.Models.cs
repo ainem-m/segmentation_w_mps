@@ -308,9 +308,11 @@ public partial class MainWindow
                 RunningDetail.Text =
                     "ToothSegのsemantic/instance両branchで処理しています。";
                 OverallProgressText.Text = "全体: 工程 3 / 5";
-                RunProgressBar.IsIndeterminate = true;
+                RunProgressBar.IsIndeterminate = false;
+                RunProgressBar.Value = 60;
                 SubProgressText.Text =
-                    "高精細推論には時間がかかります。処理を継続しています。";
+                    "40 / 80（この工程 50%）\n"
+                    + "この工程の残り目安：約10分13秒";
                 DeviceText.Text =
                     "使用機能: 高精細歯（ToothSeg） / NVIDIA CUDA (cuda:0)";
                 break;

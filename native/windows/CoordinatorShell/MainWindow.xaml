@@ -237,27 +237,39 @@
               <ColumnDefinition Width="18" />
               <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <Button
-                x:Name="SampleChoiceButton"
-                Grid.Column="0"
-                Style="{StaticResource CardButtonStyle}"
-                Click="SampleChoiceButton_Click"
-                TabIndex="1"
-                automation:AutomationProperties.Name="Sampleから始める"
-                automation:AutomationProperties.HelpText="Sample 1を使って入力から結果確認まで試します。">
-              <StackPanel>
-                <TextBlock Text="✦" FontSize="26" Margin="0,0,0,14" />
-                <TextBlock Text="Sampleから始める" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBlock Text="入力から結果確認までの流れを先に試します。" Style="{StaticResource MutedTextStyle}" />
-                <TextBlock Text="★ おすすめ" Margin="0,18,0,0" Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" />
-              </StackPanel>
-            </Button>
+            <Grid Grid.Column="0">
+              <Button
+                  x:Name="SampleChoiceButton"
+                  Style="{StaticResource CardButtonStyle}"
+                  Click="SampleChoiceButton_Click"
+                  TabIndex="1"
+                  automation:AutomationProperties.Name="Sampleから始める"
+                  automation:AutomationProperties.HelpText="Sample 1を使って入力から結果確認まで試します。">
+                <StackPanel Margin="0,0,0,48">
+                  <TextBlock Text="✦" FontSize="26" Margin="0,0,0,14" />
+                  <TextBlock Text="Sampleから始める" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,10" />
+                  <TextBlock Text="入力から結果確認までの流れを先に試します。" Style="{StaticResource MutedTextStyle}" />
+                  <TextBlock Text="★ おすすめ" Margin="0,18,0,0" Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" />
+                </StackPanel>
+              </Button>
+              <Button
+                  x:Name="SamplePreviewButton"
+                  Content="Sample 1の3Dプレビューを開く"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Bottom"
+                  Margin="20,0,20,20"
+                  Padding="12,6"
+                  Click="SamplePreviewButton_Click"
+                  TabIndex="2"
+                  automation:AutomationProperties.Name="Sample 1の3Dプレビューを開く"
+                  automation:AutomationProperties.HelpText="作成処理を行わず、同梱済みのローカル3Dプレビューを開きます。" />
+            </Grid>
             <Button
                 x:Name="OwnDataChoiceButton"
                 Grid.Column="2"
                 Style="{StaticResource CardButtonStyle}"
                 Click="OwnDataChoiceButton_Click"
-                TabIndex="2"
+                TabIndex="3"
                 automation:AutomationProperties.Name="手元のCTデータを使う"
                 automation:AutomationProperties.HelpText="NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。">
               <StackPanel>
@@ -937,11 +949,26 @@
                   TabIndex="5"
                   automation:AutomationProperties.Name="入力と作成内容へ戻る" />
               <Button
+                  x:Name="ChooseAnotherResultInputButton"
+                  Content="別のCTを選ぶ"
+                  Click="ChooseAnotherResultInputButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="6"
+                  automation:AutomationProperties.Name="結果画面から別のCTを選ぶ" />
+              <Button
+                  x:Name="RerunButton"
+                  Content="もう一度作成"
+                  Click="RerunButton_Click"
+                  Margin="0,0,8,8"
+                  TabIndex="7"
+                  Visibility="Collapsed"
+                  automation:AutomationProperties.Name="同じ入力でもう一度作成" />
+              <Button
                   x:Name="ReturnToStartButton"
                   Content="最初に戻る"
                   Click="ReturnToStartButton_Click"
                   Margin="0,0,8,8"
-                  TabIndex="6"
+                  TabIndex="8"
                   automation:AutomationProperties.Name="最初に戻る" />
             </WrapPanel>
           </StackPanel>

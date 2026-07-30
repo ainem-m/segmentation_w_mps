@@ -16,6 +16,24 @@ internal sealed record ShellConfiguration(
     string DentalSegmentatorModelRoot,
     string ToothSegModelRoot)
 {
+    internal string BundledSamplePreviewPath
+    {
+        get
+        {
+            var inputDirectory = Path.GetDirectoryName(
+                Path.GetFullPath(BundledSamplePath));
+            var sampleRoot = inputDirectory is null
+                ? null
+                : Directory.GetParent(inputDirectory)?.FullName;
+            return sampleRoot is null
+                ? string.Empty
+                : Path.Combine(
+                    sampleRoot,
+                    "surface_preview",
+                    "index.html");
+        }
+    }
+
     internal static ShellConfiguration Load(string? engineeringConfigPath)
     {
         var baseDirectory = AppContext.BaseDirectory;
@@ -100,6 +118,10 @@ internal sealed record ShellConfiguration(
             "同梱済みの実行環境",
             failures);
         CheckFile(BundledSamplePath, "同梱Sample 1", failures);
+        CheckFile(
+            BundledSamplePreviewPath,
+            "同梱Sample 1の3Dプレビュー",
+            failures);
         CheckDirectory(
             TotalSegmentatorHome,
             "同梱済みのモデル",

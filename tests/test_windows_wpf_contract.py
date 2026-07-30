@@ -174,6 +174,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         automation_names = (
             "準備を始める",
             "Sampleから始める",
+            "Sample 1の3Dプレビューを開く",
             "手元のCTデータを使う",
             "手元のCTを選ぶ",
             "NIfTIファイルを選ぶ",
@@ -199,10 +200,13 @@ class WindowsWpfContractTests(unittest.TestCase):
             "エラー情報をコピー",
             "詳細情報を見る",
             "入力と作成内容へ戻る",
+            "結果画面から別のCTを選ぶ",
+            "同じ入力でもう一度作成",
             "最初に戻る",
         )
         visible_copy = (
             "NIfTI形式のCTファイルまたはDICOM撮影フォルダを選びます。",
+            "Sample 1の3Dプレビューを開く",
             "NIfTIファイルを選ぶ",
             "DICOMフォルダを選ぶ",
             "使用する撮影を変更",
@@ -233,7 +237,7 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         automation_name = f"{{{automation}}}AutomationProperties.Name"
         buttons = root.findall(f".//{{{presentation}}}Button")
-        self.assertEqual(len(buttons), 28)
+        self.assertEqual(len(buttons), 31)
         self.assertTrue(all(button.get("Click") for button in buttons))
         self.assertTrue(all(button.get(automation_name) for button in buttons))
         self.assertEqual(
@@ -285,6 +289,8 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         self.assertIn('"surface_preview"', code)
         self.assertIn('"index.html"', code)
+        self.assertIn("RerunButton_Click", code)
+        self.assertIn("ChooseAnotherResultInputButton_Click", code)
         self.assertNotIn("WebView", xaml + code)
 
     def test_runtime_gate_requires_privacy_config_and_cached_models(self) -> None:
@@ -301,6 +307,11 @@ class WindowsWpfContractTests(unittest.TestCase):
         )
         self.assertIn('"checkpoint_final.pth"', configuration)
         self.assertIn("RecoveryMessage", configuration)
+        self.assertIn("BundledSamplePreviewPath", configuration)
+        self.assertIn(
+            '"同梱Sample 1の3Dプレビュー"',
+            configuration,
+        )
         self.assertIn("failures.Distinct(StringComparer.Ordinal)", configuration)
         self.assertIn('"dicom_normalizer_path"', configuration)
         self.assertIn('"dcm2niix_path"', configuration)

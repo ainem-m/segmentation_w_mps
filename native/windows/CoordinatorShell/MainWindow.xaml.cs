@@ -70,6 +70,8 @@ public partial class MainWindow : Window
         {
             [PrepareButton] = "準備を始める",
             [SampleChoiceButton] = "Sampleから始める",
+            [SamplePreviewButton] =
+                "Sample 1の3Dプレビューを開く",
             [OwnDataChoiceButton] = "手元のCTデータを使う",
             [ChooseInputButton] = "手元のCTを選ぶ",
             [ChooseNiftiButton] = "NIfTIファイルを選ぶ",
@@ -102,6 +104,9 @@ public partial class MainWindow : Window
             [CopyErrorButton] = "エラー情報をコピー",
             [ShowDetailsButton] = "詳細情報を見る",
             [ReturnToInputButton] = "入力と作成内容へ戻る",
+            [ChooseAnotherResultInputButton] =
+                "結果画面から別のCTを選ぶ",
+            [RerunButton] = "同じ入力でもう一度作成",
             [ReturnToStartButton] = "最初に戻る",
         };
         var namesPassed = expectedNames.All(
@@ -471,6 +476,13 @@ public partial class MainWindow : Window
         SelectBundledSample();
     }
 
+    private void SamplePreviewButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        OpenLocalPath(_configuration.BundledSamplePreviewPath);
+    }
+
     private void OwnDataChoiceButton_Click(object sender, RoutedEventArgs e)
     {
         BeginOwnDataSelection(clearExistingInput: true);
@@ -484,6 +496,20 @@ public partial class MainWindow : Window
     private async void RunButton_Click(object sender, RoutedEventArgs e)
     {
         await StartRunAsync();
+    }
+
+    private async void RerunButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        await StartRunAsync();
+    }
+
+    private void ChooseAnotherResultInputButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        BeginOwnDataSelection(clearExistingInput: true);
     }
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
@@ -874,6 +900,7 @@ public partial class MainWindow : Window
             OpenPreviewButton.Visibility = Visibility.Visible;
             OpenOutputButton.Visibility = Visibility.Visible;
             CopyErrorButton.Visibility = Visibility.Collapsed;
+            RerunButton.Visibility = Visibility.Visible;
             SetCopyInformationButtonForCancellation(cancelled: false);
             SetScreen(ShellScreen.Result, "完了");
             return;
@@ -882,6 +909,7 @@ public partial class MainWindow : Window
         OpenPreviewButton.Visibility = Visibility.Collapsed;
         OpenOutputButton.Visibility = Visibility.Collapsed;
         CopyErrorButton.Visibility = Visibility.Visible;
+        RerunButton.Visibility = Visibility.Collapsed;
         ResultErrorCode.Visibility = Visibility.Visible;
         if (result.TerminalEvent == "operation_cancelled")
         {
@@ -1045,10 +1073,13 @@ public partial class MainWindow : Window
                 RunningTitle.Text = "顎顔面を抽出中";
                 RunningDetail.Text =
                     "TotalSegmentatorでCTデータを処理しています。";
-                OverallProgressText.Text = "全体: 工程 2 / 4";
+                OverallProgressText.Text =
+                    "全体の進捗範囲: 1〜69%";
                 RunProgressBar.IsIndeterminate = false;
-                RunProgressBar.Value = 42;
-                SubProgressText.Text = "この工程の進み具合: 42%";
+                RunProgressBar.Value = 1;
+                SubProgressText.Text =
+                    "工程 2 / 4　顎顔面を抽出中\n"
+                    + "この工程の進捗率は取得できません。処理を継続しています。";
                 DeviceText.Text =
                     "使用機能: TotalSegmentator / NVIDIA CUDA (cuda:0)";
                 ElapsedText.Text = "経過時間: 1分42秒";
