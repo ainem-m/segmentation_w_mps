@@ -47,12 +47,12 @@ internal sealed class ShellPreferences
         }
     }
 
-    internal bool SaveOutputRoot(string outputRoot)
+    internal void SaveOutputRoot(string outputRoot)
     {
         var normalizedOutputRoot = NormalizeExistingDirectory(outputRoot);
         if (_settingsDirectory is null || normalizedOutputRoot is null)
         {
-            return false;
+            return;
         }
 
         string? temporaryPath = null;
@@ -78,11 +78,10 @@ internal sealed class ShellPreferences
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(temporaryPath, settingsPath, overwrite: true);
             temporaryPath = null;
-            return true;
         }
         catch (Exception)
         {
-            return false;
+            return;
         }
         finally
         {

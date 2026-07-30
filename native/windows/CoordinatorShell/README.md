@@ -19,6 +19,12 @@ native audit and `convert-clean` path and adds a manual-only Secondary Capture
 preview lane. The enabled additional-model paths are fixed DentalSegmentator
 five-label, Individual Teeth beta, and ToothSeg FDI operations.
 
+The window remains one partial class: interactive NIfTI flow stays in
+`MainWindow.xaml.cs`, DICOM and model-selection behavior stay in their named
+partials, and engineering evidence entrypoints stay in
+`MainWindow.Evidence.cs`. The three additional-model evidence entrypoints use
+one fixed-spec runner; their CLI names and evidence schemas remain unchanged.
+
 The shell starts `tswm-process-supervisor supervise --interactive-cancel`.
 The supervisor owns the coordinator Job Object. The shell reads coordinator
 protocol v1 JSONL from supervisor stdout and writes the literal host command

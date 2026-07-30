@@ -173,7 +173,10 @@ class WindowsWpfContractTests(unittest.TestCase):
 
     def test_manual_flow_and_local_preview_remain_explicit(self) -> None:
         xaml = (SHELL / "MainWindow.xaml").read_text(encoding="utf-8")
-        code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+        code = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(SHELL.glob("MainWindow*.cs"))
+        )
         dicom_code = (SHELL / "MainWindow.Dicom.cs").read_text(
             encoding="utf-8"
         )
@@ -397,13 +400,82 @@ class WindowsWpfContractTests(unittest.TestCase):
 
     def test_runtime_ui_contract_covers_all_buttons_and_dynamic_labels(self) -> None:
         app = (SHELL / "App.xaml.cs").read_text(encoding="utf-8")
-        code = (SHELL / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+        evidence_path = SHELL / "MainWindow.Evidence.cs"
+        self.assertTrue(evidence_path.is_file())
+        evidence = evidence_path.read_text(encoding="utf-8")
 
-        self.assertIn("expectedNames.Count", code)
-        self.assertIn("dynamicLabelsPassed", code)
+        self.assertIn("expectedNames.Count", evidence)
+        self.assertIn("dynamicLabelsPassed", evidence)
         self.assertIn("dynamic_labels = ui.DynamicLabels", app)
         self.assertIn("button_count = ui.ButtonCount", app)
         self.assertIn('"--evidence-run-dicom-rescue"', app)
+
+    def test_evidence_runners_are_isolated_and_model_runs_are_shared(
+        self,
+    ) -> None:
+        evidence = (SHELL / "MainWindow.Evidence.cs").read_text(
+            encoding="utf-8"
+        )
+        operational_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                SHELL / "MainWindow.xaml.cs",
+                SHELL / "MainWindow.Dicom.cs",
+                SHELL / "MainWindow.Models.cs",
+            )
+        )
+
+        for runner in (
+            "RunEvidenceSampleAsync",
+            "RunEvidenceCancelSampleAsync",
+            "RunEvidenceDicomAsync",
+            "RunEvidenceDicomRescueAsync",
+            "RunEvidenceDentalSegmentatorAsync",
+            "RunEvidenceIndividualTeethAsync",
+            "RunEvidenceToothSegAsync",
+        ):
+            with self.subTest(runner=runner):
+                self.assertIn(runner, evidence)
+                self.assertNotIn(runner, operational_sources)
+        self.assertEqual(evidence.count("RunModelEvidenceAsync("), 4)
+        for fixed_value in (
+            '"dentalsegmentator"',
+            '"totalsegmentator"',
+            '"toothseg"',
+            '"craniofacial_structures"',
+            '"teeth"',
+        ):
+            with self.subTest(fixed_value=fixed_value):
+                self.assertIn(fixed_value, evidence)
+
+    def test_pruned_internal_results_keep_only_consumed_state(self) -> None:
+        intake = (SHELL / "DicomIntakeSession.cs").read_text(
+            encoding="utf-8"
+        )
+        result_tools = (SHELL / "ResultToolsSession.cs").read_text(
+            encoding="utf-8"
+        )
+        preferences = (SHELL / "ShellPreferences.cs").read_text(
+            encoding="utf-8"
+        )
+
+        verified_stack = intake.split(
+            "private sealed record VerifiedRescueStack(", 1
+        )[1].split(");", 1)[0]
+        final_result = intake.split(
+            "internal sealed record DicomRescueFinalResult(", 1
+        )[1].split(")", 1)[0]
+        result_tool = result_tools.split(
+            "internal sealed record ResultToolResult(", 1
+        )[1].split(")", 1)[0]
+        self.assertNotIn("ManifestPath", verified_stack)
+        self.assertNotIn("Shape", verified_stack)
+        self.assertNotIn("WorkspaceDirectory", final_result)
+        self.assertNotIn("MetadataPath", final_result)
+        self.assertNotIn("SafeMessage", result_tool)
+        self.assertNotIn("PathEquals", result_tools)
+        self.assertNotIn("CommandValue", intake)
+        self.assertIn("internal void SaveOutputRoot(", preferences)
 
     def test_dentalsegmentator_is_fixed_allowlisted_and_never_falls_back(
         self,
@@ -429,6 +501,10 @@ class WindowsWpfContractTests(unittest.TestCase):
             "CheckDentalSegmentatorRuntime",
             models,
         )
+        evidence = (SHELL / "MainWindow.Evidence.cs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RunEvidenceDentalSegmentatorAsync", evidence)
         self.assertIn(
             '"run_nifti_dentalsegmentator"',
             protocol,
@@ -476,7 +552,10 @@ class WindowsWpfContractTests(unittest.TestCase):
 
         self.assertIn("SegmentationProfile.IndividualTeeth", models)
         self.assertIn("CheckIndividualTeethRuntime", models)
-        self.assertIn("RunEvidenceIndividualTeethAsync", models)
+        evidence = (SHELL / "MainWindow.Evidence.cs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RunEvidenceIndividualTeethAsync", evidence)
         self.assertIn('"run_nifti_individual_teeth"', protocol)
         self.assertIn('"experimental_teeth": True', coordinator)
         self.assertIn('"teeth_crop_margin_mm": 5.0', coordinator)
@@ -510,7 +589,10 @@ class WindowsWpfContractTests(unittest.TestCase):
 
         self.assertIn("SegmentationProfile.ToothSeg", models)
         self.assertIn("CheckToothSegRuntime", models)
-        self.assertIn("RunEvidenceToothSegAsync", models)
+        evidence = (SHELL / "MainWindow.Evidence.cs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RunEvidenceToothSegAsync", evidence)
         self.assertIn('"run_nifti_toothseg"', protocol)
         self.assertIn('"toothseg_refine": False', coordinator)
         self.assertIn('"teeth_crop_margin_mm": 5.0', coordinator)

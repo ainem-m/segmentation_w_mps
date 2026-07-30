@@ -652,8 +652,7 @@ internal sealed class DicomIntakeSession : IDisposable
                 return DicomRescueFinalResult.Failure(
                     "dicom_rescue_confirmation_invalid",
                     "現在の形状に対応する確認結果を使用できません。",
-                    preview.OperationId,
-                    preview.WorkspaceDirectory);
+                    preview.OperationId);
             }
             var finalDirectory = Path.Combine(
                 Path.GetDirectoryName(preview.GeometryPath)
@@ -698,9 +697,7 @@ internal sealed class DicomIntakeSession : IDisposable
                 preview);
             return DicomRescueFinalResult.Success(
                 preview.OperationId,
-                preview.WorkspaceDirectory,
-                niftiPath,
-                metadataPath);
+                niftiPath);
         }
         catch (Exception exception) when (
             exception is IOException
@@ -712,8 +709,7 @@ internal sealed class DicomIntakeSession : IDisposable
             return DicomRescueFinalResult.Failure(
                 "dicom_rescue_finalize_invalid",
                 "確定した形状を安全に読み直せませんでした。",
-                preview.OperationId,
-                preview.WorkspaceDirectory);
+                preview.OperationId);
         }
         finally
         {
@@ -789,9 +785,7 @@ internal sealed class DicomIntakeSession : IDisposable
         }
         return new VerifiedRescueStack(
             volumePath,
-            manifestPath,
-            manifestSha256,
-            shape);
+            manifestSha256);
     }
 
     private static async Task WriteRescuePreviewRequestAsync(
@@ -1050,24 +1044,21 @@ internal sealed class DicomIntakeSession : IDisposable
             return DicomRescueFinalResult.Failure(
                 "dicom_rescue_finalize_start_failed",
                 "確定した形状の適用を開始できません。",
-                preview.OperationId,
-                preview.WorkspaceDirectory);
+                preview.OperationId);
         }
         if (execution.Cancelled)
         {
             return DicomRescueFinalResult.Failure(
                 "dicom_rescue_finalize_cancelled",
                 "確定した形状の適用を停止しました。",
-                preview.OperationId,
-                preview.WorkspaceDirectory);
+                preview.OperationId);
         }
         if (execution.TimedOut)
         {
             return DicomRescueFinalResult.Failure(
                 "dicom_rescue_finalize_timeout",
                 "確定した形状の適用が制限時間を超えました。",
-                preview.OperationId,
-                preview.WorkspaceDirectory);
+                preview.OperationId);
         }
         if (!execution.JobBecameEmpty
             || execution.ExitCode != 0)
@@ -1075,8 +1066,7 @@ internal sealed class DicomIntakeSession : IDisposable
             return DicomRescueFinalResult.Failure(
                 "dicom_rescue_finalize_failed",
                 "確定した形状を3D作成用データへ変換できませんでした。",
-                preview.OperationId,
-                preview.WorkspaceDirectory);
+                preview.OperationId);
         }
         return null;
     }
@@ -2037,9 +2027,7 @@ internal sealed class DicomIntakeSession : IDisposable
 
     private sealed record VerifiedRescueStack(
         string VolumePath,
-        string ManifestPath,
-        string ManifestSha256,
-        IReadOnlyList<int> Shape);
+        string ManifestSha256);
 
     private sealed record VerifiedRescuePreview(
         IReadOnlyList<DicomMprPreview> Previews,
@@ -2124,12 +2112,6 @@ internal sealed record DicomSpacing(
 
     public double[] Values => [X, Y, Z];
 
-    public string CommandValue => string.Join(
-        ",",
-        Values.Select(
-            value => value.ToString(
-                "0.######",
-                System.Globalization.CultureInfo.InvariantCulture)));
 }
 
 internal sealed record DicomMprPreview(
@@ -2193,7 +2175,6 @@ internal sealed record DicomRescueResult(
     bool Succeeded,
     string? OperationId,
     string? WorkspaceDirectory,
-    string? NiftiPath,
     string? ManifestPath,
     IReadOnlyList<DicomMprPreview> Previews,
     string? DecodedVolumePath,
@@ -2219,7 +2200,6 @@ internal sealed record DicomRescueResult(
             true,
             operationId,
             workspaceDirectory,
-            null,
             manifestPath,
             previews,
             decodedVolumePath,
@@ -2242,7 +2222,6 @@ internal sealed record DicomRescueResult(
             operationId,
             workspaceDirectory,
             null,
-            null,
             Array.Empty<DicomMprPreview>(),
             null,
             null,
@@ -2257,36 +2236,27 @@ internal sealed record DicomRescueResult(
 internal sealed record DicomRescueFinalResult(
     bool Succeeded,
     string? OperationId,
-    string? WorkspaceDirectory,
     string? NiftiPath,
-    string? MetadataPath,
     string? ErrorCode,
     string? SafeMessage)
 {
     internal static DicomRescueFinalResult Success(
         string operationId,
-        string workspaceDirectory,
-        string niftiPath,
-        string metadataPath) =>
+        string niftiPath) =>
         new(
             true,
             operationId,
-            workspaceDirectory,
             niftiPath,
-            metadataPath,
             null,
             null);
 
     internal static DicomRescueFinalResult Failure(
         string errorCode,
         string safeMessage,
-        string? operationId = null,
-        string? workspaceDirectory = null) =>
+        string? operationId = null) =>
         new(
             false,
             operationId,
-            workspaceDirectory,
-            null,
             null,
             errorCode,
             safeMessage);

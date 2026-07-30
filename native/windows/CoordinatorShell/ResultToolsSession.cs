@@ -39,9 +39,7 @@ internal sealed class ResultToolsSession : IDisposable
         if (!BeginOperation())
         {
             return ResultToolResult.Failure(
-                "slicer_export",
-                "result_tool_busy",
-                "Another result operation is already running.");
+                "result_tool_busy");
         }
 
         try
@@ -52,9 +50,7 @@ internal sealed class ResultToolsSession : IDisposable
                     out var pythonPath))
             {
                 return ResultToolResult.Failure(
-                    "slicer_export",
-                    "result_case_unavailable",
-                    "The case or app-private Python is unavailable.");
+                    "result_case_unavailable");
             }
 
             var outputDirectory = Path.Combine(
@@ -74,11 +70,8 @@ internal sealed class ResultToolsSession : IDisposable
                 },
                 SlicerExportTimeout);
             return MapExecutionResult(
-                "slicer_export",
                 outputDirectory,
-                execution,
-                "The 3D Slicer export completed.",
-                "The 3D Slicer export failed.");
+                execution);
         }
         finally
         {
@@ -93,9 +86,7 @@ internal sealed class ResultToolsSession : IDisposable
         if (!BeginOperation())
         {
             return ResultToolResult.Failure(
-                "surface_preview_rebuild",
-                "result_tool_busy",
-                "Another result operation is already running.");
+                "result_tool_busy");
         }
 
         string? stagingDirectory = null;
@@ -107,9 +98,7 @@ internal sealed class ResultToolsSession : IDisposable
                     out var pythonPath))
             {
                 return ResultToolResult.Failure(
-                    "surface_preview_rebuild",
-                    "result_case_unavailable",
-                    "The case or app-private Python is unavailable.");
+                    "result_case_unavailable");
             }
 
             var stagingRoot = Path.Combine(
@@ -128,9 +117,7 @@ internal sealed class ResultToolsSession : IDisposable
                     or ArgumentException)
             {
                 return ResultToolResult.Failure(
-                    "surface_preview_rebuild",
-                    "preview_staging_unavailable",
-                    "The preview staging directory is unavailable.");
+                    "preview_staging_unavailable");
             }
 
             var execution = await RunJobAsync(
@@ -147,11 +134,8 @@ internal sealed class ResultToolsSession : IDisposable
                 },
                 PreviewRebuildTimeout);
             var executionResult = MapExecutionResult(
-                "surface_preview_rebuild",
                 stagingDirectory,
-                execution,
-                "The 3D preview was rebuilt.",
-                "The 3D preview rebuild failed.");
+                execution);
             if (!executionResult.Succeeded)
             {
                 return executionResult;
@@ -160,11 +144,7 @@ internal sealed class ResultToolsSession : IDisposable
             if (!IsValidOfflinePreview(stagingDirectory))
             {
                 return ResultToolResult.Failure(
-                    "surface_preview_rebuild",
-                    "preview_verification_failed",
-                    "The rebuilt preview failed verification.",
-                    execution.ExitCode,
-                    execution.JobBecameEmpty);
+                    "preview_verification_failed");
             }
 
             string promotedDirectory;
@@ -180,19 +160,11 @@ internal sealed class ResultToolsSession : IDisposable
                     or ArgumentException)
             {
                 return ResultToolResult.Failure(
-                    "surface_preview_rebuild",
-                    "preview_promotion_failed",
-                    "The rebuilt preview could not be promoted.",
-                    execution.ExitCode,
-                    execution.JobBecameEmpty);
+                    "preview_promotion_failed");
             }
 
             return ResultToolResult.Success(
-                "surface_preview_rebuild",
-                promotedDirectory,
-                execution.ExitCode!.Value,
-                execution.JobBecameEmpty,
-                "The 3D preview was rebuilt.");
+                promotedDirectory);
         }
         finally
         {
@@ -403,61 +375,36 @@ internal sealed class ResultToolsSession : IDisposable
     }
 
     private static ResultToolResult MapExecutionResult(
-        string operation,
         string outputDirectory,
-        JobExecutionResult execution,
-        string successMessage,
-        string failureMessage)
+        JobExecutionResult execution)
     {
         if (!execution.Started)
         {
             return ResultToolResult.Failure(
-                operation,
-                "result_tool_start_failed",
-                "The result operation could not start.");
+                "result_tool_start_failed");
         }
         if (execution.Cancelled)
         {
             return ResultToolResult.Failure(
-                operation,
-                "result_tool_cancelled",
-                "The result operation was cancelled.",
-                execution.ExitCode,
-                execution.JobBecameEmpty);
+                "result_tool_cancelled");
         }
         if (execution.TimedOut)
         {
             return ResultToolResult.Failure(
-                operation,
-                "result_tool_timeout",
-                "The result operation timed out.",
-                execution.ExitCode,
-                execution.JobBecameEmpty);
+                "result_tool_timeout");
         }
         if (!execution.JobBecameEmpty)
         {
             return ResultToolResult.Failure(
-                operation,
-                "result_tool_process_tree_error",
-                "The result process tree did not exit safely.",
-                execution.ExitCode,
-                false);
+                "result_tool_process_tree_error");
         }
         if (execution.ExitCode != 0)
         {
             return ResultToolResult.Failure(
-                operation,
-                "result_tool_failed",
-                failureMessage,
-                execution.ExitCode,
-                true);
+                "result_tool_failed");
         }
         return ResultToolResult.Success(
-            operation,
-            outputDirectory,
-            execution.ExitCode.Value,
-            true,
-            successMessage);
+            outputDirectory);
     }
 
     private static bool IsValidOfflinePreview(string outputDirectory)
@@ -607,20 +554,6 @@ internal sealed class ResultToolsSession : IDisposable
             && !Path.IsPathRooted(relative);
     }
 
-    private static bool PathEquals(
-        string left,
-        string right)
-    {
-        return string.Equals(
-            Path.GetFullPath(left).TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar),
-            Path.GetFullPath(right).TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar),
-            StringComparison.OrdinalIgnoreCase);
-    }
-
     private enum TerminationReason
     {
         None,
@@ -642,44 +575,24 @@ internal sealed class ResultToolsSession : IDisposable
 
 internal sealed record ResultToolResult(
     bool Succeeded,
-    string Operation,
     string? OutputDirectory,
-    uint? ExitCode,
-    bool JobBecameEmpty,
-    string? ErrorCode,
-    string SafeMessage)
+    string? ErrorCode)
 {
     internal static ResultToolResult Success(
-        string operation,
-        string outputDirectory,
-        uint exitCode,
-        bool jobBecameEmpty,
-        string safeMessage)
+        string outputDirectory)
     {
         return new ResultToolResult(
             true,
-            operation,
             outputDirectory,
-            exitCode,
-            jobBecameEmpty,
-            null,
-            safeMessage);
+            null);
     }
 
     internal static ResultToolResult Failure(
-        string operation,
-        string errorCode,
-        string safeMessage,
-        uint? exitCode = null,
-        bool jobBecameEmpty = true)
+        string errorCode)
     {
         return new ResultToolResult(
             false,
-            operation,
             null,
-            exitCode,
-            jobBecameEmpty,
-            errorCode,
-            safeMessage);
+            errorCode);
     }
 }
