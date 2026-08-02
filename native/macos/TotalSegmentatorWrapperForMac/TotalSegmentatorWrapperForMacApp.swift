@@ -7,6 +7,9 @@ struct TotalSegmentatorWrapperForMacApp: App {
     @StateObject private var state: AppState
 
     init() {
+        if let updateSwapExitCode = runAtomicUpdateSwapIfRequested(arguments: CommandLine.arguments) {
+            exit(updateSwapExitCode)
+        }
         let paths = AppPaths.current()
         if ProcessInfo.processInfo.environment["TOTALSEGMENTATOR_WRAPPER_MAC_HEADLESS"] == "1" {
             let rc = SetupCoordinator.runSetup(paths: paths) { _, _ in }
@@ -40,8 +43,8 @@ struct TotalSegmentatorWrapperForMacApp: App {
 
                                 第三者コード、別途取得するモデル、Sample 1と派生画像には各別条件が適用されます。LICENSE、NOTICE、第三者表示はアプリ内のContents/Resourcesにあります。
 
-                                バグ報告: https://github.com/ainem-m/segmentation_w_mps/issues
-                                DICOM/CT/処理結果は送信しません。
+                                エラー相談: https://forms.gle/QFPwF1Pi5C8bmSuw6
+                                Googleアカウントへのログインは不要です。失敗画面で安全なエラー情報をコピーし、内容を確認して貼り付けてください。DICOM/CT/処理結果は自動送信しません。
                                 """
                             ),
                         ]

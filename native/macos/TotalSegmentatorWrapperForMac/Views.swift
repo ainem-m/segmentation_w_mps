@@ -53,6 +53,8 @@ struct RootView: View {
             StartChoiceView()
         case .inputAndCreation:
             InputAndCreationView()
+        case .iosMesh:
+            IOSMeshView()
         case .running:
             RunProgressView()
         case .dicomRescue:
@@ -119,7 +121,7 @@ struct SidebarView: View {
                 Label(state.updateCheckRunning ? "更新確認中" : "更新を確認", systemImage: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(.bordered)
-            .disabled(state.updateCheckRunning)
+            .disabled(state.updateCheckRunning || state.updateInstallRunning)
             if !state.updateMessage.isEmpty {
                 Text(state.updateMessage)
                     .font(.caption)
@@ -133,7 +135,7 @@ struct SidebarView: View {
                     Label(state.updateInstallRunning ? "更新中" : "更新をインストール", systemImage: "arrow.down.app")
                 }
                 .buttonStyle(.bordered)
-                .disabled(state.updateInstallRunning)
+                .disabled(state.updateCheckRunning || state.updateInstallRunning)
                 .confirmationDialog(
                     "更新をダウンロードしてインストールしますか？",
                     isPresented: $state.showingUpdateConfirmation,
@@ -143,6 +145,20 @@ struct SidebarView: View {
                     Button("キャンセル", role: .cancel) {}
                 } message: {
                     Text("更新ファイルを検証し、このアプリを置き換えて再起動します。DICOM/CT/処理結果は送信しません。")
+                }
+            }
+            if state.updateInstallRunning {
+                if let fraction = state.updateInstallProgressFraction {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                }
+                if !state.updateInstallProgressText.isEmpty {
+                    Text(state.updateInstallProgressText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -182,6 +198,7 @@ struct HeaderView: View {
         case .setup: return "はじめの準備"
         case .start: return "最初はSampleで流れを確認"
         case .inputAndCreation: return "入力と作成内容"
+        case .iosMesh: return "口腔内スキャン"
         case .running: return "処理中"
         case .dicomRescue: return "形状を確認"
         case .ctPreview: return "CT画像を確認"
@@ -194,6 +211,7 @@ struct HeaderView: View {
         case .setup: return "管理者権限不要。このMac内のアプリ専用フォルダだけを使います。"
         case .start: return "入力から結果確認までを先に試せます。"
         case .inputAndCreation: return "入力を確認し、作成する3Dプレビューを選びます。"
+        case .iosMesh: return "上顎または下顎のメッシュを、このMacのGPUで歯ごとに分けます。"
         case .running: return "現在の処理と経過時間を表示します。"
         case .dicomRescue: return "三方向の断面を見ながら、形が自然に見えるよう調整します。"
         case .ctPreview: return "歯や顎が3枚とも見えていれば、このCTを使えます。"
@@ -229,18 +247,46 @@ struct SetupView: View {
                 }
             }
             if state.setupRunning {
-                ProgressView()
-                    .progressViewStyle(.linear)
+                if let progress = state.setupDownloadProgress,
+                   progress.fraction != nil {
+                    ProgressView(value: progress.fraction)
+                        .progressViewStyle(.linear)
+                    Text(progress.displayText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                }
             }
 
             if !state.setupError.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(state.setupError)
                         .foregroundStyle(.red)
                     if !state.setupRecoveryText.isEmpty {
                         Text(state.setupRecoveryText)
                             .foregroundStyle(.secondary)
                     }
+                    HStack {
+                        Button {
+                            state.copySafeSetupErrorInfo()
+                        } label: {
+                            Label("エラー情報をコピー", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(state.setupRunning)
+                        Button {
+                            state.openSetupErrorReportForm()
+                        } label: {
+                            Label("エラー報告フォームを開く", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(state.setupRunning)
+                    }
+                    Text("コピーされる診断情報に生ログやローカルパスは含まれません。フォームへは自動送信されません。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             } else {
                 Text(state.setupMessage)
@@ -262,38 +308,291 @@ struct StartChoiceView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            PhaseChoiceCard(
-                title: "Sampleから始める",
-                subtitle: "入力から結果確認までの流れを先に試します。",
-                icon: "sparkles",
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
+                PhaseChoiceCard(
+                    title: "Sampleから始める",
+                    subtitle: "入力から結果確認までの流れを先に試します。",
+                    icon: "sparkles",
+                    primaryAction: {
+                        state.goToSample()
+                    }
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("おすすめ", systemImage: "star.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                        Button {
+                            state.openSampleViewer()
+                        } label: {
+                            Label("Sample 1の3Dプレビューを開く", systemImage: "cube.transparent")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                PhaseChoiceCard(
+                    title: "手元のCTデータを使う",
+                    subtitle: "CTファイルまたは撮影フォルダを選びます。必要な確認と取り込み準備はアプリ内で行います。",
+                    icon: "folder",
+                    primaryAction: {
+                        state.goToOwnData()
+                    }
+                ) {
+                    EmptyView()
+                }
+            }
+                PhaseChoiceCard(
+                    title: "口腔内スキャンを使う",
+                    subtitle: "上顎または下顎のPLY/STLから、選択したモデルをMPSで実行し、歯別STLを作成する研究用プレビューです。",
+                icon: "mouth",
                 primaryAction: {
-                    state.goToSample()
+                    state.goToIOSMesh()
                 }
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("おすすめ", systemImage: "star.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
+                Label("CTとは別の入力モード", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct IOSMeshView: View {
+    @EnvironmentObject var state: AppState
+    @State private var showsTGNetValidationDetails = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GroupBox("入力") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Picker("顎", selection: $state.iosMeshJaw) {
+                            ForEach(IOSMeshJaw.allCases) { jaw in
+                                Text(jaw.displayName).tag(jaw)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(
+                            state.iosMeshRunning
+                                || state.iosMeshTGNetValidationRunning
+                        )
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(state.iosMeshInputURL?.lastPathComponent ?? "未選択")
+                                    .font(.headline)
+                                Text("\(state.iosMeshJaw.displayName)の三角形メッシュ（PLYまたはSTL）を使用します。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("PLY/STLを選ぶ") { state.chooseIOSMesh() }
+                                .buttonStyle(.bordered)
+                                .disabled(state.iosMeshRunning)
+                        }
+                    }
+                }
+
+                GroupBox("モデルとライセンス") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if state.iosMeshUsesTGNetFinal {
+                            Label(
+                                "TGNet（重みは別途取得）",
+                                systemImage: "flask"
+                            )
+                            .font(.headline)
+                            Text("ライセンス：未確認")
+                                .foregroundStyle(.orange)
+                            Text("TGNetの重みは本アプリに同梱されていません。利用する場合は、指定の配布ページからご自身で取得し、配布元が示す利用条件をご確認ください。")
+                            Text("研究・教育・検証用です。診断・治療には使用しないでください。")
+                                .foregroundStyle(.secondary)
+                            Label(
+                                "TGNetの重みを確認しました",
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            .foregroundStyle(.green)
+                        } else {
+                            Label(
+                                "同梱モデル（MeshSegNet）",
+                                systemImage: "checkmark.seal"
+                            )
+                            .font(.headline)
+                            Text("アプリに同梱されるのは実装です。重み（Apache-2.0）は口腔内スキャン機能の初回実行時に固定配布元から取得し、SHA-256を検証します。重みはアプリ／DMGには同梱しません。")
+                            Divider()
+                            Text("TGNet（重みは別途取得）")
+                                .font(.headline)
+                            if state.iosMeshTGNetValidationRunning {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("TGNetの重みを確認しています…")
+                                }
+                            } else if !state.iosMeshTGNetValidationError.isEmpty {
+                                Label(
+                                    "TGNetの重みを確認できませんでした",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .foregroundStyle(.red)
+                                Text("指定の配布ページから取得したckpts(new).zip、またはその展開済みフォルダを選択してください。")
+                                    .foregroundStyle(.secondary)
+                                Button(
+                                    showsTGNetValidationDetails
+                                        ? "詳細を閉じる"
+                                        : "詳細を表示"
+                                ) {
+                                    showsTGNetValidationDetails.toggle()
+                                }
+                                .buttonStyle(.bordered)
+                                if showsTGNetValidationDetails {
+                                    Text(state.iosMeshTGNetValidationDetail)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Text("TGNetの重みは別途取得が必要です。")
+                                Text("ライセンス：未確認")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            Button {
+                                state.resetIOSMeshModel()
+                            } label: {
+                                Label(
+                                    "同梱モデル（MeshSegNet）を使用する",
+                                    systemImage: "checkmark.seal"
+                                )
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(
+                                state.iosMeshCustomModelURL == nil
+                                    ? Color.accentColor
+                                    : Color.secondary
+                            )
+                            .disabled(
+                                state.iosMeshRunning
+                                    || state.iosMeshTGNetValidationRunning
+                            )
+
+                            Button {
+                                showsTGNetValidationDetails = false
+                                state.chooseIOSTGNetSet()
+                            } label: {
+                                Label(
+                                    state.iosMeshTGNetValidationError.isEmpty
+                                        ? "TGNet用ZIP／フォルダを選ぶ"
+                                        : "もう一度選ぶ",
+                                    systemImage: "square.stack.3d.up"
+                                )
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(
+                                state.iosMeshUsesTGNetFinal
+                                    ? Color.accentColor
+                                    : Color.secondary
+                            )
+                            .disabled(
+                                state.iosMeshRunning
+                                    || state.iosMeshTGNetValidationRunning
+                            )
+                        }
+                        Button {
+                            state.openTGNetCheckpointPage()
+                        } label: {
+                            Label(
+                                "ckpts(new).zip の配布ページを開く",
+                                systemImage: "arrow.up.right.square"
+                            )
+                        }
+                        .buttonStyle(.link)
+                    }
+                    .font(.callout)
+                }
+
+                HStack {
+                    Text("保存先")
+                    Text(state.selectedOutputRootURL.path)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("変更") { state.chooseOutputRoot() }
+                        .buttonStyle(.bordered)
+                        .disabled(state.iosMeshRunning)
+                }
+
+                if state.iosMeshRunning {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let progress = state.iosMeshDownloadProgress {
+                            if let fraction = progress.fraction {
+                                ProgressView(value: fraction)
+                                    .progressViewStyle(.linear)
+                            } else {
+                                ProgressView()
+                                    .progressViewStyle(.linear)
+                            }
+                            Text(progress.displayText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ProgressView()
+                                .progressViewStyle(.linear)
+                        }
+                    }
+                }
+                Text(state.iosMeshStatus)
+                    .foregroundStyle(state.iosMeshSucceeded ? Color.green : Color.secondary)
+
+                HStack {
+                    if state.iosMeshRunning {
+                        Button("停止") { state.stopIOSMeshRun() }
+                            .buttonStyle(.bordered)
+                    } else if state.iosMeshSucceeded {
+                        NextPhaseButton(
+                            title: "結果を開く",
+                            systemImage: "eye.fill",
+                            isEnabled: state.iosMeshOutputURL != nil
+                        ) {
+                            state.openIOSMeshPreview()
+                        }
+                        Button("出力フォルダを開く") { state.openIOSMeshOutput() }
+                            .buttonStyle(.bordered)
+                        Button("同じ設定で再実行") { state.startIOSMeshRun() }
+                            .buttonStyle(.bordered)
+                    } else {
+                        NextPhaseButton(
+                            title: "MPSで歯別STLを作成",
+                            systemImage: "play.fill",
+                            isEnabled: state.iosMeshInputURL != nil
+                                && !state.iosMeshTGNetValidationRunning
+                        ) {
+                            state.startIOSMeshRun()
+                        }
+                    }
+                }
+
+                if state.iosMeshSucceeded {
+                    Label("\(state.iosMeshToothCount)本の歯別STL", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(state.iosMeshGingivaStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if state.iosMeshOutputURL != nil && !state.iosMeshRunning {
                     Button {
-                        state.openSampleViewer()
+                        state.openErrorReportForm()
                     } label: {
-                        Label("Sample 1の3Dプレビューを開く", systemImage: "cube.transparent")
+                        Label("エラー情報をコピーして相談フォームを開く", systemImage: "arrow.up.right.square")
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
-            PhaseChoiceCard(
-                title: "手元のCTデータを使う",
-                subtitle: "CTファイルまたは撮影フォルダを選びます。必要な確認と取り込み準備はアプリ内で行います。",
-                icon: "folder",
-                primaryAction: {
-                    state.goToOwnData()
-                }
-            ) {
-                EmptyView()
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -805,6 +1104,17 @@ struct DentalPreparationSheet: View {
                 Button("キャンセル") { state.cancelDentalPreparation() }
                     .buttonStyle(.bordered)
             } else {
+                if state.showsDentalPreparationFailureActions {
+                    Button {
+                        state.openErrorReportForm()
+                    } label: {
+                        Label(
+                            "エラー情報をコピーして相談フォームを開く",
+                            systemImage: "arrow.up.right.square"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                }
                 Button("閉じる") { state.showDentalPreparationSheet = false }
                     .buttonStyle(.borderedProminent)
             }
@@ -1707,6 +2017,22 @@ struct ResultView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if state.hasRescueInputContext {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(
+                            "救済DICOMから作成した参考用3Dプレビュー",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                        Text("確認済みの救済入力です。元のCTを置き換えるものではなく、診断・計測には使用しないでください。")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
                 if state.resultOutcome == .failure {
                     Text("3Dプレビューを作成できませんでした")
                         .font(.title2.weight(.semibold))
@@ -1729,6 +2055,12 @@ struct ResultView: View {
                             Label("詳細ログを見る", systemImage: "terminal")
                         }
                         .buttonStyle(.bordered)
+                        Button {
+                            state.openErrorReportForm()
+                        } label: {
+                            Label("エラー情報をコピーして相談フォームを開く", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.borderedProminent)
                         Spacer()
                     }
                     navigationActions
@@ -1764,6 +2096,12 @@ struct ResultView: View {
                                     state.showDetailedLog()
                                 } label: {
                                     Label("詳細ログを見る", systemImage: "terminal")
+                                }
+                                .buttonStyle(.bordered)
+                                Button {
+                                    state.openErrorReportForm()
+                                } label: {
+                                    Label("エラー情報をコピーして相談フォームを開く", systemImage: "arrow.up.right.square")
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -1854,12 +2192,23 @@ struct ResultView: View {
                                 : .secondary
                         )
                     if state.stlGenerationStatus == "failed" {
-                        Button {
-                            state.openSTLGenerationLog()
-                        } label: {
-                            Label("STL生成ログを開く", systemImage: "doc.text")
+                        HStack {
+                            Button {
+                                state.openSTLGenerationLog()
+                            } label: {
+                                Label("STL生成ログを開く", systemImage: "doc.text")
+                            }
+                            .buttonStyle(.bordered)
+                            Button {
+                                state.openSTLGenerationErrorReportForm()
+                            } label: {
+                                Label(
+                                    "エラー情報をコピーして相談フォームを開く",
+                                    systemImage: "exclamationmark.bubble"
+                                )
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                     if !state.resultLocationItems.isEmpty {
                         DisclosureGroup("保存されたファイル") {
@@ -2067,7 +2416,16 @@ struct LogSheetView: View {
                         Label("エラー情報をコピー", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.borderedProminent)
+                    Button {
+                        state.openErrorReportForm()
+                    } label: {
+                        Label("エラー情報をコピーして相談フォームを開く", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.bordered)
                 }
+                Text("詳細ログにはローカルパスや入力ファイル名が含まれる場合があります。相談フォームには貼り付けず、失敗時は「エラー情報をコピー」を使用してください。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                 HStack {
                     Button {
                         NSPasteboard.general.clearContents()

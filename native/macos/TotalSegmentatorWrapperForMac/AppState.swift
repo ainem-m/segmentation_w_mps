@@ -1,15 +1,41 @@
 import Foundation
 import AppKit
 import Combine
+import CoreFoundation
 import Dispatch
 import CryptoKit
+import UniformTypeIdentifiers
+import Darwin
 
 let LOG_TAIL_BYTES = 64 * 1024
+let MAX_UPDATE_DMG_BYTES: Int64 = 4 * 1024 * 1024 * 1024
+
+private let dentalSegmentatorArchiveSHA256 = "bc5510cc93bc2100ab1faccb63512e09c1ca326c738b0a9939c074d82b38a4ac"
+private let dentalSegmentatorSHA256Provenance = "locally-observed official asset verified against publisher MD5"
+private let dentalSegmentatorRuntimeRelativePaths = [
+    "nnUNetTrainer__nnUNetPlans__3d_fullres/dataset.json",
+    "nnUNetTrainer__nnUNetPlans__3d_fullres/plans.json",
+    "nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_final.pth",
+]
+private let toothSegDatasetIDs = ["121", "123"]
+private let toothSegDatasetNames = [
+    "Dataset121_ToothFairy2_Teeth",
+    "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px",
+]
+private let toothSegRuntimeRelativePaths = [
+    "Dataset121_ToothFairy2_Teeth/nnUNetTrainer_onlyMirror01_DASegOrd0__nnUNetPlans__3d_fullres_resample_torch_256_bs8_ctnorm/dataset.json",
+    "Dataset121_ToothFairy2_Teeth/nnUNetTrainer_onlyMirror01_DASegOrd0__nnUNetPlans__3d_fullres_resample_torch_256_bs8_ctnorm/plans.json",
+    "Dataset121_ToothFairy2_Teeth/nnUNetTrainer_onlyMirror01_DASegOrd0__nnUNetPlans__3d_fullres_resample_torch_256_bs8_ctnorm/fold_5/checkpoint_final.pth",
+    "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px/nnUNetTrainer__nnUNetPlans__3d_fullres_resample_torch_192_bs8_ctnorm/dataset.json",
+    "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px/nnUNetTrainer__nnUNetPlans__3d_fullres_resample_torch_192_bs8_ctnorm/plans.json",
+    "Dataset123_ToothFairy2fixed_teeth_spacing02_brd3px/nnUNetTrainer__nnUNetPlans__3d_fullres_resample_torch_192_bs8_ctnorm/fold_5/checkpoint_final.pth",
+]
 
 enum AppScreen {
     case setup
     case start
     case inputAndCreation
+    case iosMesh
     case running
     case dicomRescue
     case ctPreview
@@ -90,6 +116,460 @@ enum ResultOutcome: Equatable {
 enum ModelPreparationPurpose: Equatable {
     case creationSelection
     case toothSegRefine
+}
+
+enum IOSMeshJaw: String, CaseIterable, Identifiable {
+    case upper
+    case lower
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .upper: return "上顎"
+        case .lower: return "下顎"
+        }
+    }
+}
+
+struct IOSMeshModelPreparationFailure {
+    let code: String
+    let reason: String
+    let statusText: String
+}
+
+func iosMeshModelPreparationFailure(for sourceCode: String?) -> IOSMeshModelPreparationFailure {
+    switch sourceCode {
+    case "model_download_failed":
+        return IOSMeshModelPreparationFailure(
+            code: "ios_mesh_model_download_failed",
+            reason: "The MeshSegNet model download did not complete.",
+            statusText: "MeshSegNetモデルを取得できませんでした。ネットワーク状態を確認して再試行してください。"
+        )
+    case "model_integrity_failed":
+        return IOSMeshModelPreparationFailure(
+            code: "ios_mesh_model_integrity_failed",
+            reason: "The MeshSegNet model failed integrity verification.",
+            statusText: "MeshSegNetモデルの完全性を確認できませんでした。もう一度実行して再取得してください。"
+        )
+    case "model_prepare_busy":
+        return IOSMeshModelPreparationFailure(
+            code: "ios_mesh_model_prepare_busy",
+            reason: "MeshSegNet model preparation is already running.",
+            statusText: "MeshSegNetモデルを別の処理で準備中です。しばらく待ってから再試行してください。"
+        )
+    default:
+        return IOSMeshModelPreparationFailure(
+            code: "ios_mesh_model_prepare_failed",
+            reason: "The MeshSegNet model preparation did not complete.",
+            statusText: "MeshSegNetモデルを準備できませんでした。詳細ログを確認してください。"
+        )
+    }
+}
+
+struct SafeRunResultFields: Equatable {
+    let errorCode: String
+    let reason: String
+    let mpsState: String
+    let occurredAt: String
+    let runAttemptID: String
+    let failedStage: String
+    let specificCause: String
+    let retryable: String
+    let recoveryHintCode: String
+    let diagnosticLogKind: String
+    let diagnosticLogReference: String
+    let backendVersion: String
+    let modelVersion: String
+    let runtimePythonVersion: String
+    let runtimeTorchVersion: String
+    let inputKind: String
+    let inputSizeBucket: String
+    let actualDevice: String
+    let fallbackUsed: String
+}
+
+private let safeRunResultSchema = "totalsegmentator_wrapper_mac.safe_run_result.v1"
+private let safeRunResultStatuses: Set<String> = ["success", "failed"]
+
+func isCurrentSafeRunResultPayload(
+    _ payload: [String: Any],
+    expectedRunAttemptID: String
+) -> Bool {
+    guard payload["schema"] as? String == safeRunResultSchema,
+          let status = payload["status"] as? String,
+          safeRunResultStatuses.contains(status),
+          let canonicalExpectedAttemptID = safeRunAttemptID(expectedRunAttemptID),
+          canonicalExpectedAttemptID == expectedRunAttemptID,
+          let suppliedAttemptID = payload["run_attempt_id"] as? String,
+          suppliedAttemptID == canonicalExpectedAttemptID else {
+        return false
+    }
+    return true
+}
+
+func safeRunResultFields(from payload: [String: Any]) -> SafeRunResultFields {
+    let rawCode = payload["error_code"] as? String
+    let code = rawCode.flatMap { $0.isEmpty ? nil : canonicalSafeErrorCode($0) } ?? ""
+    let runAttemptID = safeRunAttemptID(payload["run_attempt_id"]) ?? ""
+    let rawDiagnosticReference = safeRunAttemptID(payload["diagnostic_log_reference"])
+    let matchingDiagnosticReference = rawDiagnosticReference == runAttemptID ? runAttemptID : ""
+    let diagnosticKind = matchingDiagnosticReference.isEmpty
+        ? "none"
+        : safeRunDiagnosticToken(
+            payload["diagnostic_log_kind"],
+            allowed: ["local_engineering_diagnostic"],
+            fallback: "none"
+        )
+    let diagnosticReference = diagnosticKind == "local_engineering_diagnostic"
+        ? matchingDiagnosticReference
+        : ""
+    return SafeRunResultFields(
+        errorCode: code,
+        reason: code.isEmpty ? "" : safeReasonForErrorCode(code),
+        mpsState: safeMPSDiagnosticState(payload["mps_state"] as? String),
+        occurredAt: canonicalDiagnosticTimestamp(payload["occurred_at"] as? String) ?? "",
+        runAttemptID: runAttemptID,
+        failedStage: safeRunDiagnosticToken(
+            payload["failed_stage"],
+            allowed: [
+                "backend_launch", "backend_inference", "preflight_execution_profile",
+                "preflight_mps_validation", "preflight_model_validation", "preflight_unknown",
+            ],
+            fallback: "unknown"
+        ),
+        specificCause: safeRunDiagnosticToken(
+            payload["specific_cause"],
+            allowed: [
+                "backend_process_exited_nonzero", "backend_process_launch_failed",
+                "mps_requirement_not_met", "mps_validation_failed",
+                "model_preparation_required", "setup_weights_validation_failed",
+                "preflight_validation_failed",
+            ],
+            fallback: "unknown"
+        ),
+        retryable: safeRunDiagnosticBool(payload["retryable"]),
+        recoveryHintCode: safeRunDiagnosticToken(
+            payload["recovery_hint_code"],
+            allowed: [
+                "review_local_log_then_retry", "select_mps_then_retry",
+                "restore_mps_then_retry", "prepare_model_then_retry",
+                "rerun_setup_then_retry", "review_setup_then_retry",
+            ],
+            fallback: "unknown"
+        ),
+        diagnosticLogKind: diagnosticKind,
+        diagnosticLogReference: diagnosticReference,
+        backendVersion: safeRunDiagnosticToken(
+            payload["backend_version"],
+            allowed: ["2.14.0", "unknown"],
+            fallback: "unknown"
+        ),
+        modelVersion: safeRunDiagnosticToken(
+            payload["model_version"],
+            allowed: ["2.14.0", "unknown"],
+            fallback: "unknown"
+        ),
+        runtimePythonVersion: safeRunDiagnosticToken(
+            payload["runtime_python_version"],
+            allowed: ["3.12", "unknown"],
+            fallback: "unknown"
+        ),
+        runtimeTorchVersion: safeRunDiagnosticToken(
+            payload["runtime_torch_version"],
+            allowed: ["2.12.0", "unknown"],
+            fallback: "unknown"
+        ),
+        inputKind: safeRunDiagnosticToken(
+            payload["input_kind"],
+            allowed: ["nifti", "unknown"],
+            fallback: "unknown"
+        ),
+        inputSizeBucket: safeRunDiagnosticToken(
+            payload["input_size_bucket"],
+            allowed: ["lt_10_mib", "10_to_100_mib", "100_to_500_mib", "ge_500_mib", "unknown"],
+            fallback: "unknown"
+        ),
+        actualDevice: safeRunDiagnosticToken(
+            payload["actual_device"],
+            allowed: ["cpu", "mps", "unknown"],
+            fallback: "unknown"
+        ),
+        fallbackUsed: safeRunDiagnosticBool(payload["fallback_used"])
+    )
+}
+
+private func safeRunAttemptID(_ value: Any?) -> String? {
+    guard let string = value as? String,
+          UUID(uuidString: string) != nil else {
+        return nil
+    }
+    return string.lowercased()
+}
+
+private func safeRunDiagnosticToken(
+    _ value: Any?,
+    allowed: Set<String>,
+    fallback: String
+) -> String {
+    guard let string = value as? String,
+          isSafeDiagnosticToken(string),
+          allowed.contains(string) else {
+        return fallback
+    }
+    return string
+}
+
+private func safeRunDiagnosticBool(_ value: Any?) -> String {
+    if let value = value as? Bool {
+        return value ? "true" : "false"
+    }
+    if let value = value as? String,
+       value == "true" || value == "false" {
+        return value
+    }
+    return "unknown"
+}
+
+func safeRunErrorReportText(
+    fields: SafeRunResultFields,
+    appVersion: String,
+    osVersion: String,
+    architecture: String,
+    feature: String,
+    fallbackInputKind: String,
+    timestamp: String
+) -> String {
+    // The AppState call site normally supplies fields that have already passed
+    // safeRunResultFields. Normalize again here so this shared text formatter
+    // remains a one-way boundary even when future callers construct fields.
+    let safeFields = safeRunResultFields(from: [
+        "error_code": fields.errorCode.isEmpty ? "operation_failed" : fields.errorCode,
+        "mps_state": fields.mpsState,
+        "occurred_at": fields.occurredAt,
+        "run_attempt_id": fields.runAttemptID,
+        "failed_stage": fields.failedStage,
+        "specific_cause": fields.specificCause,
+        "retryable": fields.retryable,
+        "recovery_hint_code": fields.recoveryHintCode,
+        "diagnostic_log_kind": fields.diagnosticLogKind,
+        "diagnostic_log_reference": fields.diagnosticLogReference,
+        "backend_version": fields.backendVersion,
+        "model_version": fields.modelVersion,
+        "runtime_python_version": fields.runtimePythonVersion,
+        "runtime_torch_version": fields.runtimeTorchVersion,
+        "input_kind": fields.inputKind,
+        "input_size_bucket": fields.inputSizeBucket,
+        "actual_device": fields.actualDevice,
+        "fallback_used": fields.fallbackUsed,
+    ])
+    let safeFeatures: Set<String> = [
+        "DentalSegmentator（実験的）", "ToothSeg（個別歯・実験的）",
+        "ToothSeg高精細化", "口腔内スキャン（PLY/STL）",
+        "歯列と顎骨の3Dプレビュー", "歯を1本ずつ分ける（ベータ）",
+    ]
+    let safeInputKinds: Set<String> = [
+        "dicom", "dicom_rescue", "ios_mesh", "nifti", "sample", "unknown",
+    ]
+    let safeFeature = safeFeatures.contains(feature) ? feature : "unknown"
+    let safeFallbackInputKind = safeInputKinds.contains(fallbackInputKind)
+        ? fallbackInputKind
+        : "unknown"
+    let safeInputKind = safeFields.inputKind == "unknown"
+        ? safeFallbackInputKind
+        : safeFields.inputKind
+    let safeTimestamp = canonicalDiagnosticTimestamp(timestamp)
+        ?? ISO8601DateFormatter().string(from: Date())
+    let safeOSVersion = safeSystemDiagnosticValue(osVersion)
+    let lines = [
+        "report_schema=totalsegmentator_wrapper_mac.safe_error_report.v1",
+        "app_version=\(isSafeDiagnosticToken(appVersion) ? appVersion : "unknown")",
+        "os_version=\(safeOSVersion)",
+        "architecture=\(architecture == "arm64" || architecture == "x86_64" ? architecture : "unknown")",
+        "feature=\(safeFeature)",
+        "input_kind=\(safeInputKind)",
+        "run_attempt_id=\(safeFields.runAttemptID.isEmpty ? "unknown" : safeFields.runAttemptID)",
+        "failed_stage=\(safeFields.failedStage)",
+        "specific_cause=\(safeFields.specificCause)",
+        "mps_state=\(safeFields.mpsState)",
+        "actual_device=\(safeFields.actualDevice)",
+        "fallback_used=\(safeFields.fallbackUsed)",
+        "reason=\(safeFields.reason)",
+        "timestamp=\(safeTimestamp)",
+        "error_code=\(safeFields.errorCode)",
+        "retryable=\(safeFields.retryable)",
+        "recovery_hint_code=\(safeFields.recoveryHintCode)",
+        "diagnostic_log_kind=\(safeFields.diagnosticLogKind)",
+        "diagnostic_log_reference=\(safeFields.diagnosticLogReference.isEmpty ? "none" : safeFields.diagnosticLogReference)",
+        "backend_version=\(safeFields.backendVersion)",
+        "model_version=\(safeFields.modelVersion)",
+        "runtime_python_version=\(safeFields.runtimePythonVersion)",
+        "runtime_torch_version=\(safeFields.runtimeTorchVersion)",
+        "input_size_bucket=\(safeFields.inputSizeBucket)",
+    ]
+    return lines.joined(separator: "\n")
+}
+
+private func safeSystemDiagnosticValue(_ value: String) -> String {
+    guard !value.isEmpty,
+          value.count <= 80,
+          !value.contains("\n"),
+          !value.contains("\r"),
+          value.unicodeScalars.allSatisfy({ scalar in
+              CharacterSet.letters.contains(scalar)
+                  || CharacterSet.decimalDigits.contains(scalar)
+                  || CharacterSet(charactersIn: " .()_-").contains(scalar)
+          }) else {
+        return "unknown"
+    }
+    return value
+}
+
+private func canonicalSafeErrorCode(_ rawCode: String?) -> String {
+    guard let rawCode,
+          isSafeDiagnosticToken(rawCode),
+          knownSafeErrorReason(rawCode) != nil else {
+        return "operation_failed"
+    }
+    return rawCode
+}
+
+private func safeReasonForErrorCode(_ code: String) -> String {
+    knownSafeErrorReason(code) ?? "The requested operation did not complete."
+}
+
+private func knownSafeErrorReason(_ code: String) -> String? {
+    switch code {
+    case "operation_failed":
+        return "The requested operation did not complete."
+    case "runner_failed":
+        return "The segmentation run did not complete."
+    case "mps_required":
+        return "This app execution profile requires MPS."
+    case "mps_unavailable":
+        return "MPS validation did not pass for this app run."
+    case "totalseg_setup_weights_missing_or_invalid":
+        return "The app setup models are missing or failed validation."
+    case "insufficient_disk_space":
+        return "Model preparation could not continue because available disk space is insufficient."
+    case "dentalseg_prepare_required":
+        return "Prepare the DentalSegmentator model before starting an app-profile run."
+    case "toothseg_prepare_required":
+        return "Prepare the ToothSeg model before starting an app-profile run."
+    case "backend_failed":
+        return "The segmentation backend did not complete."
+    case "totalseg_backend_nonzero_exit":
+        return "The TotalSegmentator backend exited without completing the requested inference."
+    case "totalseg_backend_launch_failed":
+        return "The TotalSegmentator backend could not start."
+    case "dentalseg_failed":
+        return "DentalSegmentator did not complete."
+    case "toothseg_failed":
+        return "ToothSeg did not complete."
+    case "toothseg_mps_oom":
+        return "ToothSeg exceeded available MPS memory after dental ROI preparation."
+    case "toothseg_input_invalid":
+        return "ToothSeg could not create a valid dental ROI from the existing teeth result."
+    case "toothseg_download_failed":
+        return "The ToothSeg model download did not complete."
+    case "cancelled":
+        return "The operation was cancelled before completion."
+    case "preview_generation_failed":
+        return "The 3D preview could not be generated."
+    case "preview_generation_cancelled":
+        return "The 3D preview generation was cancelled."
+    case "toothseg_refine_failed":
+        return "The high-resolution ToothSeg refinement did not complete."
+    case "toothseg_refine_cancelled":
+        return "The ToothSeg high-resolution run was cancelled."
+    case "toothseg_model_preparation_failed":
+        return "ToothSeg model preparation did not complete."
+    case "dentalseg_model_preparation_failed":
+        return "DentalSegmentator model preparation did not complete."
+    case "dicom_audit_failed":
+        return "The CT data could not be prepared for preview."
+    case "dicom_audit_cancelled":
+        return "The CT data check was cancelled."
+    case "dicom_conversion_failed":
+        return "The CT data could not be converted."
+    case "dicom_conversion_cancelled":
+        return "The CT conversion was cancelled."
+    case "viewer_export_failed":
+        return "The CT slice data could not be prepared."
+    case "viewer_export_cancelled":
+        return "The CT slice preparation was cancelled."
+    case "stl_generation_failed":
+        return "STL generation did not complete."
+    case "ios_mesh_cancelled":
+        return "The intraoral mesh run was cancelled."
+    case "ios_mesh_inference_failed":
+        return "The intraoral mesh run did not produce tooth STL files on strict MPS."
+    case "ios_mesh_model_download_failed":
+        return "The MeshSegNet model download did not complete."
+    case "ios_mesh_model_integrity_failed":
+        return "The MeshSegNet model failed integrity verification."
+    case "ios_mesh_model_prepare_busy":
+        return "MeshSegNet model preparation is already running."
+    case "ios_mesh_model_prepare_failed":
+        return "The MeshSegNet model preparation did not complete."
+    default:
+        return nil
+    }
+}
+
+private func safeMPSDiagnosticState(_ rawState: String?) -> String {
+    let allowed: Set<String> = [
+        "cpu", "failed_or_unknown", "not_applicable", "not_required",
+        "required", "unavailable", "unknown", "validated",
+    ]
+    guard let rawState,
+          isSafeDiagnosticToken(rawState),
+          allowed.contains(rawState) else {
+        return "unknown"
+    }
+    return rawState
+}
+
+private func canonicalDiagnosticTimestamp(_ rawTimestamp: String?) -> String? {
+    guard let rawTimestamp,
+          rawTimestamp.count <= 40,
+          !rawTimestamp.contains("\n"),
+          !rawTimestamp.contains("\r") else {
+        return nil
+    }
+    let options: [ISO8601DateFormatter.Options] = [
+        [.withInternetDateTime, .withFractionalSeconds],
+        [.withInternetDateTime],
+    ]
+    for option in options {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = option
+        if let date = parser.date(from: rawTimestamp) {
+            return ISO8601DateFormatter().string(from: date)
+        }
+    }
+    return nil
+}
+
+func safeTGNetValidationDetail(from payload: [String: Any]?) -> String {
+    guard let code = payload?["error_code"] as? String,
+          isSafeDiagnosticToken(code) else {
+        return "重みの検証処理を完了できませんでした。詳細はローカルログで確認できます。"
+    }
+    switch code {
+    case "tgnet_selection_invalid":
+        return "指定のckpts(new).zip、またはその展開済みフォルダを選択してください。"
+    case "tgnet_checkpoint_set_incomplete":
+        return "必要な2つのcheckpointが揃っていないか、配置が異なります。"
+    case "tgnet_checkpoint_hash_mismatch":
+        return "checkpointが指定の配布セットと一致しません。"
+    case "tgnet_checkpoint_archive_invalid":
+        return "ZIPを安全に展開して確認できませんでした。"
+    case "tgnet_validation_failed":
+        return "重みの検証処理を完了できませんでした。詳細はローカルログで確認できます。"
+    default:
+        return "重みの検証処理を完了できませんでした。詳細はローカルログで確認できます。"
+    }
 }
 
 enum InputSource: Equatable {
@@ -368,6 +848,18 @@ struct SecondaryCaptureRescueCandidate: Identifiable, Equatable {
     }
 }
 
+/// The only rescue-origin data that may survive into an inference result.
+///
+/// This deliberately contains fixed classification tokens and digests only.
+/// It must never contain DICOM paths, UIDs, descriptions, patient metadata, or
+/// editable raw geometry JSON.
+struct RescueInputContext: Equatable {
+    let classification: String
+    let sourceManifestSHA256: String
+    let confirmationSHA256: String
+    let transformSHA256: String
+}
+
 struct CTPreviewSlice: Identifiable, Equatable {
     let plane: String
     let label: String
@@ -402,6 +894,127 @@ struct RunLocationItem: Identifiable, Equatable {
     let exists: Bool
 }
 
+private func runtimeManifestIsStructurallyValid(
+    _ value: Any?,
+    root: URL,
+    expectedRelativePaths: [String]
+) -> Bool {
+    guard let manifest = value as? [[String: Any]], manifest.count == expectedRelativePaths.count else {
+        return false
+    }
+    var seenPaths = Set<String>()
+    let expectedKeys = Set(["path", "size_bytes", "sha256"])
+    for (index, entry) in manifest.enumerated() {
+        guard Set(entry.keys) == expectedKeys,
+              let relativePath = entry["path"] as? String,
+              runtimeRelativePathIsSafe(relativePath),
+              relativePath == expectedRelativePaths[index],
+              seenPaths.insert(relativePath).inserted,
+              let expectedSize = positiveJSONInteger(entry["size_bytes"]),
+              isCanonicalLowercaseSHA256(entry["sha256"]),
+              runtimeFileIsRegularAndMatchesSize(
+                  root: root,
+                  relativePath: relativePath,
+                  expectedSize: expectedSize
+              ) else {
+            return false
+        }
+    }
+    return seenPaths == Set(expectedRelativePaths)
+}
+
+private func runtimeRelativePathIsSafe(_ value: String) -> Bool {
+    guard !value.isEmpty, !value.hasPrefix("/"), !value.contains("\\") else {
+        return false
+    }
+    let components = value.split(separator: "/", omittingEmptySubsequences: false)
+    return !components.isEmpty && components.allSatisfy { component in
+        !component.isEmpty && component != "." && component != ".."
+    }
+}
+
+private func positiveJSONInteger(_ value: Any?) -> Int64? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID() else {
+        return nil
+    }
+    let doubleValue = number.doubleValue
+    let integerValue = number.int64Value
+    guard doubleValue.isFinite,
+          doubleValue == Double(integerValue),
+          integerValue > 0 else {
+        return nil
+    }
+    return integerValue
+}
+
+private func isCanonicalLowercaseSHA256(_ value: Any?) -> Bool {
+    guard let digest = value as? String, digest.utf8.count == 64 else {
+        return false
+    }
+    return digest.utf8.allSatisfy { byte in
+        (byte >= Character("0").asciiValue! && byte <= Character("9").asciiValue!)
+            || (byte >= Character("a").asciiValue! && byte <= Character("f").asciiValue!)
+    }
+}
+
+private func runtimeFileIsRegularAndMatchesSize(
+    root: URL,
+    relativePath: String,
+    expectedSize: Int64? = nil
+) -> Bool {
+    guard runtimeRelativePathIsSafe(relativePath) else {
+        return false
+    }
+    do {
+        let rootValues = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            return false
+        }
+        let components = relativePath.split(separator: "/").map(String.init)
+        var current = root
+        for (index, component) in components.enumerated() {
+            let isFinal = index == components.count - 1
+            current.appendPathComponent(component, isDirectory: !isFinal)
+            let values = try current.resourceValues(
+                forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+            )
+            guard values.isSymbolicLink != true else {
+                return false
+            }
+            if isFinal {
+                guard values.isRegularFile == true,
+                      let actualSize = values.fileSize,
+                      actualSize > 0,
+                      expectedSize == nil || Int64(actualSize) == expectedSize else {
+                    return false
+                }
+            } else if values.isDirectory != true {
+                return false
+            }
+        }
+        return true
+    } catch {
+        return false
+    }
+}
+
+private func markerHasValidDentalArchiveProvenance(_ marker: [String: Any]) -> Bool {
+    guard let legacyMigrated = marker["legacy_marker_migrated"] as? Bool else {
+        return false
+    }
+    if legacyMigrated {
+        return (marker["archive_sha256"] == nil || marker["archive_sha256"] is NSNull)
+            && (marker["sha256_provenance"] == nil || marker["sha256_provenance"] is NSNull)
+            && marker["archive_md5_verified"] as? Bool == false
+            && marker["archive_sha256_verified"] as? Bool == false
+    }
+    return marker["archive_md5_verified"] as? Bool == true
+        && marker["archive_sha256"] as? String == dentalSegmentatorArchiveSHA256
+        && marker["archive_sha256_verified"] as? Bool == true
+        && marker["sha256_provenance"] as? String == dentalSegmentatorSHA256Provenance
+}
+
 private enum UserSettingKey {
     static let creationChoice = "\(appSupportName).creationChoice"
     static let runMode = "\(appSupportName).runMode"
@@ -415,6 +1028,7 @@ final class AppState: ObservableObject {
     let paths: AppPaths
     private let runner = ProcessRunner()
     private let dentalPreparationRunner = ProcessRunner()
+    private let tgnetValidationRunner = ProcessRunner()
     private var logTimer: Timer?
     private var dentalPreparationTimer: Timer?
     private var stlStatusTimer: Timer?
@@ -424,11 +1038,18 @@ final class AppState: ObservableObject {
     private var activeLogURL: URL?
     private var resultLogURL: URL?
     var lastDicomDirURL: URL?
+    private var lastDicomAuditJSONURL: URL?
     private var lastRunProgressAt: Date?
     private var lastRunProgressSignature = ""
     private var rescueCalibrationRecords: [[String: Any]] = []
     private var rescuePreparationCancellationRequested = false
     private var rescuePreviewWorkItem: DispatchWorkItem?
+    private var rescueInputContext: RescueInputContext?
+    private var setupAttemptID = UUID().uuidString.lowercased()
+    private var runAttemptID = UUID().uuidString.lowercased()
+    private var setupFailureOccurredAt = ""
+    private var setupReturnCode: Int?
+    private var lastSetupStage = SetupStep.idle.rawValue
 
     @Published var screen: AppScreen = .setup
     @Published var selectedStep = 0
@@ -438,6 +1059,7 @@ final class AppState: ObservableObject {
     @Published var setupElapsed = "経過時間: 0秒"
     @Published var setupMessage = "管理者権限は不要です。App Support配下にだけ書き込みます。"
     @Published var setupError = ""
+    @Published var setupDownloadProgress: SetupDownloadProgress?
 
     @Published var logText = ""
     @Published var logInfoText = "詳細ログは最後の一部だけ表示します。全文はログファイルで確認できます。"
@@ -446,6 +1068,7 @@ final class AppState: ObservableObject {
     @Published var showDentalPreparationConfirmation = false
     @Published var showDentalPreparationSheet = false
     @Published var dentalPreparationRunning = false
+    @Published var dentalPreparationFailed = false
     @Published var dentalPreparationElapsed = "経過時間: 0秒"
     @Published var dentalPreparationMessage = "DentalSegmentatorのモデルを準備します。"
     @Published var dentalPreparationFraction: Double?
@@ -456,6 +1079,32 @@ final class AppState: ObservableObject {
 
     @Published var inputURL: URL?
     @Published var inputSource: InputSource = .none
+    @Published var iosMeshJaw: IOSMeshJaw = .upper {
+        didSet {
+            guard oldValue != iosMeshJaw else { return }
+            iosMeshInputURL = nil
+            iosMeshOutputURL = nil
+            iosMeshSucceeded = false
+            iosMeshToothCount = 0
+            iosMeshDownloadProgress = nil
+            iosMeshGingivaPresent = nil
+            selectedStep = 1
+            iosMeshStatus = "\(iosMeshJaw.displayName)のPLYまたはSTLを選択してください。"
+        }
+    }
+    @Published var iosMeshInputURL: URL?
+    @Published var iosMeshCustomModelURL: URL?
+    @Published var iosMeshOutputURL: URL?
+    @Published var iosMeshRunning = false
+    @Published var iosMeshStatus = "上顎のPLYまたはSTLを選択してください。"
+    @Published var iosMeshSucceeded = false
+    @Published var iosMeshToothCount = 0
+    @Published var iosMeshDownloadProgress: SetupDownloadProgress?
+    @Published var iosMeshGingivaPresent: Bool?
+    @Published var iosMeshTGNetValidationRunning = false
+    @Published var iosMeshTGNetValidationError = ""
+    @Published var iosMeshTGNetValidationDetail = ""
+    private var iosMeshPreparingModel = false
     @Published var creationChoice: CreationChoice = .standardArchJaw {
         didSet {
             runMode = creationChoice.runMode
@@ -499,6 +1148,21 @@ final class AppState: ObservableObject {
     @Published var safeErrorReason = ""
     @Published var safeMPSState = "unknown"
     @Published var safeErrorOccurredAt = ""
+    private var safeRunAttemptID = ""
+    private var safeRunFailedStage = "unknown"
+    private var safeRunSpecificCause = "unknown"
+    private var safeRunRetryable = "unknown"
+    private var safeRunRecoveryHintCode = "unknown"
+    private var safeRunDiagnosticLogKind = "none"
+    private var safeRunDiagnosticLogReference = ""
+    private var safeRunBackendVersion = "unknown"
+    private var safeRunModelVersion = "unknown"
+    private var safeRunRuntimePythonVersion = "unknown"
+    private var safeRunRuntimeTorchVersion = "unknown"
+    private var safeRunInputKind = "unknown"
+    private var safeRunInputSizeBucket = "unknown"
+    private var safeRunActualDevice = "unknown"
+    private var safeRunFallbackUsed = "unknown"
     @Published var activeRunBackend: SegmentationBackend = .totalSegmentator
     @Published var activeRunMode: RunMode = .archPreview
     @Published var activeRunDevice = "mps"
@@ -574,13 +1238,24 @@ final class AppState: ObservableObject {
     @Published var pendingDownloadURL: URL?
     @Published var pendingUpdateVersion = ""
     @Published var pendingUpdateSHA256 = ""
+    @Published var pendingUpdateFileSizeBytes: Int?
     @Published var showingUpdateConfirmation = false
     @Published var updateCheckRunning = false
     @Published var updateInstallRunning = false
+    @Published var updateInstallProgressFraction: Double?
+    @Published var updateInstallProgressText = ""
     @Published private(set) var uiPreviewScenario = ""
+    private var pendingUpdateAllowedHosts: [String] = []
+    private var pendingUpdateManifestURL: URL?
+    private var updateDownloadTask: URLSessionDownloadTask?
+    private var updateDownloadProgressObservation: NSKeyValueObservation?
 
     var isUIPreviewMode: Bool {
         !uiPreviewScenario.isEmpty
+    }
+
+    var hasRescueInputContext: Bool {
+        rescueInputContext != nil
     }
 
     var retryButtonTitle: String {
@@ -709,16 +1384,31 @@ final class AppState: ObservableObject {
         return ""
     }
 
+    var showsDentalPreparationFailureActions: Bool {
+        dentalPreparationFailed && !dentalPreparationRunning
+    }
+
     var isDentalSegmentatorModelReady: Bool {
         guard let marker = readJSON(paths.dentalsegReadyMarker) else {
             return false
         }
-        return marker["schema"] as? String == "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1"
+        guard marker["schema"] as? String == "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1"
             && marker["model_state"] as? String == "ready"
             && marker["expected_md5"] as? String == dentalsegExpectedMD5
             && marker["dataset_id"] as? String == "112"
             && marker["dataset_name"] as? String == "Dataset112_DentalSegmentator_v100"
-            && FileManager.default.fileExists(atPath: paths.dentalsegInstalledModel.path)
+            && markerHasValidDentalArchiveProvenance(marker) else {
+            return false
+        }
+        // This SwiftUI-facing check intentionally validates the signed marker structure,
+        // safe regular-file paths, and sizes without hashing multi-GB checkpoints during
+        // view recomputation. Python's strict preflight remains the final content-hash and
+        // checkpoint ZIP/CRC authority before inference.
+        return runtimeManifestIsStructurallyValid(
+            marker["runtime_files"],
+            root: paths.dentalsegReadyMarker.deletingLastPathComponent(),
+            expectedRelativePaths: dentalSegmentatorRuntimeRelativePaths
+        )
     }
 
     var dentalSegmentatorModelStatusText: String {
@@ -735,14 +1425,27 @@ final class AppState: ObservableObject {
         guard let marker = readJSON(paths.toothsegReadyMarker) else {
             return false
         }
-        return marker["schema"] as? String == "totalsegmentator_wrapper_mac.toothseg_model_status.v1"
+        guard marker["schema"] as? String == "totalsegmentator_wrapper_mac.toothseg_model_status.v1"
             && marker["model_state"] as? String == "ready"
             && marker["expected_md5"] as? String == toothsegExpectedMD5
             && marker["pair_distributions_sha256"] as? String == toothsegPairDistributionsSHA256
             && marker["semantic_mps_patch_size"] as? [Int] == toothsegSemanticMPSPatchSize
-            && FileManager.default.fileExists(atPath: paths.toothsegSemanticModel.path)
-            && FileManager.default.fileExists(atPath: paths.toothsegInstanceModel.path)
-            && FileManager.default.fileExists(atPath: paths.toothsegPairDistributions.path)
+            && marker["dataset_ids"] as? [String] == toothSegDatasetIDs
+            && marker["dataset_names"] as? [String] == toothSegDatasetNames
+            && runtimeFileIsRegularAndMatchesSize(
+                root: paths.toothsegRoot,
+                relativePath: "fdi_pair_distrs.json"
+            ) else {
+            return false
+        }
+        // Content digests and semantic-plan contents are verified by Python's strict
+        // preflight. Keeping large-file hashing out of this computed property prevents
+        // SwiftUI refreshes from blocking on checkpoint I/O.
+        return runtimeManifestIsStructurallyValid(
+            marker["runtime_files"],
+            root: paths.toothsegResults,
+            expectedRelativePaths: toothSegRuntimeRelativePaths
+        )
     }
 
     var toothSegModelStatusText: String {
@@ -1079,7 +1782,184 @@ final class AppState: ObservableObject {
     var setupRecoveryText: String {
         guard !setupError.isEmpty else { return "" }
         let reason = readJSON(paths.stateJSON)?["reason"] as? String
+        if reason == "app_running_from_disk_image" {
+            return "DMGや外部ボリューム内から直接実行せず、アプリをApplicationsまたは~/Applicationsへコピーし、コピー先から開き直してセットアップしてください。"
+        }
         return setupRecoverySuggestion(reason)
+    }
+
+    private func setupErrorText(for reason: String?) -> String {
+        if reason == "app_running_from_disk_image" {
+            return "DMGや外部ボリューム内からアプリを直接実行しているため、セットアップを開始できません。"
+        }
+        return setupReasonToJapanese(reason)
+    }
+
+    var safeSetupErrorCopyText: String {
+        let state = readJSON(paths.stateJSON) ?? [:]
+        let stateIsCurrentFailure = safeSetupString(state["status"]) == "failed"
+        let appVersion = currentAppVersion()
+        let occurredAt = setupFailureOccurredAt.isEmpty
+            ? ISO8601DateFormatter().string(from: Date())
+            : setupFailureOccurredAt
+        let reasonCode = safeSetupReasonCode(from: state)
+        let reportedAttemptID = (stateIsCurrentFailure
+            ? safeSetupAttemptID(state["setup_attempt_id"])
+            : nil)
+            ?? setupAttemptID
+        let reportedReturnCode = (stateIsCurrentFailure
+            ? jsonInt(state["return_code"])
+            : nil)
+            ?? setupReturnCode
+        var lines = [
+            "report_schema=totalsegmentator_wrapper_mac.safe_setup_error_report.v1",
+            "app_version=\(isSafeDiagnosticToken(appVersion) ? appVersion : "unknown")",
+            "os_version=\(ProcessInfo.processInfo.operatingSystemVersionString)",
+            "architecture=\(currentArchitectureName())",
+            "feature=setup",
+            "setup_stage=\(safeSetupStage(from: state))",
+            "reason_code=\(reasonCode)",
+            "timestamp=\(occurredAt)",
+            "setup_attempt_id=\(reportedAttemptID)",
+            "retryable=\(setupRetryableState(for: reasonCode))",
+            "recovery_hint_code=\(setupRecoveryHintCode(for: reasonCode))",
+            "diagnostic_log_kind=local_setup_log",
+            "diagnostic_log_reference=\(reportedAttemptID)",
+        ]
+        if let reportedReturnCode {
+            lines.append("return_code=\(reportedReturnCode)")
+        }
+        if let pythonVersion = safeSetupString(state["python_version"]) {
+            lines.append("python_version=\(pythonVersion)")
+        }
+        if let installedBundle = state["installed_bundle"] as? [String: Any] {
+            if let dependencySetID = safeSetupString(installedBundle["dependency_set_id"]) {
+                lines.append("dependency_set_id=\(dependencySetID)")
+            }
+            if let buildID = safeSetupString(installedBundle["build_id"]) {
+                lines.append("build_id=\(buildID)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func safeSetupString(_ value: Any?) -> String? {
+        guard let string = value as? String,
+              isSafeDiagnosticToken(string) else {
+            return nil
+        }
+        return string
+    }
+
+    private func safeSetupReasonCode(from state: [String: Any]) -> String {
+        let allowedReasonCodes: Set<String> = [
+            "app_running_from_disk_image", "bundle_manifest_invalid",
+            "bundled_wheel_invalid", "bundled_wheel_install_failed",
+            "constraints_missing", "dentalseg_weights_download_failed",
+            "dependency_build_failed", "dependency_distribution_unavailable",
+            "dependency_network_failed", "dependency_resolution_failed",
+            "dependency_consistency_failed",
+            "dependency_set_id_changed", "constraints_sha256_changed",
+            "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed",
+            "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed",
+            "insufficient_disk_space", "installed_package_missing_or_invalid",
+            "installed_bundled_dependency_missing_or_invalid",
+            "legacy_setup_state", "mps_unavailable",
+            "needs_network", "normalizer_missing", "python312_missing",
+            "python_version_unsupported", "resource_only_change",
+            "runtime_install_failed", "runtime_refresh_failed", "setup_busy",
+            "setup_exception", "setup_missing", "setup_weights_missing_or_invalid",
+            "setup_weights_manifest_sha256_changed", "setup_lock_failed",
+            "totalseg_privacy_config_failed", "venv_missing",
+            "venv_python_changed", "weights_download_failed",
+            "weights_integrity_failed", "weights_manifest_incompatible",
+            "weights_setup_busy", "wheel_changed", "wheel_marker_missing_or_stale",
+            "wheel_missing", "wheel_resync",
+        ]
+        guard let reasonCode = safeSetupString(state["reason"]),
+              allowedReasonCodes.contains(reasonCode) else {
+            return "setup_failed"
+        }
+        return reasonCode
+    }
+
+    private func safeSetupAttemptID(_ value: Any?) -> String? {
+        guard let string = value as? String,
+              UUID(uuidString: string) != nil else {
+            return nil
+        }
+        return string.lowercased()
+    }
+
+    private func safeSetupStage(from state: [String: Any]) -> String {
+        let allowedStages: Set<String> = [
+            "acquire_setup_lock", "bootstrap_install", "configure_totalseg_privacy",
+            "create_app_support_dirs", "create_venv", "doctor",
+            "download_dentalseg_weights", "download_totalseg_weights",
+            "install_bundled_wheels", "install_wheel", "read_bundle_manifest",
+            "setup_exception", "sync_bundle", "validate_bundled_wheels",
+            "validate_python_312", "verify_dependencies",
+        ]
+        if let steps = state["steps"] as? [[String: Any]] {
+            for status in ["failed", "running"] {
+                if let name = steps.reversed().first(where: {
+                    safeSetupString($0["status"]) == status
+                }).flatMap({ safeSetupString($0["name"]) }),
+                   allowedStages.contains(name) {
+                    return name
+                }
+            }
+            if let name = steps.reversed().compactMap({ safeSetupString($0["name"]) })
+                .first(where: allowedStages.contains) {
+                return name
+            }
+        }
+        return isSafeDiagnosticToken(lastSetupStage) ? lastSetupStage : "setup_unknown"
+    }
+
+    private func setupRetryableState(for reasonCode: String) -> String {
+        switch reasonCode {
+        case "needs_network", "dependency_network_failed", "insufficient_disk_space",
+             "bundled_wheel_install_failed", "runtime_install_failed", "weights_download_failed",
+             "dentalseg_weights_download_failed", "setup_busy",
+             "weights_integrity_failed", "weights_setup_busy",
+             "setup_weights_missing_or_invalid",
+             "setup_weights_manifest_sha256_changed",
+             "dependency_set_id_changed", "constraints_sha256_changed",
+             "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed",
+             "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed",
+             "installed_package_missing_or_invalid",
+             "installed_bundled_dependency_missing_or_invalid",
+             "dependency_consistency_failed",
+             "venv_missing", "venv_python_changed", "setup_missing":
+            return "true"
+        case "app_running_from_disk_image":
+            return "true"
+        case "python_version_unsupported", "mps_unavailable",
+             "weights_manifest_incompatible", "bundle_manifest_invalid",
+             "bundled_wheel_invalid":
+            return "false"
+        default:
+            return "unknown"
+        }
+    }
+
+    private func setupRecoveryHintCode(for reasonCode: String) -> String {
+        switch reasonCode {
+        case "app_running_from_disk_image":
+            return "copy_to_applications_then_retry"
+        case "setup_busy", "weights_setup_busy":
+            return "wait_for_existing_setup_then_retry"
+        case "needs_network", "dependency_network_failed", "weights_download_failed",
+             "dentalseg_weights_download_failed":
+            return "restore_network_then_retry"
+        case "insufficient_disk_space":
+            return "free_disk_space_then_retry"
+        case "mps_unavailable":
+            return "restart_mac_then_retry"
+        default:
+            return "review_local_setup_log_then_retry"
+        }
     }
 
     var currentLogURL: URL {
@@ -1104,17 +1984,163 @@ final class AppState: ObservableObject {
     }
 
     var safeErrorCopyText: String {
-        let reason = safeErrorReason.isEmpty ? "The requested operation did not complete." : safeErrorReason
-        let code = safeErrorCode.isEmpty ? "operation_failed" : safeErrorCode
-        let occurredAt = safeErrorOccurredAt.isEmpty ? ISO8601DateFormatter().string(from: Date()) : safeErrorOccurredAt
-        return "app_version=\(currentAppVersion())\nfeature=\(safeErrorFeatureText)\nmps_state=\(safeMPSState)\nreason=\(reason)\ntimestamp=\(occurredAt)\nerror_code=\(code)"
+        let normalized = safeRunResultFields(from: [
+            "error_code": safeErrorCode.isEmpty ? "operation_failed" : safeErrorCode,
+            "mps_state": safeMPSState,
+            "occurred_at": safeErrorOccurredAt,
+            "run_attempt_id": safeRunAttemptID,
+            "failed_stage": safeRunFailedStage,
+            "specific_cause": safeRunSpecificCause,
+            "retryable": safeRunRetryable,
+            "recovery_hint_code": safeRunRecoveryHintCode,
+            "diagnostic_log_kind": safeRunDiagnosticLogKind,
+            "diagnostic_log_reference": safeRunDiagnosticLogReference,
+            "backend_version": safeRunBackendVersion,
+            "model_version": safeRunModelVersion,
+            "runtime_python_version": safeRunRuntimePythonVersion,
+            "runtime_torch_version": safeRunRuntimeTorchVersion,
+            "input_kind": safeRunInputKind,
+            "input_size_bucket": safeRunInputSizeBucket,
+            "actual_device": safeRunActualDevice,
+            "fallback_used": safeRunFallbackUsed,
+        ])
+        let report = safeRunErrorReportText(
+            fields: normalized,
+            appVersion: currentAppVersion(),
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            architecture: currentArchitectureName(),
+            feature: safeErrorFeatureText,
+            fallbackInputKind: safeErrorInputKind,
+            timestamp: normalized.occurredAt
+        )
+        return ([report] + safeDicomErrorCopyLines).joined(separator: "\n")
+    }
+
+    var safeDicomErrorCopyLines: [String] {
+        var lines: [String] = []
+        if let rescue = rescueInputContext {
+            // RescueInputContext is constructed from fixed tokens and canonical
+            // SHA-256 digests only; do not add any raw DICOM-derived field here.
+            lines.append("dicom_rescue=true")
+            lines.append("dicom_rescue_classification=\(rescue.classification)")
+            lines.append("dicom_rescue_source_manifest_sha256=\(rescue.sourceManifestSHA256)")
+            lines.append("dicom_rescue_confirmation_sha256=\(rescue.confirmationSHA256)")
+            lines.append("dicom_rescue_transform_sha256=\(rescue.transformSHA256)")
+        }
+        guard resultKind == .dicomAudit,
+              let auditJSON = lastDicomAuditJSONURL,
+              let payload = readJSON(auditJSON)
+        else {
+            return lines
+        }
+        if let status = payload["status"] as? String,
+           isSafeDiagnosticToken(status) {
+            lines.append("dicom_audit_status=\(status)")
+        }
+        if let reason = payload["reason"] as? String,
+           isSafeDiagnosticToken(reason) {
+            lines.append("dicom_audit_reason=\(reason)")
+        }
+        if let count = jsonInt(payload["series_count"]) {
+            lines.append("dicom_series_count=\(count)")
+        }
+        if let counts = payload["classification_counts"] as? [String: Any] {
+            let safeCounts = counts.compactMap { key, value -> String? in
+                guard isSafeDiagnosticToken(key), let count = jsonInt(value) else {
+                    return nil
+                }
+                return "\(key):\(count)"
+            }.sorted()
+            if !safeCounts.isEmpty {
+                lines.append("dicom_classification_counts=\(safeCounts.joined(separator: ","))")
+            }
+        }
+        if let causes = payload["possible_causes"] as? [String] {
+            let safeCauses = causes.filter(isSafeDiagnosticToken).sorted()
+            if !safeCauses.isEmpty {
+                lines.append("dicom_possible_causes=\(safeCauses.joined(separator: ","))")
+            }
+        }
+        return lines
+    }
+
+    var safeErrorInputKind: String {
+        let code = safeErrorCode.isEmpty ? "" : canonicalSafeErrorCode(safeErrorCode)
+        if code.hasPrefix("ios_mesh_") {
+            return "ios_mesh"
+        }
+        if rescueInputContext != nil {
+            return "dicom_rescue"
+        }
+        if resultKind == .dicomAudit || inputSource == .dicomFolder {
+            return "dicom"
+        }
+        switch inputSource {
+        case .sample:
+            return "sample"
+        case .nifti:
+            return "nifti"
+        case .none:
+            return "unknown"
+        case .dicomFolder:
+            return "dicom"
+        }
     }
 
     var safeErrorFeatureText: String {
-        if toothSegRefineFailed || safeErrorCode.hasPrefix("toothseg_") {
+        let code = safeErrorCode.isEmpty ? "" : canonicalSafeErrorCode(safeErrorCode)
+        if code.hasPrefix("ios_mesh_") {
+            return "口腔内スキャン（PLY/STL）"
+        }
+        if code.hasPrefix("dentalseg_") {
+            return "DentalSegmentator（実験的）"
+        }
+        if code == "insufficient_disk_space", dentalPreparationFailed {
+            return pendingModelPreparationChoice == .toothSegExperimental
+                ? "ToothSeg（個別歯・実験的）"
+                : "DentalSegmentator（実験的）"
+        }
+        if code == "toothseg_model_preparation_failed",
+           dentalPreparationFailed,
+           modelPreparationPurpose == .creationSelection {
+            return "ToothSeg（個別歯・実験的）"
+        }
+        if toothSegRefineFailed || code.hasPrefix("toothseg_") {
             return "ToothSeg高精細化"
         }
         return creationChoice.rawValue
+    }
+
+    var errorReportFormURL: URL {
+        URL(string: "https://forms.gle/QFPwF1Pi5C8bmSuw6")!
+    }
+
+    var tgnetCheckpointPageURL: URL {
+        URL(
+            string: "https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby?usp=sharing"
+        )!
+    }
+
+    var iosMeshUsesTGNetFinal: Bool {
+        guard let model = iosMeshCustomModelURL else {
+            return false
+        }
+        return model.hasDirectoryPath || model.pathExtension.lowercased() == "zip"
+    }
+
+    var iosMeshGingivaStatusText: String {
+        switch iosMeshGingivaPresent {
+        case true:
+            return iosMeshUsesTGNetFinal
+                ? "歯別STLとは別に、歯肉を gingiva.stl として保存しました。"
+                : "label 0の「歯肉または背景候補」を gingiva.stl として保存しました。背景を含む可能性があるため目視確認してください。"
+        case false:
+            return iosMeshUsesTGNetFinal
+                ? "この結果では歯肉領域が検出されなかったため、gingiva.stl は作成されませんでした。"
+                : "この結果ではlabel 0がなかったため、gingiva.stl は作成されませんでした。"
+        case nil:
+            return "歯肉STLの作成状況を結果JSONから確認できませんでした。出力フォルダをご確認ください。"
+        }
     }
 
     init(paths: AppPaths = .current()) {
@@ -1396,6 +2422,10 @@ final class AppState: ObservableObject {
     }
 
     func refreshLaunchState() {
+        let updateRecovery = recoverInterruptedUpdateTransaction(
+            appURL: Bundle.main.bundleURL,
+            statusURL: paths.updateInstallStatusJSON
+        )
         let status = SetupCoordinator.setupStatus(paths: paths)
         if status.action == "current" || status.action == "mark_current" {
             if status.action == "mark_current" {
@@ -1412,37 +2442,102 @@ final class AppState: ObservableObject {
         } else {
             screen = .setup
             setupMessage = "はじめの準備が必要です。準備を始めるまで通信しません。"
-            if let reason = status.state?["reason"] as? String, !reason.isEmpty {
-                setupError = setupReasonToJapanese(reason)
+            let stateReason = status.state?["reason"] as? String
+            let stateIsFailed = status.state?["status"] as? String == "failed"
+            let reason = status.reason == "setup_missing" && stateIsFailed
+                ? (stateReason ?? status.reason)
+                : status.reason
+            if !reason.isEmpty {
+                setupError = setupErrorText(for: reason)
+                setupFailureOccurredAt = ISO8601DateFormatter().string(from: Date())
             }
+        }
+        refreshUpdateInstallerStatus()
+        switch updateRecovery {
+        case .none:
+            break
+        case .preservedPreviousApp:
+            updateMessage = "更新処理が中断されました。以前のアプリはそのままです。"
+        case .finalizedInstalledApp:
+            updateMessage = "中断された更新を安全に確認して完了しました。"
+        case .manualRecoveryRequired:
+            updateMessage = "更新処理の状態を安全に確認できません。指定の配布ページからDMGを取得し、アプリを置き換えてください。"
         }
         refreshLog()
     }
 
+    private func refreshUpdateInstallerStatus() {
+        guard let payload = readJSON(paths.updateInstallStatusJSON),
+              payload["schema"] as? String
+                == "totalsegmentator_wrapper_mac.update_install_status.v1",
+              payload["status"] as? String == "failed",
+              let reason = payload["reason"] as? String
+        else {
+            return
+        }
+        let allowedReasons: Set<String> = [
+            "update_install_failed_before_replace",
+            "update_install_failed_rolled_back",
+            "update_rollback_failed",
+            "update_install_interrupted_before_swap",
+            "update_recovery_required",
+        ]
+        guard allowedReasons.contains(reason) else {
+            return
+        }
+        switch reason {
+        case "update_install_failed_rolled_back":
+            updateMessage = "更新に失敗したため、以前のアプリへ戻して再度開きました。"
+        case "update_rollback_failed":
+            updateMessage = "更新に失敗し、以前のアプリへ自動で戻せませんでした。Applicationsフォルダを確認してください。"
+        case "update_install_interrupted_before_swap":
+            updateMessage = "更新処理が中断されました。以前のアプリはそのままです。"
+        case "update_recovery_required":
+            updateMessage = "更新処理の状態を安全に確認できません。指定の配布ページからDMGを取得し、アプリを置き換えてください。"
+        default:
+            updateMessage = "更新を完了できなかったため、現在のアプリを再度開きました。"
+        }
+    }
+
     func startSetup() {
+        setupAttemptID = UUID().uuidString.lowercased()
+        setupFailureOccurredAt = ""
+        setupReturnCode = nil
+        lastSetupStage = SetupStep.validatePython312.rawValue
         setupRunning = true
         setupError = ""
+        setupDownloadProgress = nil
         setupStep = .validatePython312
         setupHint = setupStep.hint
         setupElapsed = formatElapsed(0)
+        activeLogURL = paths.launcherLog
         startedAt = Date()
         startLogTimer()
 
         let paths = self.paths
+        let activeSetupAttemptID = setupAttemptID
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let rc: Int32
             let status = SetupCoordinator.setupStatus(paths: paths)
             if status.action == "resync_wheel" {
                 DispatchQueue.main.async {
                     self?.setupStep = .syncBundle
+                    self?.lastSetupStage = SetupStep.syncBundle.rawValue
                     self?.setupHint = SetupStep.syncBundle.hint
                     self?.setupMessage = "同梱アプリ更新を反映しています。"
                 }
-                rc = SetupCoordinator.resyncWheel(paths: paths)
+                rc = SetupCoordinator.resyncWheel(
+                    paths: paths,
+                    setupAttemptID: activeSetupAttemptID
+                )
             } else {
-                rc = SetupCoordinator.runSetup(paths: paths) { step, message in
+                rc = SetupCoordinator.runSetup(
+                    paths: paths,
+                    setupAttemptID: activeSetupAttemptID
+                ) { step, message in
                     DispatchQueue.main.async { [weak self] in
                         self?.setupStep = step
+                        self?.lastSetupStage = step.rawValue
                         self?.setupHint = step.hint
                         self?.setupMessage = message
                     }
@@ -1450,7 +2545,9 @@ final class AppState: ObservableObject {
             }
             DispatchQueue.main.async {
                 self?.setupRunning = false
+                self?.setupDownloadProgress = nil
                 self?.refreshLog()
+                self?.activeLogURL = nil
                 if rc == 0 {
                     self?.setupStep = .complete
                     self?.setupHint = SetupStep.complete.hint
@@ -1460,9 +2557,11 @@ final class AppState: ObservableObject {
                     self?.selectedStep = 0
                 } else {
                     let reason = readJSON(paths.stateJSON)?["reason"] as? String
+                    self?.setupReturnCode = Int(rc)
+                    self?.setupFailureOccurredAt = ISO8601DateFormatter().string(from: Date())
                     self?.setupStep = .setupException
                     self?.setupHint = SetupStep.setupException.hint
-                    self?.setupError = setupReasonToJapanese(reason)
+                    self?.setupError = self?.setupErrorText(for: reason) ?? setupReasonToJapanese(reason)
                 }
             }
         }
@@ -1478,6 +2577,7 @@ final class AppState: ObservableObject {
     }
 
     func useSampleInput() {
+        clearRescueInputContext()
         clearInputCTPreview()
         inputURL = paths.sampleInput
         inputSource = .sample
@@ -1504,14 +2604,7 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            clearInputCTPreview()
-            if isDirectory(url) {
-                inputURL = url
-                inputSource = .dicomFolder
-                runDicomAudit(dicomDir: url)
-            } else {
-                prepareNiftiInput(url)
-            }
+            prepareSelectedCTInput(url)
         }
     }
 
@@ -1528,13 +2621,7 @@ final class AppState: ObservableObject {
         resetSecondaryCaptureRescue()
         clearPendingCTPreview()
         clearInputCTPreview()
-        if isDirectory(url) {
-            inputURL = url
-            inputSource = .dicomFolder
-            runDicomAudit(dicomDir: url)
-        } else {
-            prepareNiftiInput(url)
-        }
+        prepareSelectedCTInput(url)
     }
 
     func chooseNifti() {
@@ -1544,11 +2631,300 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            prepareNiftiInput(url)
+            prepareSelectedCTInput(url)
         }
     }
 
+    func goToIOSMesh() {
+        screen = .iosMesh
+        selectedStep = 1
+        statusText = "口腔内スキャン"
+    }
+
+    func chooseIOSMesh() {
+        guard !iosMeshRunning else { return }
+        let panel = NSOpenPanel()
+        panel.title = "\(iosMeshJaw.displayName)の口腔内スキャンを選択"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = ["ply", "stl"].compactMap {
+            UTType(filenameExtension: $0)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        iosMeshInputURL = url
+        iosMeshOutputURL = nil
+        iosMeshSucceeded = false
+        iosMeshToothCount = 0
+        iosMeshDownloadProgress = nil
+        iosMeshGingivaPresent = nil
+        selectedStep = 1
+        iosMeshStatus = "入力を選択しました。選択したモデルで歯別STLを作成できます。"
+    }
+
+    func chooseIOSTGNetSet() {
+        guard !iosMeshRunning, !iosMeshTGNetValidationRunning else { return }
+        let panel = NSOpenPanel()
+        panel.title = "TGNet用ZIP／フォルダを選ぶ"
+        panel.message = "指定の配布ページから取得したckpts(new).zip、またはMacが自動展開したckpts(new)フォルダを選択してください。"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = ["zip"].compactMap {
+            UTType(filenameExtension: $0)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        validateIOSTGNetSet(url)
+    }
+
+    func openTGNetCheckpointPage() {
+        openURLInWorkspace(tgnetCheckpointPageURL)
+    }
+
+    private func validateIOSTGNetSet(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: paths.venvPython.path) else {
+            screen = .setup
+            statusText = "はじめの準備が必要です。"
+            return
+        }
+        iosMeshCustomModelURL = nil
+        iosMeshOutputURL = nil
+        iosMeshSucceeded = false
+        iosMeshToothCount = 0
+        iosMeshDownloadProgress = nil
+        iosMeshGingivaPresent = nil
+        selectedStep = 1
+        iosMeshTGNetValidationRunning = true
+        iosMeshTGNetValidationError = ""
+        iosMeshTGNetValidationDetail = ""
+        iosMeshStatus = "TGNetの重みを確認しています…"
+
+        let resultJSON = paths.iosMeshTGNetValidationJSON
+        let logURL = paths.iosMeshTGNetValidationLog
+        try? FileManager.default.removeItem(at: resultJSON)
+        try? FileManager.default.removeItem(at: logURL)
+        tgnetValidationRunner.resetTerminationRequest()
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let command = CommandBuilder.iosMeshTGNetValidateCommand(
+            python: paths.venvPython,
+            model: url,
+            resultJSON: resultJSON
+        )
+        let validationRunner = tgnetValidationRunner
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = validationRunner.run(
+                command,
+                environment: environment,
+                logURL: logURL
+            )
+            let result = readJSON(resultJSON)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.iosMeshTGNetValidationRunning = false
+                if rc == 0, result?["status"] as? String == "success" {
+                    self.iosMeshCustomModelURL = url
+                    self.iosMeshTGNetValidationError = ""
+                    self.iosMeshTGNetValidationDetail = ""
+                    self.iosMeshStatus = "TGNetの重みを確認しました。"
+                } else {
+                    self.iosMeshCustomModelURL = nil
+                    self.iosMeshTGNetValidationError = "TGNetの重みを確認できませんでした。"
+                    self.iosMeshTGNetValidationDetail = safeTGNetValidationDetail(from: result)
+                    self.iosMeshStatus = "TGNetの重みを確認できませんでした。"
+                }
+            }
+        }
+    }
+
+    func resetIOSMeshModel() {
+        guard !iosMeshRunning else { return }
+        iosMeshCustomModelURL = nil
+        iosMeshOutputURL = nil
+        iosMeshSucceeded = false
+        iosMeshToothCount = 0
+        iosMeshDownloadProgress = nil
+        iosMeshGingivaPresent = nil
+        iosMeshTGNetValidationError = ""
+        iosMeshTGNetValidationDetail = ""
+        selectedStep = 1
+        iosMeshStatus = "同梱モデル（MeshSegNet）を使用します。"
+    }
+
+    func startIOSMeshRun() {
+        guard !iosMeshTGNetValidationRunning else {
+            iosMeshStatus = "TGNetの重みを確認しています…"
+            return
+        }
+        guard let input = iosMeshInputURL else {
+            iosMeshStatus = "\(iosMeshJaw.displayName)のPLYまたはSTLを選択してください。"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: paths.venvPython.path) else {
+            screen = .setup
+            statusText = "はじめの準備が必要です。"
+            return
+        }
+        let output = defaultRunOutput(root: selectedOutputRootURL)
+        iosMeshOutputURL = output
+        iosMeshRunning = true
+        iosMeshSucceeded = false
+        iosMeshToothCount = 0
+        iosMeshDownloadProgress = nil
+        iosMeshGingivaPresent = nil
+        iosMeshPreparingModel = iosMeshCustomModelURL == nil
+        selectedStep = 2
+        if iosMeshCustomModelURL != nil {
+            iosMeshStatus = "MPSで歯を分けています。"
+        } else if FileManager.default.fileExists(atPath: paths.iosMeshSegNetModel.path) {
+            iosMeshStatus = "モデルを確認しています。"
+        } else {
+            iosMeshStatus = "初回モデルを準備しています。"
+        }
+        statusText = "口腔内スキャン処理中"
+        let logURL = paths.iosMeshSegNetRunLog
+        try? FileManager.default.removeItem(at: logURL)
+        try? FileManager.default.removeItem(at: paths.iosMeshSegNetStatusJSON)
+        runner.resetTerminationRequest()
+        activeLogURL = logURL
+        startedAt = Date()
+        startLogTimer()
+        let environment = CommandBuilder.launchEnvironment(paths: paths)
+        let runner = self.runner
+        let appPaths = paths
+        let customModel = iosMeshCustomModelURL
+        let selectedModel = customModel ?? appPaths.iosMeshSegNetModel
+        let selectedJaw = iosMeshJaw
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var rc: Int32 = 0
+            var modelPreparationFailed = false
+            var modelPreparationErrorCode: String?
+            if customModel == nil {
+                rc = runner.run(
+                    CommandBuilder.iosMeshSegNetPrepareCommand(
+                        python: appPaths.venvPython,
+                        paths: appPaths
+                    ),
+                    environment: environment,
+                    logURL: logURL
+                )
+                if rc != 0 {
+                    modelPreparationFailed = true
+                    let preparationStatus = readJSON(appPaths.iosMeshSegNetStatusJSON)
+                    modelPreparationErrorCode = preparationStatus?["error_code"] as? String
+                }
+            }
+            if rc == 0 && !runner.isTerminationRequested {
+                DispatchQueue.main.async {
+                    self?.iosMeshStatus = "MPSで歯を分けています。"
+                    self?.iosMeshPreparingModel = false
+                    self?.iosMeshDownloadProgress = nil
+                }
+                rc = runner.run(
+                    CommandBuilder.iosMeshSegNetRunCommand(
+                        python: appPaths.venvPython,
+                        input: input,
+                        output: output,
+                        model: selectedModel,
+                        isCustomModel: customModel != nil,
+                        jaw: selectedJaw.rawValue
+                    ),
+                    environment: environment,
+                    logURL: logURL
+                )
+            }
+            let summaryURL = output.appendingPathComponent("result_summary.json")
+            let summary = readJSON(summaryURL)
+            let outputs = summary?["outputs"] as? [String: Any]
+            let teeth = (outputs?["teeth"] as? [[String: Any]]) ?? []
+            let gingivaPresent = (outputs?["gingiva"] as? [String: Any])?["present"] as? Bool
+            let runtime = summary?["runtime"] as? [String: Any]
+            let usedMPS = runtime?["device"] as? String == "mps"
+                && runtime?["mps_fallback_env"] is NSNull
+            DispatchQueue.main.async {
+                let stopped = runner.isTerminationRequested
+                self?.iosMeshPreparingModel = false
+                self?.iosMeshDownloadProgress = nil
+                self?.iosMeshRunning = false
+                self?.activeLogURL = nil
+                self?.resultLogURL = logURL
+                self?.refreshLog(from: logURL)
+                self?.iosMeshToothCount = teeth.count
+                self?.iosMeshGingivaPresent = gingivaPresent
+                self?.iosMeshSucceeded = rc == 0 && usedMPS && !teeth.isEmpty
+                if stopped {
+                    self?.setSafeError(
+                        code: "ios_mesh_cancelled",
+                        reason: "The intraoral mesh run was cancelled.",
+                        mpsState: "unknown"
+                    )
+                    self?.iosMeshStatus = "処理を停止しました。"
+                    self?.statusText = "停止しました"
+                } else if modelPreparationFailed {
+                    let failure = iosMeshModelPreparationFailure(
+                        for: modelPreparationErrorCode
+                    )
+                    self?.setSafeError(
+                        code: failure.code,
+                        reason: failure.reason,
+                        mpsState: "unknown"
+                    )
+                    self?.iosMeshStatus = failure.statusText
+                    self?.statusText = "モデル準備失敗"
+                } else if rc == 0 && usedMPS && !teeth.isEmpty {
+                    self?.iosMeshStatus = "\(teeth.count)本の歯別STLを作成しました。"
+                    self?.statusText = "口腔内スキャン完了"
+                    self?.selectedStep = 3
+                } else {
+                    self?.setSafeError(
+                        code: "ios_mesh_inference_failed",
+                        reason: "The intraoral mesh run did not produce tooth STL files on strict MPS.",
+                        mpsState: usedMPS ? "validated" : "failed_or_unknown"
+                    )
+                    self?.iosMeshStatus = "処理を完了できませんでした。詳細ログを確認してください。"
+                    self?.statusText = "口腔内スキャン失敗"
+                }
+            }
+        }
+    }
+
+    func stopIOSMeshRun() {
+        guard iosMeshRunning else { return }
+        iosMeshStatus = "停止しています。"
+        runner.terminate()
+    }
+
+    func openIOSMeshPreview() {
+        guard let output = iosMeshOutputURL else { return }
+        let candidates = [
+            output.appendingPathComponent(
+                "ios_\(iosMeshJaw.rawValue)_meshsegnet_dense_preview.png"
+            ),
+            output.appendingPathComponent("ios_tgnet_colored.ply"),
+        ]
+        guard let result = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+        }) else { return }
+        openURLInWorkspace(result)
+    }
+
+    func openIOSMeshOutput() {
+        guard let output = iosMeshOutputURL,
+              FileManager.default.fileExists(atPath: output.path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([output])
+    }
+
+    private func prepareSelectedCTInput(_ url: URL) {
+        if !isDirectory(url) && isNiftiFile(url) {
+            prepareNiftiInput(url)
+            return
+        }
+        inputURL = url
+        inputSource = .dicomFolder
+        runDicomAudit(dicomDir: url)
+    }
+
     private func prepareNiftiInput(_ url: URL) {
+        clearRescueInputContext()
         clearInputCTPreview()
         inputURL = url
         inputSource = .nifti
@@ -1602,16 +2978,53 @@ final class AppState: ObservableObject {
     func confirmDentalPreparation() {
         showDentalPreparationConfirmation = false
         showDentalPreparationSheet = true
-        dentalPreparationRunning = true
-        dentalPreparationStartedAt = Date()
+        dentalPreparationFailed = false
+        dentalPreparationRunning = false
+        dentalPreparationStartedAt = nil
         dentalPreparationElapsed = formatElapsed(0)
         dentalPreparationFraction = nil
         dentalPreparationDetail = ""
+        safeErrorCode = ""
+        safeErrorReason = ""
+        safeMPSState = "unknown"
+        safeErrorOccurredAt = ""
         let pendingChoice = pendingModelPreparationChoice
         let modelName = pendingChoice == .toothSegExperimental ? "ToothSeg" : "DentalSegmentator"
         dentalPreparationMessage = "\(modelName)のモデルを準備しています。"
         dentalPreparationCancellationRequested = false
         dentalPreparationRunner.resetTerminationRequest()
+        let preparationLog = pendingChoice == .toothSegExperimental
+            ? paths.toothsegPrepareLog
+            : paths.dentalsegPrepareLog
+        let preparationResult = pendingChoice == .toothSegExperimental
+            ? paths.toothsegPrepareResultJSON
+            : paths.dentalsegPrepareResultJSON
+        guard clearModelPreparationAttemptArtifacts(
+            logURL: preparationLog,
+            resultURL: preparationResult,
+            logsRoot: paths.logs
+        ) else {
+            dentalPreparationFailed = true
+            dentalPreparationMessage = "モデル準備を開始できませんでした。標準の選択に戻します。"
+            setSafeError(
+                code: pendingChoice == .toothSegExperimental
+                    ? "toothseg_model_preparation_failed"
+                    : "dentalseg_model_preparation_failed",
+                reason: pendingChoice == .toothSegExperimental
+                    ? "ToothSeg model preparation did not start safely."
+                    : "DentalSegmentator model preparation did not start safely.",
+                mpsState: "unknown"
+            )
+            if modelPreparationPurpose == .creationSelection {
+                creationChoice = .standardArchJaw
+            } else {
+                resultOutcome = .success
+                toothSegRefineFailed = true
+            }
+            return
+        }
+        dentalPreparationRunning = true
+        dentalPreparationStartedAt = Date()
         startDentalPreparationTimer()
         let environment = CommandBuilder.launchEnvironment(paths: paths)
         let runner = dentalPreparationRunner
@@ -1625,9 +3038,6 @@ final class AppState: ObservableObject {
             let prepareCommand = pendingChoice == .toothSegExperimental
                 ? CommandBuilder.toothsegPrepareCommand(python: python, paths: activePaths)
                 : CommandBuilder.dentalsegPrepareCommand(python: python, paths: activePaths)
-            let preparationLog = pendingChoice == .toothSegExperimental
-                ? self?.paths.toothsegPrepareLog
-                : self?.paths.dentalsegPrepareLog
             let rc = runner.run(prepareCommand, environment: environment, logURL: preparationLog)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -1637,6 +3047,7 @@ final class AppState: ObservableObject {
                 self.dentalPreparationElapsed = formatElapsed(self.dentalPreparationStartedAt.map { Date().timeIntervalSince($0) } ?? 0)
                 if self.dentalPreparationCancellationRequested {
                     self.dentalPreparationCancellationRequested = false
+                    self.dentalPreparationFailed = false
                     self.dentalPreparationMessage = "モデル準備をキャンセルしました。"
                     if self.modelPreparationPurpose == .creationSelection {
                         self.creationChoice = .standardArchJaw
@@ -1647,14 +3058,12 @@ final class AppState: ObservableObject {
                     }
                     return
                 }
-                let resultURL = pendingChoice == .toothSegExperimental
-                    ? self.paths.toothsegPrepareResultJSON
-                    : self.paths.dentalsegPrepareResultJSON
-                let result = readJSON(resultURL)
+                let result = readJSON(preparationResult)
                 let modelReady = pendingChoice == .toothSegExperimental
                     ? self.isToothSegModelReady
                     : self.isDentalSegmentatorModelReady
                 if rc == 0 && result?["model_state"] as? String == "ready" && modelReady {
+                    self.dentalPreparationFailed = false
                     self.dentalPreparationMessage = "\(modelName)のモデルを準備しました。"
                     self.dentalPreparationFraction = 1.0
                     self.dentalPreparationDetail = ""
@@ -1669,22 +3078,40 @@ final class AppState: ObservableObject {
                         self.resultMessage = "元の歯列・顎骨結果は引き続き利用できます"
                     }
                 } else {
+                    self.dentalPreparationFailed = true
+                    let reportedPreparationErrorCode = result?["error_code"] as? String
+                    let failureCode: String
+                    if reportedPreparationErrorCode == "insufficient_disk_space" {
+                        failureCode = "insufficient_disk_space"
+                    } else {
+                        failureCode = pendingChoice == .toothSegExperimental
+                            ? "toothseg_model_preparation_failed"
+                            : "dentalseg_model_preparation_failed"
+                    }
+                    self.setSafeError(
+                        code: failureCode,
+                        reason: pendingChoice == .toothSegExperimental
+                            ? "ToothSeg model preparation did not complete."
+                            : "DentalSegmentator model preparation did not complete.",
+                        mpsState: "unknown"
+                    )
                     if self.modelPreparationPurpose == .creationSelection {
-                        self.dentalPreparationMessage = "モデルを準備できませんでした。標準の選択に戻します。"
+                        self.dentalPreparationMessage = failureCode == "insufficient_disk_space"
+                            ? "モデル準備に必要な空き容量が不足しています。標準の選択に戻します。"
+                            : "モデルを準備できませんでした。標準の選択に戻します。"
                         self.creationChoice = .standardArchJaw
                     } else {
-                        self.dentalPreparationMessage = "ToothSegモデルを準備できませんでした。"
+                        self.dentalPreparationMessage = failureCode == "insufficient_disk_space"
+                            ? "ToothSegモデル準備に必要な空き容量が不足しています。"
+                            : "ToothSegモデルを準備できませんでした。"
                         self.resultOutcome = .success
                         self.toothSegRefineFailed = true
-                        self.failureReasonText = "ToothSegモデルのダウンロードまたは検証に失敗しました。ネットワーク状態を確認して再試行してください。"
+                        self.failureReasonText = failureCode == "insufficient_disk_space"
+                            ? "ToothSegモデル準備に必要な空き容量が不足しています。空き容量を確保して再試行してください。"
+                            : "ToothSegモデルのダウンロードまたは検証に失敗しました。ネットワーク状態を確認して再試行してください。"
                         self.statusText = "ToothSegモデルを準備できませんでした"
                         self.progressText = "元の歯列・顎骨結果は引き続き利用できます。"
                         self.resultMessage = "ToothSegモデル準備に失敗しました"
-                        self.setSafeError(
-                            code: "toothseg_model_preparation_failed",
-                            reason: "The ToothSeg model download or validation did not complete.",
-                            mpsState: "unknown"
-                        )
                     }
                 }
             }
@@ -1692,6 +3119,7 @@ final class AppState: ObservableObject {
     }
 
     func cancelDentalPreparation() {
+        dentalPreparationFailed = false
         guard dentalPreparationRunning else {
             showDentalPreparationSheet = false
             if modelPreparationPurpose == .creationSelection {
@@ -1720,9 +3148,22 @@ final class AppState: ObservableObject {
         dentalPreparationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, let started = self.dentalPreparationStartedAt else { return }
             self.dentalPreparationElapsed = formatElapsed(Date().timeIntervalSince(started))
+            let progress: ToothSegPreparationProgress?
             if self.pendingModelPreparationChoice == .toothSegExperimental,
-               let snapshot = readLogTail(self.paths.toothsegPrepareLog, maxBytes: LOG_TAIL_BYTES),
-               let progress = toothSegPreparationProgressFromLog(snapshot.text) {
+               let snapshot = readLogTail(
+                   self.paths.toothsegPrepareLog,
+                   maxBytes: LOG_TAIL_BYTES
+               ) {
+                progress = toothSegPreparationProgressFromLog(snapshot.text)
+            } else if let snapshot = readLogTail(
+                self.paths.dentalsegPrepareLog,
+                maxBytes: LOG_TAIL_BYTES
+            ) {
+                progress = dentalSegmentatorPreparationProgressFromLog(snapshot.text)
+            } else {
+                progress = nil
+            }
+            if let progress {
                 self.dentalPreparationFraction = progress.fraction
                 self.dentalPreparationMessage = progress.message
                 self.dentalPreparationDetail = progress.detailText
@@ -1765,6 +3206,7 @@ final class AppState: ObservableObject {
         }
         let auditDir = paths.runs.appendingPathComponent("dicom_audit_\(Int(Date().timeIntervalSince1970))", isDirectory: true)
         let auditJSON = auditDir.appendingPathComponent("dicom_normalizer_audit.json")
+        lastDicomAuditJSONURL = auditJSON
         try? FileManager.default.createDirectory(at: auditDir, withIntermediateDirectories: true)
         clearInputCTPreview()
         inputURL = dicomDir
@@ -1987,6 +3429,7 @@ final class AppState: ObservableObject {
     }
 
     func beginSecondaryCaptureRescue(candidates: [SecondaryCaptureRescueCandidate]) {
+        clearRescueInputContext()
         dicomRescueCandidates = candidates
         let primary = candidates.first(where: { $0.role == "primary" }) ?? candidates.first
         selectedDicomRescueCandidateID = primary?.id
@@ -2829,32 +4272,166 @@ final class AppState: ObservableObject {
                 requested: requestedSpacing
             )
             DispatchQueue.main.async {
-                self?.isRunning = false
-                self?.stopRequested = false
-                self?.refreshLog(from: logURL)
-                self?.activeLogURL = nil
-                self?.resultLogURL = logURL
-                if valid {
-                    self?.acceptPreparedRescueNifti(outputNifti)
+                guard let self else { return }
+                self.isRunning = false
+                self.stopRequested = false
+                self.refreshLog(from: logURL)
+                self.activeLogURL = nil
+                self.resultLogURL = logURL
+                if valid,
+                   let context = self.makeRescueInputContext(finalizedMetadataJSON: outputJSON) {
+                    self.acceptPreparedRescueNifti(outputNifti, context: context)
                 } else {
-                    self?.rescueWorkflowState = rc == 0 ? .readbackMismatch : .prepareFailed
-                    self?.rescueConfirmationWasExplicit = false
-                    self?.screen = .dicomRescue
-                    self?.selectedStep = 1
-                    self?.rescueInlineWarning = "確定した形状を安全に読み直せませんでした。AI推論は開始していません。"
-                    self?.rescueImageUpdateFailed = true
+                    self.rescueWorkflowState = rc == 0 ? .readbackMismatch : .prepareFailed
+                    self.rescueConfirmationWasExplicit = false
+                    self.screen = .dicomRescue
+                    self.selectedStep = 1
+                    self.rescueInlineWarning = "確定した形状を安全に読み直せませんでした。AI推論は開始していません。"
+                    self.rescueImageUpdateFailed = true
                 }
             }
         }
     }
 
-    private func acceptPreparedRescueNifti(_ preparedURL: URL) {
+    private func makeRescueInputContext(
+        finalizedMetadataJSON: URL
+    ) -> RescueInputContext? {
+        guard let candidate = selectedDicomRescueCandidate,
+              candidate.role == "primary",
+              isSupportedRescueClassification(candidate.classificationStatus),
+              let candidateManifest = candidate.contentManifestSHA256,
+              let canonicalCandidateManifest = canonicalRescueSHA256(candidateManifest),
+              let sourceManifest = canonicalRescueSHA256(rescueSourceManifestSHA256),
+              canonicalCandidateManifest == sourceManifest,
+              let payload = readJSON(finalizedMetadataJSON),
+              payload["schema"] as? String == "totalsegmentator_wrapper_mac.rescue_geometry.v2",
+              payload["workflow_status"] as? String == "finalized",
+              (payload["inference_started"] as? Bool) == false,
+              let source = payload["source"] as? [String: Any],
+              let metadataSourceManifest = source["content_manifest_sha256"] as? String,
+              canonicalRescueSHA256(metadataSourceManifest) == sourceManifest,
+              let confirmation = payload["confirmation"] as? [String: Any],
+              confirmation["schema"] as? String
+                == "totalsegmentator_wrapper_mac.rescue_confirmation.v1",
+              (confirmation["confirmed"] as? Bool) == true,
+              let confirmationSHA256 = confirmation["token_sha256"] as? String,
+              let canonicalConfirmationSHA256 = canonicalRescueSHA256(confirmationSHA256),
+              let transform = payload["transform"] as? [String: Any],
+              let transformSHA256 = rescueTransformSHA256(transform),
+              isSHA256Hex(rescueConfirmationToken),
+              sha256Hex(Data(rescueConfirmationToken.utf8)) == canonicalConfirmationSHA256
+        else {
+            return nil
+        }
+        return RescueInputContext(
+            classification: candidate.classificationStatus,
+            sourceManifestSHA256: sourceManifest,
+            confirmationSHA256: canonicalConfirmationSHA256,
+            transformSHA256: transformSHA256
+        )
+    }
+
+    private func canonicalRescueSHA256(_ value: String) -> String? {
+        isSHA256Hex(value) ? value : nil
+    }
+
+    private func isSupportedRescueClassification(_ value: String) -> Bool {
+        [
+            "secondary_capture_rescue_candidate",
+            "geometry_rescue_candidate",
+            "secondary_capture_reference_candidate",
+        ].contains(value)
+    }
+
+    private func rescueTransformSHA256(_ transform: [String: Any]) -> String? {
+        let expectedKeys: Set<String> = [
+            "axis_permutation",
+            "rotation_quarter_turns",
+            "slice_order_reversed",
+            "crop_voxels_xyz",
+        ]
+        guard Set(transform.keys) == expectedKeys,
+              let axisPermutation = transform["axis_permutation"] as? [String],
+              axisPermutation.count == 3,
+              Set(axisPermutation) == Set(["x", "y", "z"]),
+              let rotation = strictRescueJSONInteger(transform["rotation_quarter_turns"]),
+              (0 ... 3).contains(rotation),
+              let sliceOrderReversed = transform["slice_order_reversed"] as? Bool
+        else {
+            return nil
+        }
+
+        let canonicalCrop: Any
+        if transform["crop_voxels_xyz"] is NSNull {
+            canonicalCrop = NSNull()
+        } else {
+            guard let crop = transform["crop_voxels_xyz"] as? [String: Any],
+                  Set(crop.keys) == Set(["min", "max_exclusive"]),
+                  let lowerRaw = crop["min"] as? [Any],
+                  let upperRaw = crop["max_exclusive"] as? [Any],
+                  lowerRaw.count == 3,
+                  upperRaw.count == 3
+            else {
+                return nil
+            }
+            let lower = lowerRaw.compactMap(strictRescueJSONInteger)
+            let upper = upperRaw.compactMap(strictRescueJSONInteger)
+            guard lower.count == 3,
+                  upper.count == 3,
+                  zip(lower, upper).allSatisfy({ bounds in
+                      bounds.0 >= 0 && bounds.1 > bounds.0
+                  })
+            else {
+                return nil
+            }
+            canonicalCrop = [
+                "min": lower,
+                "max_exclusive": upper,
+            ]
+        }
+
+        let canonicalTransform: [String: Any] = [
+            "axis_permutation": axisPermutation,
+            "rotation_quarter_turns": rotation,
+            "slice_order_reversed": sliceOrderReversed,
+            "crop_voxels_xyz": canonicalCrop,
+        ]
+        guard JSONSerialization.isValidJSONObject(canonicalTransform),
+              let encoded = try? JSONSerialization.data(
+                  withJSONObject: canonicalTransform,
+                  options: [.sortedKeys]
+              )
+        else {
+            return nil
+        }
+        return sha256Hex(encoded)
+    }
+
+    private func strictRescueJSONInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            return nil
+        }
+        let doubleValue = number.doubleValue
+        let integerValue = number.intValue
+        guard doubleValue.isFinite, doubleValue == Double(integerValue) else {
+            return nil
+        }
+        return integerValue
+    }
+
+    private func acceptPreparedRescueNifti(
+        _ preparedURL: URL,
+        context: RescueInputContext
+    ) {
         guard rescueConfirmationWasExplicit,
               FileManager.default.fileExists(atPath: preparedURL.path) else {
             rescueWorkflowState = .readbackMismatch
             screen = .dicomRescue
             return
         }
+        // RescueInputContext was bound to the finalized metadata before this run.
+        rescueInputContext = context
         inputURL = preparedURL
         inputSource = .nifti
         creationChoice = .standardArchJaw
@@ -2878,6 +4455,7 @@ final class AppState: ObservableObject {
     }
 
     private func resetSecondaryCaptureRescue() {
+        clearRescueInputContext()
         dicomRescueCandidates = []
         selectedDicomRescueCandidateID = nil
         rescueWorkflowState = .rescueAvailable
@@ -2894,6 +4472,10 @@ final class AppState: ObservableObject {
         rescueConfirmationToken = ""
         rescuePreviewWorkItem?.cancel()
         rescuePreviewWorkItem = nil
+    }
+
+    private func clearRescueInputContext() {
+        rescueInputContext = nil
     }
 
     func convertDicomToNiftiFromAudit() {
@@ -3147,6 +4729,12 @@ final class AppState: ObservableObject {
         safeErrorReason = ""
         safeMPSState = "unknown"
         safeErrorOccurredAt = ""
+        runAttemptID = UUID().uuidString.lowercased()
+        resetSafeRunDiagnostics(attemptID: runAttemptID)
+        teethDetected = false
+        refineAvailable = false
+        primaryRunTeethDetected = false
+        canRunToothSegRefine = false
         toothSegRefineFailed = false
         resultKind = .inference
         resultOutcome = .none
@@ -3186,6 +4774,7 @@ final class AppState: ObservableObject {
             backend: segmentationBackend,
             device: "mps",
             higherOrderResampling: higherOrderResampling,
+            runAttemptID: runAttemptID,
             paths: paths
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)
@@ -3284,8 +4873,7 @@ final class AppState: ObservableObject {
                 } else if rc == 0 && surfacePreviewRC != nil {
                     self?.setSafeError(code: "preview_generation_failed", reason: "The 3D preview could not be generated.", mpsState: "validated")
                     self?.resultOutcome = .failure
-                    let reason = runFailureReason(from: finalLogURL)
-                    self?.failureReasonText = reason.isEmpty ? "3D preview生成だけが完了できませんでした。詳細ログを確認してください。" : reason
+                    self?.failureReasonText = "3D preview生成だけが完了できませんでした。ローカルの詳細ログを確認してください。"
                     self?.surfacePreviewFailed = true
                     self?.statusText = "完了（3Dプレビュー未作成）"
                     self?.progressText = "3D preview用の出力作成は完了しました。3D previewだけ作り直せます。"
@@ -3301,8 +4889,8 @@ final class AppState: ObservableObject {
                         self?.setSafeError(code: "backend_failed", reason: "The segmentation backend did not complete.", mpsState: "unknown")
                     }
                     self?.resultOutcome = .failure
-                    let reason = runFailureReason(from: finalLogURL)
-                    self?.failureReasonText = reason.isEmpty ? "実行コマンドが完了できませんでした。詳細ログを確認してください。" : reason
+                    self?.failureReasonText = self?.safePrimaryRunFailureText()
+                        ?? "実行コマンドが完了できませんでした。詳細ログを確認してください。"
                     self?.statusText = "処理を完了できませんでした"
                     self?.progressText = self?.failureReasonText ?? "入力は変更されていません。もう一度実行するか、詳細ログを確認してください。"
                     self?.resultMessage = "3Dプレビューを作成できませんでした"
@@ -3354,6 +4942,8 @@ final class AppState: ObservableObject {
         safeErrorReason = ""
         safeMPSState = "unknown"
         safeErrorOccurredAt = ""
+        runAttemptID = UUID().uuidString.lowercased()
+        resetSafeRunDiagnostics(attemptID: runAttemptID)
         toothSegRefineFailed = false
         resultKind = .inference
         activeRunBackend = .toothSeg
@@ -3379,6 +4969,7 @@ final class AppState: ObservableObject {
             input: inputURL,
             output: outputURL,
             craniofacialCase: outputURL,
+            runAttemptID: runAttemptID,
             paths: paths
         )
         let environment = CommandBuilder.launchEnvironment(paths: paths)
@@ -3458,8 +5049,7 @@ final class AppState: ObservableObject {
                         self?.resultOutcome = .success
                         self?.surfacePreviewFailed = true
                         self?.setSafeError(code: "preview_generation_failed", reason: "The 3D preview could not be generated.", mpsState: "validated")
-                        let reason = runFailureReason(from: previewLog)
-                        self?.failureReasonText = reason.isEmpty ? "3D preview生成が完了できませんでした。詳細ログを確認してください。" : reason
+                        self?.failureReasonText = "3D preview生成が完了できませんでした。ローカルの詳細ログを確認してください。"
                         self?.statusText = "高精細化は完了（3D preview未作成）"
                         self?.progressText = "高精細化の結果は保存されています。"
                         self?.resultMessage = "ToothSeg高精細化は完了しましたが、3D previewの再生成に失敗しました"
@@ -3476,7 +5066,7 @@ final class AppState: ObservableObject {
                             mpsState: "validated"
                         )
                     }
-                    let reason = self?.toothSegRefineFailureReason(from: refineLogURL) ?? ""
+                    let reason = self?.toothSegRefineFailureReason() ?? ""
                     self?.failureReasonText = reason.isEmpty ? "ToothSeg高精細化を完了できませんでした。" : reason
                     self?.statusText = "高精細化を完了できませんでした"
                     self?.progressText = "原因を確認して高精細化を再実行してください。"
@@ -3486,12 +5076,39 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func loadSafeRunResult(from resultURL: URL? = nil, treatAsPrimaryResult: Bool = true) {
-        guard let payload = readJSON(resultURL ?? paths.runResultJSON) else { return }
-        safeErrorCode = payload["error_code"] as? String ?? ""
-        safeErrorReason = payload["safe_reason"] as? String ?? ""
-        safeMPSState = payload["mps_state"] as? String ?? "unknown"
-        safeErrorOccurredAt = payload["occurred_at"] as? String ?? ""
+    func loadSafeRunResult(from resultURL: URL? = nil, treatAsPrimaryResult: Bool = true) {
+        guard let payload = readJSON(resultURL ?? paths.runResultJSON),
+              isCurrentSafeRunResultPayload(
+                  payload,
+                  expectedRunAttemptID: runAttemptID
+              ) else {
+            resetRejectedSafeRunResult(treatAsPrimaryResult: treatAsPrimaryResult)
+            return
+        }
+        let safeFields = safeRunResultFields(from: payload)
+        guard safeFields.runAttemptID == runAttemptID else {
+            resetRejectedSafeRunResult(treatAsPrimaryResult: treatAsPrimaryResult)
+            return
+        }
+        safeErrorCode = safeFields.errorCode
+        safeErrorReason = safeFields.reason
+        safeMPSState = safeFields.mpsState
+        safeErrorOccurredAt = safeFields.occurredAt
+        safeRunAttemptID = safeFields.runAttemptID
+        safeRunFailedStage = safeFields.failedStage
+        safeRunSpecificCause = safeFields.specificCause
+        safeRunRetryable = safeFields.retryable
+        safeRunRecoveryHintCode = safeFields.recoveryHintCode
+        safeRunDiagnosticLogKind = safeFields.diagnosticLogKind
+        safeRunDiagnosticLogReference = safeFields.diagnosticLogReference
+        safeRunBackendVersion = safeFields.backendVersion
+        safeRunModelVersion = safeFields.modelVersion
+        safeRunRuntimePythonVersion = safeFields.runtimePythonVersion
+        safeRunRuntimeTorchVersion = safeFields.runtimeTorchVersion
+        safeRunInputKind = safeFields.inputKind
+        safeRunInputSizeBucket = safeFields.inputSizeBucket
+        safeRunActualDevice = safeFields.actualDevice
+        safeRunFallbackUsed = safeFields.fallbackUsed
         let detected = payload["teeth_detected"] as? Bool ?? false
         teethDetected = detected
         refineAvailable = payload["refine_available"] as? Bool ?? detected
@@ -3500,7 +5117,42 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func toothSegRefineFailureReason(from logURL: URL) -> String {
+    private func resetRejectedSafeRunResult(treatAsPrimaryResult: Bool) {
+        // Refinement results are secondary to an already displayed primary result.
+        // A stale or malformed secondary JSON must not erase that primary state.
+        guard treatAsPrimaryResult else {
+            return
+        }
+        safeErrorCode = ""
+        safeErrorReason = ""
+        safeMPSState = "unknown"
+        safeErrorOccurredAt = ""
+        resetSafeRunDiagnostics(attemptID: runAttemptID)
+        teethDetected = false
+        refineAvailable = false
+        primaryRunTeethDetected = false
+        canRunToothSegRefine = false
+    }
+
+    private func resetSafeRunDiagnostics(attemptID: String? = nil) {
+        safeRunAttemptID = attemptID.flatMap { UUID(uuidString: $0)?.uuidString.lowercased() } ?? ""
+        safeRunFailedStage = "unknown"
+        safeRunSpecificCause = "unknown"
+        safeRunRetryable = "unknown"
+        safeRunRecoveryHintCode = "unknown"
+        safeRunDiagnosticLogKind = "none"
+        safeRunDiagnosticLogReference = ""
+        safeRunBackendVersion = "unknown"
+        safeRunModelVersion = "unknown"
+        safeRunRuntimePythonVersion = "unknown"
+        safeRunRuntimeTorchVersion = "unknown"
+        safeRunInputKind = "unknown"
+        safeRunInputSizeBucket = "unknown"
+        safeRunActualDevice = "unknown"
+        safeRunFallbackUsed = "unknown"
+    }
+
+    private func toothSegRefineFailureReason() -> String {
         switch safeErrorCode {
         case "toothseg_mps_oom":
             return "MPSメモリ不足（Out Of Memory）で失敗しました。他のアプリを終了するかMacを再起動してから再試行してください。CTの範囲によっては、このMacでは高精細化を実行できない場合があります。"
@@ -3509,7 +5161,20 @@ final class AppState: ObservableObject {
         case "toothseg_download_failed", "toothseg_model_preparation_failed":
             return "ToothSegモデルの取得に失敗しました。ネットワーク状態を確認して再試行してください。"
         default:
-            return runFailureReason(from: logURL)
+            return "ToothSeg高精細化を完了できませんでした。ローカルの詳細ログを確認してから再試行してください。"
+        }
+    }
+
+    private func safePrimaryRunFailureText() -> String {
+        switch canonicalSafeErrorCode(safeErrorCode) {
+        case "totalseg_backend_nonzero_exit":
+            return "TotalSegmentatorの推論処理が終了コード異常で停止しました。CPUや別のbackendには切り替えていません。ローカルの詳細ログを確認してから再試行してください。"
+        case "totalseg_backend_launch_failed":
+            return "TotalSegmentatorの推論処理を開始できませんでした。ローカルの詳細ログを確認してから再試行してください。"
+        case "mps_unavailable":
+            return "MPSの確認を完了できませんでした。Macを再起動するか、セットアップをやり直してから再試行してください。"
+        default:
+            return "実行コマンドが完了できませんでした。ローカルの詳細ログを確認してから再試行してください。"
         }
     }
 
@@ -3534,14 +5199,29 @@ final class AppState: ObservableObject {
         setResultFlavor(flavor)
     }
 
-    private func setSafeError(code: String, reason: String, mpsState: String) {
-        safeErrorCode = code
-        safeErrorReason = reason
-        safeMPSState = mpsState
+    private func setSafeError(code: String, reason _: String, mpsState: String) {
+        // A UI-side failure (cancel, preview generation, etc.) does not inherit
+        // a prior inference diagnostic's stage, log reference, or attempt ID.
+        resetSafeRunDiagnostics()
+        let safeCode = canonicalSafeErrorCode(code)
+        safeErrorCode = safeCode
+        safeErrorReason = safeReasonForErrorCode(safeCode)
+        safeMPSState = safeMPSDiagnosticState(mpsState)
         safeErrorOccurredAt = ISO8601DateFormatter().string(from: Date())
     }
 
     private func inputProvenancePayload() -> [String: Any] {
+        if let rescue = rescueInputContext {
+            return [
+                "schema": "totalsegmentator_wrapper_mac.input_provenance.v1",
+                "source_kind": "dicom_rescue",
+                "non_diagnostic_preview": true,
+                "classification": rescue.classification,
+                "source_manifest_sha256": rescue.sourceManifestSHA256,
+                "confirmation_sha256": rescue.confirmationSHA256,
+                "transform_sha256": rescue.transformSHA256,
+            ]
+        }
         let sourceKind: String
         if !dicomCleanCandidates.isEmpty {
             sourceKind = "dicom"
@@ -3854,6 +5534,32 @@ final class AppState: ObservableObject {
         NSPasteboard.general.setString(safeErrorCopyText, forType: .string)
     }
 
+    func copySafeSetupErrorInfo() {
+        guard !setupRunning, !setupError.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(safeSetupErrorCopyText, forType: .string)
+    }
+
+    func openSetupErrorReportForm() {
+        guard !setupRunning, !setupError.isEmpty else { return }
+        copySafeSetupErrorInfo()
+        openURLInWorkspace(errorReportFormURL)
+    }
+
+    func openErrorReportForm() {
+        copySafeErrorInfo()
+        openURLInWorkspace(errorReportFormURL)
+    }
+
+    func openSTLGenerationErrorReportForm() {
+        setSafeError(
+            code: "stl_generation_failed",
+            reason: "STL generation did not complete.",
+            mpsState: "not_applicable"
+        )
+        openErrorReportForm()
+    }
+
     func openResultPreview() {
         guard let outputURL else {
             resultMessage = "3DプレビューHTMLが見つかりません。"
@@ -3942,9 +5648,8 @@ final class AppState: ObservableObject {
                 } else {
                     self?.resultOutcome = .failure
                     self?.setSafeError(code: "preview_generation_failed", reason: "The 3D preview could not be generated.", mpsState: "not_applicable")
-                    let reason = runFailureReason(from: logURL)
                     self?.surfacePreviewFailed = true
-                    self?.failureReasonText = reason.isEmpty ? "3D preview生成が完了できませんでした。詳細ログを確認してください。" : reason
+                    self?.failureReasonText = "3D preview生成が完了できませんでした。ローカルの詳細ログを確認してください。"
                     self?.statusText = "3Dプレビュー未作成"
                     self?.progressText = "3Dプレビュー生成に失敗しました。詳細ログを確認してください。"
                     self?.resultMessage = "3Dプレビュー生成に失敗しました。処理結果は保存されています。"
@@ -3999,62 +5704,152 @@ final class AppState: ObservableObject {
     }
 
     func checkUpdates() {
-        guard !updateCheckRunning else {
+        guard !updateCheckRunning && !updateInstallRunning else {
             return
         }
         pendingDownloadURL = nil
         pendingUpdateVersion = ""
         pendingUpdateSHA256 = ""
+        pendingUpdateFileSizeBytes = nil
+        pendingUpdateAllowedHosts = []
+        pendingUpdateManifestURL = nil
         showingUpdateConfirmation = false
         let manifest = readJSON(paths.manifest) ?? [:]
         let url = (manifest["update_manifest_url"] as? String) ?? ""
-        guard !url.isEmpty else {
+        guard let manifestURL = URL(string: url),
+              isHTTPSURL(manifestURL) else {
             updateMessage = "更新確認URLは設定されていません。"
             return
         }
-        let version = (manifest["app_version"] as? String) ?? (manifest["version"] as? String) ?? "0.3.0"
+        guard let version = (manifest["app_version"] as? String)
+                ?? (manifest["version"] as? String),
+              semanticVersionTripletParts(version) != nil else {
+            updateMessage = "現在のアプリ版を安全に確認できません。DMGからもう一度コピーしてください。"
+            return
+        }
         let allowedHosts = (manifest["update_allowed_hosts"] as? [String]) ?? []
         let updateJSON = paths.logs.appendingPathComponent("update_check.json")
-        updateCheckRunning = true
-        updateMessage = "更新を確認しています。DICOM/CT/path/logは送信しません。"
-        let command = CommandBuilder.updateCheckCommand(
-            python: paths.venvPython,
+        guard let command = updateCheckCommand(
             manifestURL: url,
             json: updateJSON,
             currentVersion: version,
             allowedHosts: allowedHosts
-        )
+        ) else {
+            updateMessage = "更新確認に必要な同梱Pythonまたはアプリパッケージが見つかりません。DMGからもう一度コピーしてください。"
+            return
+        }
+        try? FileManager.default.removeItem(at: updateJSON)
+        updateCheckRunning = true
+        updateMessage = "更新を確認しています。DICOM/CT/path/logは送信しません。"
         let environment = CommandBuilder.launchEnvironment(paths: paths)
         let updateRunner = ProcessRunner()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = updateRunner.run(command, environment: environment, logURL: nil)
+            let rc = updateRunner.run(command, environment: environment, logURL: nil)
             let result = readJSON(updateJSON) ?? [:]
             DispatchQueue.main.async {
                 self?.updateCheckRunning = false
-                let status = (result["status"] as? String) ?? "failed"
-                if status == "update_available" || status == "critical_update_available" {
+                let status = validatedUpdateCheckStatus(
+                    result,
+                    expectedManifestURL: url,
+                    expectedCurrentVersion: version
+                ) ?? "failed"
+                if rc == 0 && (status == "update_available" || status == "critical_update_available") {
                     let latest = (result["latest_version"] as? String) ?? "unknown"
+                    let sha256 = ((result["sha256"] as? String) ?? "").lowercased()
+                    let downloadURL = (result["download_url"] as? String).flatMap(URL.init(string:))
+                    let fileSizeBytes = jsonInt(result["file_size_bytes"])
+                    guard isSafeDiagnosticToken(latest),
+                          isSHA256Hex(sha256),
+                          let fileSizeBytes,
+                          fileSizeBytes > 0,
+                          Int64(fileSizeBytes) <= MAX_UPDATE_DMG_BYTES,
+                          let downloadURL,
+                          isAllowedUpdateURL(
+                            downloadURL,
+                            manifestURL: manifestURL,
+                            additionalHosts: allowedHosts
+                          ) else {
+                        self?.pendingDownloadURL = nil
+                        self?.pendingUpdateVersion = ""
+                        self?.pendingUpdateSHA256 = ""
+                        self?.pendingUpdateFileSizeBytes = nil
+                        self?.pendingUpdateAllowedHosts = []
+                        self?.pendingUpdateManifestURL = nil
+                        self?.showingUpdateConfirmation = false
+                        self?.updateMessage = "更新情報の署名値または配布先を安全に確認できませんでした。"
+                        return
+                    }
                     self?.updateMessage = "新しい版があります: \(latest)"
                     self?.pendingUpdateVersion = latest
-                    self?.pendingUpdateSHA256 = (result["sha256"] as? String) ?? ""
-                    if let download = result["download_url"] as? String {
-                        self?.pendingDownloadURL = URL(string: download)
-                    }
-                } else if status == "current" {
+                    self?.pendingUpdateSHA256 = sha256
+                    self?.pendingUpdateFileSizeBytes = fileSizeBytes
+                    self?.pendingUpdateAllowedHosts = allowedHosts
+                    self?.pendingUpdateManifestURL = manifestURL
+                    self?.pendingDownloadURL = downloadURL
+                } else if rc == 0 && status == "current" {
                     self?.pendingDownloadURL = nil
                     self?.pendingUpdateVersion = ""
                     self?.pendingUpdateSHA256 = ""
+                    self?.pendingUpdateFileSizeBytes = nil
+                    self?.pendingUpdateAllowedHosts = []
+                    self?.pendingUpdateManifestURL = nil
                     self?.showingUpdateConfirmation = false
                     self?.updateMessage = "現在の版は最新です。"
                 } else {
                     self?.pendingDownloadURL = nil
                     self?.pendingUpdateVersion = ""
                     self?.pendingUpdateSHA256 = ""
+                    self?.pendingUpdateFileSizeBytes = nil
+                    self?.pendingUpdateAllowedHosts = []
+                    self?.pendingUpdateManifestURL = nil
                     self?.showingUpdateConfirmation = false
                     self?.updateMessage = "更新確認に失敗しました。"
                 }
             }
         }
+    }
+
+    private func updateCheckCommand(
+        manifestURL: String,
+        json: URL,
+        currentVersion: String,
+        allowedHosts: [String]
+    ) -> [String]? {
+        if let python = CommandBuilder.resolvePython312(paths: paths),
+           FileManager.default.isExecutableFile(atPath: python.path),
+           let wheel = CommandBuilder.latestWheel(resources: paths.resources),
+           FileManager.default.fileExists(atPath: wheel.path) {
+            let bootstrap = "import runpy,sys;wheel=sys.argv[1];sys.path.insert(0,wheel);sys.argv=['totalsegmentator_wrapper_mac']+sys.argv[2:];runpy.run_module('totalsegmentator_wrapper_mac',run_name='__main__')"
+            var command = [
+                python.path,
+                "-I",
+                "-c",
+                bootstrap,
+                wheel.path,
+                "update-check",
+                "--manifest-url",
+                manifestURL,
+                "--json",
+                json.path,
+                "--current-version",
+                currentVersion,
+            ]
+            for host in allowedHosts {
+                command.append("--allowed-link-host")
+                command.append(host)
+            }
+            return command
+        }
+        if FileManager.default.isExecutableFile(atPath: paths.venvPython.path) {
+            return CommandBuilder.updateCheckCommand(
+                python: paths.venvPython,
+                manifestURL: manifestURL,
+                json: json,
+                currentVersion: currentVersion,
+                allowedHosts: allowedHosts
+            )
+        }
+        return nil
     }
 
     func openPendingDownload() {
@@ -4066,19 +5861,29 @@ final class AppState: ObservableObject {
     }
 
     private func downloadAndInstallPendingUpdate() {
-        guard !updateInstallRunning else {
+        guard !updateInstallRunning && !updateCheckRunning else {
             return
         }
         guard let downloadURL = pendingDownloadURL else {
             updateMessage = "更新ファイルURLが見つかりません。"
             return
         }
-        guard downloadURL.scheme == "https" else {
-            updateMessage = "更新ファイルURLがHTTPSではありません。"
+        guard let manifestURL = pendingUpdateManifestURL,
+              isAllowedUpdateURL(
+                downloadURL,
+                manifestURL: manifestURL,
+                additionalHosts: pendingUpdateAllowedHosts
+              ) else {
+            updateMessage = "更新ファイルURLのHTTPS配布先を確認できません。"
             return
         }
-        guard !pendingUpdateSHA256.isEmpty else {
+        guard isSHA256Hex(pendingUpdateSHA256) else {
             updateMessage = "更新ファイルのSHA256がmanifestにありません。"
+            return
+        }
+        guard !pendingUpdateVersion.isEmpty,
+              isSafeDiagnosticToken(pendingUpdateVersion) else {
+            updateMessage = "更新版の番号を確認できません。"
             return
         }
         let appURL = Bundle.main.bundleURL.standardizedFileURL
@@ -4091,40 +5896,143 @@ final class AppState: ObservableObject {
             updateMessage = "現在のアプリ保存先に書き込めません。Applicationsではなく、ユーザーのApplicationsへコピーしてから更新してください。"
             return
         }
+        guard canUseAtomicUpdateSwap(appURL: appURL) else {
+            updateMessage = "このアプリの保存先では安全な自動更新に対応していません。指定の配布ページからDMGを取得し、アプリを置き換えてください。"
+            return
+        }
+        guard !hasPendingUpdateArtifacts(appURL: appURL) else {
+            updateMessage = "前回の更新処理のファイルが残っているため、安全に自動更新できません。指定の配布ページからDMGを取得し、アプリを置き換えてください。"
+            return
+        }
 
         updateInstallRunning = true
         updateMessage = "更新ファイルをダウンロードしています。"
-        let version = pendingUpdateVersion.isEmpty ? "latest" : pendingUpdateVersion
+        updateInstallProgressFraction = nil
+        updateInstallProgressText = "ダウンロードを開始しています。"
+        let version = pendingUpdateVersion
         let expectedSHA256 = pendingUpdateSHA256.lowercased()
+        guard let pendingUpdateFileSizeBytes,
+              pendingUpdateFileSizeBytes > 0,
+              Int64(pendingUpdateFileSizeBytes) <= MAX_UPDATE_DMG_BYTES else {
+            updateInstallRunning = false
+            updateInstallProgressText = ""
+            updateMessage = "更新ファイルのサイズを安全に確認できません。"
+            return
+        }
+        let expectedFileSizeBytes = Int64(pendingUpdateFileSizeBytes)
+        let allowedHosts = pendingUpdateAllowedHosts
         let updatesDir = paths.support.appendingPathComponent("updates", isDirectory: true)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        guard prepareOwnedUpdateDirectory(updatesDir) else {
+            updateInstallRunning = false
+            updateInstallProgressText = ""
+            updateMessage = "更新ファイルの保存先を準備できませんでした。"
+            return
+        }
+        let request = URLRequest(url: downloadURL)
+        let task = URLSession.shared.downloadTask(with: request) { [weak self] temporaryURL, response, error in
+            guard let self else { return }
+            var stagedDMGForCleanup: URL?
             do {
-                try FileManager.default.createDirectory(at: updatesDir, withIntermediateDirectories: true)
-                let data = try Data(contentsOf: downloadURL)
-                let actualSHA256 = sha256Hex(data)
-                guard actualSHA256 == expectedSHA256 else {
-                    throw UpdateInstallError.sha256Mismatch(expected: expectedSHA256, actual: actualSHA256)
+                if let error {
+                    throw error
                 }
-                let localDMG = updatesDir.appendingPathComponent("TotalSegmentator Wrapper for Mac-\(version)-arm64.dmg")
-                try data.write(to: localDMG, options: [.atomic])
+                guard let temporaryURL,
+                      let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode),
+                      let finalURL = http.url,
+                      isAllowedUpdateURL(
+                        finalURL,
+                        manifestURL: manifestURL,
+                        additionalHosts: allowedHosts
+                      ) else {
+                    throw UpdateInstallError.invalidDownloadResponse
+                }
+                let attributes = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
+                guard let number = attributes[.size] as? NSNumber else {
+                    throw UpdateInstallError.invalidDownloadResponse
+                }
+                let actualFileSizeBytes = number.int64Value
+                if actualFileSizeBytes != expectedFileSizeBytes {
+                    throw UpdateInstallError.fileSizeMismatch(
+                        expected: expectedFileSizeBytes,
+                        actual: actualFileSizeBytes
+                    )
+                }
+                if http.expectedContentLength > 0,
+                   actualFileSizeBytes != http.expectedContentLength {
+                    throw UpdateInstallError.fileSizeMismatch(
+                        expected: http.expectedContentLength,
+                        actual: actualFileSizeBytes
+                    )
+                }
+                let actualSHA256 = try sha256HexFile(temporaryURL)
+                guard actualSHA256 == expectedSHA256 else {
+                    throw UpdateInstallError.sha256Mismatch(
+                        expected: expectedSHA256,
+                        actual: actualSHA256
+                    )
+                }
+                let installID = UUID().uuidString.lowercased()
+                let localDMG = updatesDir.appendingPathComponent(
+                    "TotalSegmentator Wrapper for Mac-\(version)-\(installID)-arm64.dmg"
+                )
+                try FileManager.default.moveItem(at: temporaryURL, to: localDMG)
+                stagedDMGForCleanup = localDMG
                 let scriptURL = try writeUpdateInstallerScript(
                     appURL: appURL,
                     dmgURL: localDMG,
-                    helperRoot: updatesDir.appendingPathComponent("install_\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+                    expectedVersion: version,
+                    helperRoot: updatesDir.appendingPathComponent(
+                        "install_\(installID)",
+                        isDirectory: true
+                    )
                 )
                 try launchUpdateInstaller(scriptURL)
+                stagedDMGForCleanup = nil
                 DispatchQueue.main.async {
-                    self?.updateInstallRunning = false
-                    self?.updateMessage = "更新を開始しました。アプリを終了して置き換えます。"
+                    self.updateDownloadProgressObservation = nil
+                    self.updateDownloadTask = nil
+                    self.updateInstallProgressFraction = 1
+                    self.updateInstallProgressText = "ダウンロードと検証が完了しました。"
+                    self.updateInstallRunning = false
+                    self.updateMessage = "更新を開始しました。アプリを終了して置き換えます。"
                     NSApplication.shared.terminate(nil)
                 }
             } catch {
+                if let stagedDMGForCleanup {
+                    try? FileManager.default.removeItem(at: stagedDMGForCleanup)
+                }
                 DispatchQueue.main.async {
-                    self?.updateInstallRunning = false
-                    self?.updateMessage = "更新に失敗しました: \(updateInstallMessage(error))"
+                    self.updateDownloadProgressObservation = nil
+                    self.updateDownloadTask = nil
+                    self.updateInstallProgressFraction = nil
+                    self.updateInstallProgressText = ""
+                    self.updateInstallRunning = false
+                    self.updateMessage = "更新に失敗しました: \(updateInstallMessage(error))"
                 }
             }
         }
+        updateDownloadProgressObservation = task.progress.observe(
+            \.fractionCompleted,
+            options: [.initial, .new]
+        ) { [weak self] progress, _ in
+            let fraction = max(0, min(1, progress.fractionCompleted))
+            let completed = progress.completedUnitCount
+            let total = progress.totalUnitCount
+            if completed > expectedFileSizeBytes || completed > MAX_UPDATE_DMG_BYTES {
+                task.cancel()
+            }
+            DispatchQueue.main.async {
+                self?.updateInstallProgressFraction = total > 0 ? fraction : nil
+                if total > 0 {
+                    self?.updateInstallProgressText = "更新ファイルを取得中: \(Int(fraction * 100))%"
+                } else {
+                    self?.updateInstallProgressText = "更新ファイルを取得中です。"
+                }
+            }
+        }
+        updateDownloadTask = task
+        task.resume()
     }
 
     func showDetailedLog() {
@@ -4156,6 +6064,27 @@ final class AppState: ObservableObject {
             } else {
                 logInfoText = "詳細ログは最後の一部だけ表示します。全文はログファイルで確認できます。"
             }
+        }
+        if setupRunning, let setupState = setupExecutionStateFromLog(text) {
+            if let parsedStep = SetupStep(rawValue: setupState.event.step) {
+                setupStep = parsedStep
+                setupHint = parsedStep.hint
+            }
+            if !setupState.event.message.isEmpty {
+                setupMessage = setupState.event.message
+            }
+            let downloadSteps = [
+                SetupStep.downloadTotalsegWeights.rawValue,
+                SetupStep.downloadDentalsegWeights.rawValue,
+            ]
+            if downloadSteps.contains(setupState.event.step), setupState.event.status == "running" {
+                setupDownloadProgress = setupState.downloadProgress
+            } else {
+                setupDownloadProgress = nil
+            }
+        }
+        if iosMeshRunning && iosMeshPreparingModel {
+            iosMeshDownloadProgress = iosMeshDownloadProgressFromLog(text)
         }
         let executionState = runExecutionStateFromLog(text)
         let resolvedStage = executionState.stage
@@ -4197,7 +6126,7 @@ final class AppState: ObservableObject {
             }
             self.refreshLog(from: self.activeLogURL)
             self.updateRunHeartbeat()
-            if !self.setupRunning && !self.isRunning {
+            if !self.setupRunning && !self.isRunning && !self.iosMeshRunning {
                 self.logTimer?.invalidate()
                 self.logTimer = nil
             }
@@ -4435,6 +6364,11 @@ func runFailureReason(from logURL: URL) -> String {
         .filter { !$0.isEmpty }
     guard !lines.isEmpty else {
         return ""
+    }
+    if lines.reversed().contains(where: {
+        $0.contains("totalseg_setup_weights_missing_or_invalid")
+    }) {
+        return "セットアップ用モデルが見つからないか、整合性の確認に失敗しました。アプリを再起動してセットアップをやり直してください。"
     }
     if lines.reversed().contains(where: { $0.lowercased().contains("mps backend out of memory") }) {
         return "MPSメモリ不足（Out Of Memory）で失敗しました。他のアプリを終了するかMacを再起動してから再試行してください。CTの範囲によっては、このMacでは高精細化を実行できない場合があります。"
@@ -5142,7 +7076,12 @@ func dicomAuditNextActionLabel(_ action: String) -> String {
 
 enum UpdateInstallError: Error {
     case sha256Mismatch(expected: String, actual: String)
+    case fileSizeMismatch(expected: Int64, actual: Int64)
+    case invalidDownloadResponse
     case helperLaunchFailed
+    case atomicSwapUnsupported
+    case updateTransactionPending
+    case unsafeUpdateWorkspace
 }
 
 func updateInstallMessage(_ error: Error) -> String {
@@ -5150,8 +7089,18 @@ func updateInstallMessage(_ error: Error) -> String {
         switch updateError {
         case let .sha256Mismatch(expected, actual):
             return "更新ファイルのSHA256が一致しません。expected \(expected), actual \(actual)"
+        case let .fileSizeMismatch(expected, actual):
+            return "更新ファイルのサイズが一致しません。expected \(expected), actual \(actual)"
+        case .invalidDownloadResponse:
+            return "更新ファイルのHTTPS配布先または応答を確認できません。"
         case .helperLaunchFailed:
             return "更新用helperを起動できませんでした。"
+        case .atomicSwapUnsupported:
+            return "この保存先では安全な自動更新に対応していません。DMGから手動で更新してください。"
+        case .updateTransactionPending:
+            return "前回の更新処理のファイルが残っているため、安全に自動更新できません。指定の配布ページからDMGを取得し、アプリを置き換えてください。"
+        case .unsafeUpdateWorkspace:
+            return "更新用フォルダの所有者またはファイル種別を安全に確認できません。"
         }
     }
     return String(describing: error)
@@ -5161,51 +7110,1215 @@ func sha256Hex(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
-func writeUpdateInstallerScript(appURL: URL, dmgURL: URL, helperRoot: URL) throws -> URL {
+func sha256HexFile(_ url: URL) throws -> String {
+    let stream = try FileHandle(forReadingFrom: url)
+    defer { try? stream.close() }
+    var digest = SHA256()
+    while true {
+        let block = try stream.read(upToCount: 1024 * 1024) ?? Data()
+        if block.isEmpty { break }
+        digest.update(data: block)
+    }
+    return digest.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+func isHTTPSURL(_ url: URL) -> Bool {
+    url.scheme?.lowercased() == "https"
+        && url.host?.isEmpty == false
+        && url.user == nil
+        && url.password == nil
+        && (url.port == nil || url.port == 443)
+}
+
+func isAllowedUpdateURL(
+    _ url: URL,
+    manifestURL: URL,
+    additionalHosts: [String]
+) -> Bool {
+    guard isHTTPSURL(url), isHTTPSURL(manifestURL),
+          let host = url.host?.lowercased(),
+          let manifestHost = manifestURL.host?.lowercased() else {
+        return false
+    }
+    let explicitlyAllowed = additionalHosts.compactMap { candidate -> String? in
+        let normalized = candidate.lowercased()
+        guard !normalized.isEmpty,
+              normalized.unicodeScalars.allSatisfy({
+                CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
+                    .contains($0)
+              }) else {
+            return nil
+        }
+        return normalized
+    }
+    return Set(explicitlyAllowed + [manifestHost]).contains(host)
+}
+
+func isSHA256Hex(_ value: String) -> Bool {
+    value.count == 64 && value.unicodeScalars.allSatisfy {
+        CharacterSet(charactersIn: "0123456789abcdef").contains($0)
+    }
+}
+
+private func isOwnedNormalUpdateDirectory(_ url: URL) -> Bool {
+    var info = stat()
+    guard lstat(url.standardizedFileURL.path, &info) == 0,
+          (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+          info.st_uid == getuid(),
+          (info.st_mode & mode_t(S_IWGRP | S_IWOTH)) == 0 else {
+        return false
+    }
+    return true
+}
+
+private func updateStatusDestinationIsSafeForReplace(_ url: URL) -> Bool {
+    let statusURL = url.standardizedFileURL
+    if !fileSystemEntryExists(statusURL) {
+        return true
+    }
+    var info = stat()
+    guard lstat(statusURL.path, &info) == 0,
+          (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+          info.st_uid == getuid(),
+          info.st_nlink == 1,
+          (info.st_mode & mode_t(S_IWGRP | S_IWOTH)) == 0 else {
+        return false
+    }
+    return true
+}
+
+func prepareOwnedUpdateDirectory(_ url: URL) -> Bool {
+    let directory = url.standardizedFileURL
+    let parent = directory.deletingLastPathComponent().standardizedFileURL
+    guard isOwnedNormalUpdateDirectory(parent) else { return false }
+    if fileSystemEntryExists(directory) {
+        return isOwnedNormalUpdateDirectory(directory)
+    }
+    do {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o755]
+        )
+    } catch {
+        return false
+    }
+    return isOwnedNormalUpdateDirectory(directory)
+}
+
+func createFreshOwnedUpdateDirectory(_ url: URL) -> Bool {
+    let directory = url.standardizedFileURL
+    guard !fileSystemEntryExists(directory) else { return false }
+    return prepareOwnedUpdateDirectory(directory)
+}
+
+private let updateAtomicAppBundleName = "TotalSegmentator Wrapper for Mac.app"
+private let updateTransactionSchema = "totalsegmentator_wrapper_mac.update_transaction.v1"
+private let updateTransactionFilename = ".totalsegmentator-wrapper-update-transaction.json"
+private let updateStagePrefix = ".TotalSegmentator Wrapper for Mac.app.update-stage-"
+
+private func semanticVersionTripletParts(_ value: String) -> [Substring]? {
+    let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 3 else {
+        return nil
+    }
+    for part in parts {
+        guard !part.isEmpty,
+              (part.count == 1 || part.first != "0"),
+              part.utf8.allSatisfy({ byte in byte >= 48 && byte <= 57 }) else {
+            return nil
+        }
+    }
+    return parts
+}
+
+func compareSemanticVersionTriplets(_ left: String, _ right: String) -> Int? {
+    guard let leftParts = semanticVersionTripletParts(left),
+          let rightParts = semanticVersionTripletParts(right) else {
+        return nil
+    }
+    for (leftPart, rightPart) in zip(leftParts, rightParts) {
+        if leftPart.count != rightPart.count {
+            return leftPart.count > rightPart.count ? 1 : -1
+        }
+        if leftPart != rightPart {
+            return leftPart.lexicographicallyPrecedes(rightPart) ? -1 : 1
+        }
+    }
+    return 0
+}
+
+func validatedUpdateCheckStatus(
+    _ result: [String: Any],
+    expectedManifestURL: String,
+    expectedCurrentVersion: String
+) -> String? {
+    guard result["schema"] as? String
+            == "totalsegmentator_wrapper_mac.update_check_result.v1",
+          result["manifest_url"] as? String == expectedManifestURL,
+          result["current_version"] as? String == expectedCurrentVersion,
+          let status = result["status"] as? String,
+          let latestVersion = result["latest_version"] as? String,
+          let updateAvailable = result["update_available"] as? Bool,
+          let critical = result["critical"] as? Bool,
+          let versionOrder = compareSemanticVersionTriplets(
+            latestVersion,
+            expectedCurrentVersion
+          ) else {
+        return nil
+    }
+    switch status {
+    case "current":
+        return versionOrder == 0 && !updateAvailable && !critical ? status : nil
+    case "update_available":
+        return versionOrder == 1 && updateAvailable && !critical ? status : nil
+    case "critical_update_available":
+        return versionOrder == 1 && updateAvailable && critical ? status : nil
+    default:
+        return nil
+    }
+}
+
+struct UpdateBundleIdentity: Equatable {
+    let bundleID: String
+    let teamID: String
+    let version: String
+
+    init?(bundleID: String, teamID: String, version: String) {
+        guard isSafeDiagnosticToken(bundleID),
+              isSafeDiagnosticToken(teamID),
+              isSafeDiagnosticToken(version),
+              semanticVersionTripletParts(version) != nil else {
+            return nil
+        }
+        self.bundleID = bundleID
+        self.teamID = teamID
+        self.version = version
+    }
+}
+
+enum UpdateTransactionRecoveryDecision: Equatable {
+    case discardStagedUpdate
+    case finalizeInstalledUpdate
+    case manualRecoveryRequired
+}
+
+func updateTransactionRecoveryDecision(
+    active: UpdateBundleIdentity?,
+    staged: UpdateBundleIdentity?,
+    stageExists: Bool,
+    transactionStage: String,
+    previous: UpdateBundleIdentity,
+    target: UpdateBundleIdentity
+) -> UpdateTransactionRecoveryDecision {
+    guard compareSemanticVersionTriplets(target.version, previous.version) == 1,
+          ["swap", "swapped"].contains(transactionStage),
+          (stageExists || staged == nil),
+          (!stageExists || staged != nil) else {
+        return .manualRecoveryRequired
+    }
+    if active == previous {
+        // The only safe automatic discard is the narrow window after the
+        // verified target was journaled and before (or after a rolled-back)
+        // swap.  A missing or invalid stage can be a partial copy, so it must
+        // remain for manual recovery.
+        return transactionStage == "swap" && stageExists && staged == target
+            ? .discardStagedUpdate
+            : .manualRecoveryRequired
+    }
+    if active == target {
+        // After a successful swap, the controlled stage holds the verified
+        // previous bundle.  It can also be absent when cleanup completed just
+        // before an interruption.  Any present-but-invalid stage is manual.
+        if !stageExists || staged == previous {
+            return .finalizeInstalledUpdate
+        }
+    }
+    return .manualRecoveryRequired
+}
+
+private enum UpdateAtomicSwapExitCode: Int32 {
+    case success = 0
+    case invalidArguments = 64
+    case invalidLocation = 65
+    case helperVerificationFailed = 66
+    case inputVerificationFailed = 67
+    case swapFailed = 68
+}
+
+private enum UpdateAtomicSwapMode: String {
+    case install = "--update-atomic-swap"
+    case rollback = "--update-atomic-rollback"
+}
+
+private enum UpdateAtomicSwapError: Error {
+    case invalidLocation
+    case unsupportedVolume
+    case swapFailed(Int32)
+}
+
+private struct UpdateTransaction {
+    let token: String
+    let stage: String
+    let previous: UpdateBundleIdentity
+    let target: UpdateBundleIdentity
+
+    init?(payload: [String: Any], appURL: URL) {
+        guard payload["schema"] as? String == updateTransactionSchema,
+              let token = payload["token"] as? String,
+              updateTransactionTokenIsValid(token),
+              payload["app_name"] as? String == updateAtomicAppBundleName,
+              let stage = payload["stage"] as? String,
+              ["swap", "swapped"].contains(stage),
+              payload["stage_name"] as? String
+                == updateStagingURL(appURL: appURL, token: token).lastPathComponent,
+              let previousBundleID = payload["previous_bundle_id"] as? String,
+              let previousTeamID = payload["previous_team_id"] as? String,
+              let previousVersion = payload["previous_version"] as? String,
+              let targetVersion = payload["target_version"] as? String,
+              let previous = UpdateBundleIdentity(
+                bundleID: previousBundleID,
+                teamID: previousTeamID,
+                version: previousVersion
+              ),
+              let target = UpdateBundleIdentity(
+                bundleID: previousBundleID,
+                teamID: previousTeamID,
+                version: targetVersion
+              ),
+              compareSemanticVersionTriplets(target.version, previous.version) == 1,
+              appURL.lastPathComponent == updateAtomicAppBundleName
+        else {
+            return nil
+        }
+        self.token = token
+        self.stage = stage
+        self.previous = previous
+        self.target = target
+    }
+}
+
+enum UpdateTransactionRecoveryResult: Equatable {
+    case none
+    case preservedPreviousApp
+    case finalizedInstalledApp
+    case manualRecoveryRequired
+}
+
+func updateTransactionURL(appURL: URL) -> URL {
+    appURL
+        .deletingLastPathComponent()
+        .appendingPathComponent(updateTransactionFilename)
+        .standardizedFileURL
+}
+
+func updateStagingURL(appURL: URL, token: String) -> URL {
+    appURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("\(updateStagePrefix)\(token)", isDirectory: true)
+        .standardizedFileURL
+}
+
+private func updateTransactionTokenIsValid(_ token: String) -> Bool {
+    token == token.lowercased() && UUID(uuidString: token)?.uuidString.lowercased() == token
+}
+
+private func updateStageToken(stageURL: URL, appURL: URL) -> String? {
+    guard sameFileURL(stageURL.deletingLastPathComponent(), appURL.deletingLastPathComponent()),
+          stageURL.lastPathComponent.hasPrefix(updateStagePrefix) else {
+        return nil
+    }
+    let token = String(stageURL.lastPathComponent.dropFirst(updateStagePrefix.count))
+    guard updateTransactionTokenIsValid(token),
+          stageURL.lastPathComponent == updateStagingURL(appURL: appURL, token: token).lastPathComponent
+    else {
+        return nil
+    }
+    return token
+}
+
+private func isNormalDirectory(_ url: URL) -> Bool {
+    guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+        return false
+    }
+    return values.isDirectory == true && values.isSymbolicLink != true
+}
+
+private func isNormalRegularFile(_ url: URL) -> Bool {
+    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+        return false
+    }
+    return values.isRegularFile == true && values.isSymbolicLink != true
+}
+
+private func fileSystemEntryExists(_ url: URL) -> Bool {
+    var info = stat()
+    return lstat(url.path, &info) == 0
+}
+
+/// Returns true for every matching directory entry, including files and
+/// symlinks.  A partial staging path is opaque until a human resolves it; do
+/// not infer ownership from its name or remove it on a later automatic update.
+func hasAnyUpdateStageArtifact(appURL: URL) -> Bool {
+    let app = appURL.standardizedFileURL
+    let parent = app.deletingLastPathComponent().standardizedFileURL
+    guard app.lastPathComponent == updateAtomicAppBundleName,
+          isNormalDirectory(parent),
+          let entries = try? FileManager.default.contentsOfDirectory(atPath: parent.path)
+    else {
+        return true
+    }
+    return entries.contains { $0.hasPrefix(updateStagePrefix) }
+}
+
+func hasPendingUpdateArtifacts(appURL: URL) -> Bool {
+    let app = appURL.standardizedFileURL
+    guard app.lastPathComponent == updateAtomicAppBundleName else {
+        return true
+    }
+    return fileSystemEntryExists(updateTransactionURL(appURL: app))
+        || hasAnyUpdateStageArtifact(appURL: app)
+}
+
+func canUseAtomicUpdateSwap(appURL: URL) -> Bool {
+    let app = appURL.standardizedFileURL
+    let parent = app.deletingLastPathComponent().standardizedFileURL
+    guard app.lastPathComponent == updateAtomicAppBundleName,
+          isNormalDirectory(app),
+          isNormalDirectory(parent),
+          FileManager.default.isWritableFile(atPath: parent.path),
+          let values = try? parent.resourceValues(forKeys: [.volumeSupportsSwapRenamingKey])
+    else {
+        return false
+    }
+    return values.volumeSupportsSwapRenaming == true
+}
+
+private func isValidAtomicUpdateSwapPair(appURL: URL, stageURL: URL) -> Bool {
+    let app = appURL.standardizedFileURL
+    let stage = stageURL.standardizedFileURL
+    return canUseAtomicUpdateSwap(appURL: app)
+        && isNormalDirectory(stage)
+        && updateStageToken(stageURL: stage, appURL: app) != nil
+}
+
+func performAtomicUpdateSwap(appURL: URL, stageURL: URL) throws {
+    let app = appURL.standardizedFileURL
+    let stage = stageURL.standardizedFileURL
+    guard canUseAtomicUpdateSwap(appURL: app) else {
+        throw UpdateAtomicSwapError.unsupportedVolume
+    }
+    guard isValidAtomicUpdateSwapPair(appURL: app, stageURL: stage) else {
+        throw UpdateAtomicSwapError.invalidLocation
+    }
+    let result: Int32 = app.path.withCString { appPath in
+        stage.path.withCString { stagePath in
+            renameatx_np(AT_FDCWD, appPath, AT_FDCWD, stagePath, UInt32(RENAME_SWAP))
+        }
+    }
+    guard result == 0 else {
+        throw UpdateAtomicSwapError.swapFailed(errno)
+    }
+}
+
+private func updateProcessOutput(executable: String, arguments: [String]) -> (Int32, String)? {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        return nil
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+}
+
+private func updateCommandSucceeds(executable: String, arguments: [String]) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
+    }
+}
+
+private func updateCodeSigningTeamID(appURL: URL) -> String? {
+    guard let result = updateProcessOutput(
+        executable: "/usr/bin/codesign",
+        arguments: ["-dv", "--verbose=4", appURL.path]
+    ), result.0 == 0 else {
+        return nil
+    }
+    for line in result.1.split(whereSeparator: \.isNewline) {
+        guard line.hasPrefix("TeamIdentifier=") else { continue }
+        let value = String(line.dropFirst("TeamIdentifier=".count))
+        return isSafeDiagnosticToken(value) ? value : nil
+    }
+    return nil
+}
+
+private func updateBundleIdentifierAndVersion(for appURL: URL) -> (bundleID: String, version: String)? {
+    guard isNormalDirectory(appURL) else { return nil }
+    let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+    guard isNormalRegularFile(infoURL),
+          let info = NSDictionary(contentsOf: infoURL) as? [String: Any],
+          let bundleID = info["CFBundleIdentifier"] as? String,
+          let version = info["CFBundleShortVersionString"] as? String,
+          isSafeDiagnosticToken(bundleID),
+          isSafeDiagnosticToken(version)
+    else {
+        return nil
+    }
+    return (bundleID, version)
+}
+
+private func updateBundleIdentity(for appURL: URL) -> UpdateBundleIdentity? {
+    guard let unsignedIdentity = updateBundleIdentifierAndVersion(for: appURL),
+          let teamID = updateCodeSigningTeamID(appURL: appURL)
+    else {
+        return nil
+    }
+    return UpdateBundleIdentity(
+        bundleID: unsignedIdentity.bundleID,
+        teamID: teamID,
+        version: unsignedIdentity.version
+    )
+}
+
+private func verifySignedUpdateBundle(_ appURL: URL, expected: UpdateBundleIdentity) -> Bool {
+    guard isNormalDirectory(appURL),
+          updateCommandSucceeds(
+            executable: "/usr/bin/codesign",
+            arguments: ["--verify", "--deep", "--strict", "--verbose=2", appURL.path]
+          ),
+          updateCommandSucceeds(
+            executable: "/usr/sbin/spctl",
+            arguments: ["--assess", "--type", "execute", "--verbose=2", appURL.path]
+          )
+    else {
+        return false
+    }
+    return updateBundleIdentity(for: appURL) == expected
+}
+
+private func runningUpdateHelperBundleURL() -> URL? {
+    let bundle = Bundle.main.bundleURL.standardizedFileURL
+    guard bundle.lastPathComponent == updateAtomicAppBundleName,
+          isNormalDirectory(bundle) else {
+        return nil
+    }
+    return bundle
+}
+
+func runAtomicUpdateSwapIfRequested(arguments: [String]) -> Int32? {
+    guard arguments.dropFirst().contains(where: {
+        $0 == UpdateAtomicSwapMode.install.rawValue || $0 == UpdateAtomicSwapMode.rollback.rawValue
+    }) else {
+        return nil
+    }
+    guard arguments.count == 9,
+          let mode = UpdateAtomicSwapMode(rawValue: arguments[1]),
+          let expectedApp = UpdateBundleIdentity(
+            bundleID: arguments[4], teamID: arguments[5], version: arguments[6]
+          ),
+          let expectedStage = UpdateBundleIdentity(
+            bundleID: arguments[4], teamID: arguments[5], version: arguments[7]
+          ),
+          let expectedHelper = UpdateBundleIdentity(
+            bundleID: arguments[4], teamID: arguments[5], version: arguments[8]
+          ),
+          let helperURL = runningUpdateHelperBundleURL()
+    else {
+        return UpdateAtomicSwapExitCode.invalidArguments.rawValue
+    }
+    let versionDirectionIsValid: Bool
+    switch mode {
+    case .install:
+        versionDirectionIsValid = compareSemanticVersionTriplets(
+            expectedStage.version,
+            expectedApp.version
+        ) == 1 && expectedHelper.version == expectedStage.version
+    case .rollback:
+        versionDirectionIsValid = compareSemanticVersionTriplets(
+            expectedApp.version,
+            expectedStage.version
+        ) == 1 && expectedHelper.version == expectedApp.version
+    }
+    guard versionDirectionIsValid else {
+        return UpdateAtomicSwapExitCode.invalidArguments.rawValue
+    }
+    let appURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
+    let stageURL = URL(fileURLWithPath: arguments[3]).standardizedFileURL
+    guard isValidAtomicUpdateSwapPair(appURL: appURL, stageURL: stageURL) else {
+        return UpdateAtomicSwapExitCode.invalidLocation.rawValue
+    }
+    guard verifySignedUpdateBundle(helperURL, expected: expectedHelper) else {
+        return UpdateAtomicSwapExitCode.helperVerificationFailed.rawValue
+    }
+    let inputsAreValid: Bool
+    switch mode {
+    case .install:
+        inputsAreValid = verifySignedUpdateBundle(appURL, expected: expectedApp)
+            && verifySignedUpdateBundle(stageURL, expected: expectedStage)
+    case .rollback:
+        // The target may be the reason for this rollback (for example, a
+        // post-swap codesign or Gatekeeper failure).  The mounted helper and
+        // previous bundle remain fully verified; requiring the broken target
+        // to verify here would make recovery impossible.
+        let appIdentity = updateBundleIdentifierAndVersion(for: appURL)
+        inputsAreValid = appIdentity?.bundleID == expectedApp.bundleID
+            && appIdentity?.version == expectedApp.version
+            && verifySignedUpdateBundle(stageURL, expected: expectedStage)
+    }
+    guard inputsAreValid else {
+        return UpdateAtomicSwapExitCode.inputVerificationFailed.rawValue
+    }
+    do {
+        try performAtomicUpdateSwap(appURL: appURL, stageURL: stageURL)
+        return UpdateAtomicSwapExitCode.success.rawValue
+    } catch {
+        return UpdateAtomicSwapExitCode.swapFailed.rawValue
+    }
+}
+
+func updateTransactionFileURLIsSafe(_ url: URL, appURL: URL) -> Bool {
+    let app = appURL.standardizedFileURL
+    let transactionURL = url.standardizedFileURL
+    let expectedURL = updateTransactionURL(appURL: app)
+    let parent = app.deletingLastPathComponent().standardizedFileURL
+    guard app.lastPathComponent == updateAtomicAppBundleName,
+          transactionURL.path == expectedURL.path,
+          transactionURL.deletingLastPathComponent().path == parent.path,
+          transactionURL.lastPathComponent == updateTransactionFilename,
+          isNormalDirectory(parent) else {
+        return false
+    }
+    var info = stat()
+    guard lstat(transactionURL.path, &info) == 0,
+          (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+          info.st_nlink == 1,
+          info.st_uid == getuid() else {
+        return false
+    }
+    return true
+}
+
+private func removeUpdateTransaction(_ transactionURL: URL, appURL: URL) -> Bool {
+    guard updateTransactionFileURLIsSafe(transactionURL, appURL: appURL) else { return false }
+    do {
+        try FileManager.default.removeItem(at: transactionURL)
+        return true
+    } catch {
+        return false
+    }
+}
+
+private func removeOwnedUpdateStage(appURL: URL, stageURL: URL) -> Bool {
+    guard isValidAtomicUpdateSwapPair(appURL: appURL, stageURL: stageURL) else {
+        return false
+    }
+    do {
+        try FileManager.default.removeItem(at: stageURL)
+        return true
+    } catch {
+        return false
+    }
+}
+
+private func writeUpdateInstallerStatus(
+    to statusURL: URL,
+    status: String,
+    reason: String,
+    stage: String,
+    returnCode: Int
+) {
+    guard isOwnedNormalUpdateDirectory(statusURL.deletingLastPathComponent()),
+          updateStatusDestinationIsSafeForReplace(statusURL) else {
+        return
+    }
+    writeJSON(
+        [
+            "schema": "totalsegmentator_wrapper_mac.update_install_status.v1",
+            "status": status,
+            "reason": reason,
+            "stage": stage,
+            "return_code": returnCode,
+        ],
+        to: statusURL
+    )
+}
+
+func recoverInterruptedUpdateTransaction(
+    appURL: URL,
+    statusURL: URL
+) -> UpdateTransactionRecoveryResult {
+    let app = appURL.standardizedFileURL
+    let transactionURL = updateTransactionURL(appURL: app)
+    guard fileSystemEntryExists(transactionURL) else {
+        // A forced stop during ditto can leave a partial stage before a
+        // transaction is intentionally written.  It has no authenticated
+        // ownership record, so do not remove it or wait for the user to press
+        // the next update button before surfacing manual recovery.
+        guard app.lastPathComponent == updateAtomicAppBundleName,
+              hasAnyUpdateStageArtifact(appURL: app) else {
+            return .none
+        }
+        writeUpdateInstallerStatus(
+            to: statusURL,
+            status: "failed",
+            reason: "update_recovery_required",
+            stage: "recovery",
+            returnCode: 1
+        )
+        return .manualRecoveryRequired
+    }
+    guard canUseAtomicUpdateSwap(appURL: app),
+          updateTransactionFileURLIsSafe(transactionURL, appURL: app),
+          let payload = readJSON(transactionURL),
+          let transaction = UpdateTransaction(payload: payload, appURL: app)
+    else {
+        writeUpdateInstallerStatus(
+            to: statusURL,
+            status: "failed",
+            reason: "update_recovery_required",
+            stage: "recovery",
+            returnCode: 1
+        )
+        return .manualRecoveryRequired
+    }
+    let stageURL = updateStagingURL(appURL: app, token: transaction.token)
+    let stageExists = fileSystemEntryExists(stageURL)
+    let active = verifySignedUpdateBundle(app, expected: transaction.previous)
+        ? transaction.previous
+        : (verifySignedUpdateBundle(app, expected: transaction.target) ? transaction.target : nil)
+    let staged = stageExists && isNormalDirectory(stageURL)
+        ? (verifySignedUpdateBundle(stageURL, expected: transaction.previous)
+            ? transaction.previous
+            : (verifySignedUpdateBundle(stageURL, expected: transaction.target) ? transaction.target : nil))
+        : nil
+    switch updateTransactionRecoveryDecision(
+        active: active,
+        staged: staged,
+        stageExists: stageExists,
+        transactionStage: transaction.stage,
+        previous: transaction.previous,
+        target: transaction.target
+    ) {
+    case .discardStagedUpdate:
+        guard stageExists,
+              staged == transaction.target,
+              removeOwnedUpdateStage(appURL: app, stageURL: stageURL),
+              removeUpdateTransaction(transactionURL, appURL: app) else {
+            writeUpdateInstallerStatus(
+                to: statusURL,
+                status: "failed",
+                reason: "update_recovery_required",
+                stage: "recovery",
+                returnCode: 1
+            )
+            return .manualRecoveryRequired
+        }
+        writeUpdateInstallerStatus(
+            to: statusURL,
+            status: "failed",
+            reason: "update_install_interrupted_before_swap",
+            stage: transaction.stage,
+            returnCode: 1
+        )
+        return .preservedPreviousApp
+    case .finalizeInstalledUpdate:
+        if stageExists {
+            guard staged == transaction.previous,
+                  removeOwnedUpdateStage(appURL: app, stageURL: stageURL) else {
+                writeUpdateInstallerStatus(
+                    to: statusURL,
+                    status: "failed",
+                    reason: "update_recovery_required",
+                    stage: "recovery",
+                    returnCode: 1
+                )
+                return .manualRecoveryRequired
+            }
+        }
+        guard removeUpdateTransaction(transactionURL, appURL: app) else {
+            writeUpdateInstallerStatus(
+                to: statusURL,
+                status: "failed",
+                reason: "update_recovery_required",
+                stage: "recovery",
+                returnCode: 1
+            )
+            return .manualRecoveryRequired
+        }
+        writeUpdateInstallerStatus(
+            to: statusURL,
+            status: "success",
+            reason: "update_installed",
+            stage: "complete",
+            returnCode: 0
+        )
+        return .finalizedInstalledApp
+    case .manualRecoveryRequired:
+        writeUpdateInstallerStatus(
+            to: statusURL,
+            status: "failed",
+            reason: "update_recovery_required",
+            stage: "recovery",
+            returnCode: 1
+        )
+        return .manualRecoveryRequired
+    }
+}
+
+func writeUpdateInstallerScript(
+    appURL: URL,
+    dmgURL: URL,
+    expectedVersion: String,
+    helperRoot: URL
+) throws -> URL {
+    let app = appURL.standardizedFileURL
+    guard canUseAtomicUpdateSwap(appURL: app) else {
+        throw UpdateInstallError.atomicSwapUnsupported
+    }
+    guard isSafeDiagnosticToken(expectedVersion) else {
+        throw UpdateInstallError.invalidDownloadResponse
+    }
+    let updateToken = UUID().uuidString.lowercased()
+    let stagedURL = updateStagingURL(appURL: app, token: updateToken)
+    let transactionURL = updateTransactionURL(appURL: app)
+    guard !hasPendingUpdateArtifacts(appURL: app) else {
+        throw UpdateInstallError.updateTransactionPending
+    }
     let mountURL = helperRoot.appendingPathComponent("mount", isDirectory: true)
-    try FileManager.default.createDirectory(at: helperRoot, withIntermediateDirectories: true)
+    guard createFreshOwnedUpdateDirectory(helperRoot) else {
+        throw UpdateInstallError.unsafeUpdateWorkspace
+    }
     let scriptURL = helperRoot.appendingPathComponent("install_update.zsh")
-    let appPath = shellSingleQuote(appURL.path)
+    let appPath = shellSingleQuote(app.path)
     let dmgPath = shellSingleQuote(dmgURL.path)
     let mountPath = shellSingleQuote(mountURL.path)
+    let version = shellSingleQuote(expectedVersion)
+    let stagedPath = shellSingleQuote(stagedURL.path)
+    let transactionPath = shellSingleQuote(transactionURL.path)
+    let updateTokenPath = shellSingleQuote(updateToken)
+    let statusPath = shellSingleQuote(
+        helperRoot.deletingLastPathComponent()
+            .appendingPathComponent("update_install_status.json")
+            .path
+    )
+    let logPath = shellSingleQuote(
+        helperRoot.appendingPathComponent("update_install.log").path
+    )
     let script = """
 #!/bin/zsh
 set -euo pipefail
 DMG=\(dmgPath)
 APP=\(appPath)
 MOUNT=\(mountPath)
+EXPECTED_VERSION=\(version)
+STAGED_NEW=\(stagedPath)
+UPDATE_TRANSACTION=\(transactionPath)
+UPDATE_TOKEN=\(updateTokenPath)
+UPDATE_STATUS_JSON=\(statusPath)
+UPDATE_INSTALL_LOG=\(logPath)
 APP_PARENT="$(/usr/bin/dirname "$APP")"
-BACKUP="$APP_PARENT/.TotalSegmentator Wrapper for Mac.app.update-backup.$$"
-RESTORE_BACKUP=0
-mkdir -p "$MOUNT"
-sleep 2
-hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
+UPDATE_SUCCEEDED=0
+SWAP_COMPLETED=0
+SWAP_ROLLED_BACK=0
+STAGE_CREATED=0
+TRANSACTION_WRITTEN=0
+STAGED_NEW_ID=""
+UPDATE_TRANSACTION_ID=""
+PENDING_ARTIFACTS_DETECTED=0
+UPDATE_STAGE=initialize
+/bin/mkdir -p "$MOUNT"
+is_safe_token() {
+  local VALUE="$1"
+  [[ -n "$VALUE" && ${#VALUE} -le 80 ]] || return 1
+  case "$VALUE" in
+    (*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+is_semantic_version_triplet() {
+  local VALUE="$1"
+  local PART
+  local -a PARTS
+  PARTS=("${(@s:.:)VALUE}")
+  [[ "${#PARTS[@]}" == "3" ]] || return 1
+  for PART in "${PARTS[@]}"; do
+    [[ -n "$PART" ]] || return 1
+    case "$PART" in
+      (*[!0-9]*) return 1 ;;
+    esac
+    [[ "$PART" == "0" || "$PART" != 0* ]] || return 1
+  done
+  return 0
+}
+compare_semantic_version_triplets() {
+  local LEFT="$1"
+  local RIGHT="$2"
+  local INDEX
+  local LEFT_PART
+  local RIGHT_PART
+  local -a LEFT_PARTS
+  local -a RIGHT_PARTS
+  is_semantic_version_triplet "$LEFT" || return 2
+  is_semantic_version_triplet "$RIGHT" || return 2
+  LEFT_PARTS=("${(@s:.:)LEFT}")
+  RIGHT_PARTS=("${(@s:.:)RIGHT}")
+  for INDEX in 1 2 3; do
+    LEFT_PART="${LEFT_PARTS[$INDEX]}"
+    RIGHT_PART="${RIGHT_PARTS[$INDEX]}"
+    if (( ${#LEFT_PART} > ${#RIGHT_PART} )); then
+      /usr/bin/printf '1'
+      return 0
+    fi
+    if (( ${#LEFT_PART} < ${#RIGHT_PART} )); then
+      /usr/bin/printf '%s' '-1'
+      return 0
+    fi
+    if [[ "$LEFT_PART" > "$RIGHT_PART" ]]; then
+      /usr/bin/printf '1'
+      return 0
+    fi
+    if [[ "$LEFT_PART" < "$RIGHT_PART" ]]; then
+      /usr/bin/printf '%s' '-1'
+      return 0
+    fi
+  done
+  /usr/bin/printf '0'
+}
+has_pending_update_artifacts() {
+  local CANDIDATE
+  if [[ -e "$UPDATE_TRANSACTION" || -L "$UPDATE_TRANSACTION" ]]; then
+    return 0
+  fi
+  setopt local_options null_glob
+  for CANDIDATE in "$APP_PARENT"/".TotalSegmentator Wrapper for Mac.app.update-stage-"*; do
+    if [[ -e "$CANDIDATE" || -L "$CANDIDATE" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+file_identity() {
+  local TARGET_PATH="$1"
+  /usr/bin/stat -f '%d:%i' "$TARGET_PATH"
+}
+status_destination_is_safe_for_replace() {
+  local OWNER
+  local LINK_COUNT
+  local FILE_TYPE
+  if [[ ! -e "$UPDATE_STATUS_JSON" && ! -L "$UPDATE_STATUS_JSON" ]]; then
+    return 0
+  fi
+  [[ ! -L "$UPDATE_STATUS_JSON" && -f "$UPDATE_STATUS_JSON" ]] || return 1
+  OWNER="$(/usr/bin/stat -f '%u' "$UPDATE_STATUS_JSON")" || return 1
+  LINK_COUNT="$(/usr/bin/stat -f '%l' "$UPDATE_STATUS_JSON")" || return 1
+  FILE_TYPE="$(/usr/bin/stat -f '%HT' "$UPDATE_STATUS_JSON")" || return 1
+  [[ "$OWNER" == "$(/usr/bin/id -u)" && "$LINK_COUNT" == "1" && "$FILE_TYPE" == "Regular File" ]]
+}
+record_owned_staged_new() {
+  [[ ! -L "$STAGED_NEW" && -d "$STAGED_NEW" ]] || return 1
+  STAGED_NEW_ID="$(file_identity "$STAGED_NEW")" || return 1
+  [[ -n "$STAGED_NEW_ID" ]]
+}
+owned_staged_new_identity_matches() {
+  [[ -n "$STAGED_NEW_ID" && -e "$STAGED_NEW" && ! -L "$STAGED_NEW" && -d "$STAGED_NEW" ]] || return 1
+  [[ "$(file_identity "$STAGED_NEW")" == "$STAGED_NEW_ID" ]]
+}
+remove_staged_new() {
+  if [[ ! -e "$STAGED_NEW" && ! -L "$STAGED_NEW" ]]; then
+    return 0
+  fi
+  [[ ! -L "$STAGED_NEW" && -d "$STAGED_NEW" ]] || return 1
+  /bin/rm -rf "$STAGED_NEW"
+}
+remove_owned_staged_new() {
+  if [[ "$STAGE_CREATED" != "1" ]]; then
+    if [[ ! -e "$STAGED_NEW" && ! -L "$STAGED_NEW" ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  owned_staged_new_identity_matches || return 1
+  remove_staged_new
+}
+update_transaction_is_safe() {
+  local OWNER
+  local LINK_COUNT
+  local FILE_TYPE
+  [[ "$UPDATE_TRANSACTION" == "$APP_PARENT/.totalsegmentator-wrapper-update-transaction.json" ]] || return 1
+  [[ ! -L "$UPDATE_TRANSACTION" && -f "$UPDATE_TRANSACTION" ]] || return 1
+  OWNER="$(/usr/bin/stat -f '%u' "$UPDATE_TRANSACTION")" || return 1
+  LINK_COUNT="$(/usr/bin/stat -f '%l' "$UPDATE_TRANSACTION")" || return 1
+  FILE_TYPE="$(/usr/bin/stat -f '%HT' "$UPDATE_TRANSACTION")" || return 1
+  [[ "$OWNER" == "$(/usr/bin/id -u)" && "$LINK_COUNT" == "1" && "$FILE_TYPE" == "Regular File" ]]
+}
+remove_update_transaction() {
+  if [[ ! -e "$UPDATE_TRANSACTION" && ! -L "$UPDATE_TRANSACTION" ]]; then
+    return 0
+  fi
+  update_transaction_is_safe || return 1
+  /bin/rm -f "$UPDATE_TRANSACTION"
+}
+remove_own_update_transaction() {
+  if [[ "$TRANSACTION_WRITTEN" != "1" ]]; then
+    if [[ ! -e "$UPDATE_TRANSACTION" && ! -L "$UPDATE_TRANSACTION" ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  [[ -n "$UPDATE_TRANSACTION_ID" && -e "$UPDATE_TRANSACTION" && ! -L "$UPDATE_TRANSACTION" ]] || return 1
+  [[ "$(file_identity "$UPDATE_TRANSACTION")" == "$UPDATE_TRANSACTION_ID" ]] || return 1
+  remove_update_transaction
+}
+write_update_status() {
+  local STATUS="$1"
+  local REASON="$2"
+  local STAGE="$3"
+  local RETURN_CODE="$4"
+  local STATUS_TMP
+  STATUS_TMP="$(/usr/bin/mktemp "${UPDATE_STATUS_JSON}.tmp.XXXXXX")"
+  /usr/bin/printf '{"schema":"totalsegmentator_wrapper_mac.update_install_status.v1","status":"%s","reason":"%s","stage":"%s","return_code":%d}\\n' \
+    "$STATUS" "$REASON" "$STAGE" "$RETURN_CODE" > "$STATUS_TMP"
+  if ! status_destination_is_safe_for_replace; then
+    /bin/rm -f "$STATUS_TMP"
+    return 1
+  fi
+  if ! /bin/mv "$STATUS_TMP" "$UPDATE_STATUS_JSON"; then
+    /bin/rm -f "$STATUS_TMP"
+    return 1
+  fi
+  status_destination_is_safe_for_replace
+}
+write_update_transaction() {
+  local STAGE="$1"
+  local TRANSACTION_TMP
+  TRANSACTION_TMP="$(/usr/bin/mktemp "${UPDATE_TRANSACTION}.tmp.XXXXXX")"
+  /usr/bin/printf '{"schema":"totalsegmentator_wrapper_mac.update_transaction.v1","token":"%s","app_name":"TotalSegmentator Wrapper for Mac.app","stage_name":".TotalSegmentator Wrapper for Mac.app.update-stage-%s","stage":"%s","previous_bundle_id":"%s","previous_team_id":"%s","previous_version":"%s","target_version":"%s"}\\n' \
+    "$UPDATE_TOKEN" "$UPDATE_TOKEN" "$STAGE" "$CURRENT_BUNDLE_ID" "$CURRENT_TEAM_ID" "$CURRENT_VERSION" "$EXPECTED_VERSION" > "$TRANSACTION_TMP"
+  if /bin/ln "$TRANSACTION_TMP" "$UPDATE_TRANSACTION"; then
+    /bin/rm -f "$TRANSACTION_TMP"
+    update_transaction_is_safe || return 1
+    UPDATE_TRANSACTION_ID="$(file_identity "$UPDATE_TRANSACTION")" || return 1
+    [[ -n "$UPDATE_TRANSACTION_ID" ]] || return 1
+    TRANSACTION_WRITTEN=1
+  else
+    /bin/rm -f "$TRANSACTION_TMP"
+    return 1
+  fi
+}
+mark_update_stage() {
+  UPDATE_STAGE="$1"
+  /usr/bin/printf 'stage=%s\\n' "$UPDATE_STAGE"
+  write_update_status "running" "update_install_running" "$UPDATE_STAGE" 0
+}
+rollback_after_failed_postcheck() {
+  if /usr/bin/arch -arm64 "$UPDATE_SWAP_EXECUTABLE" --update-atomic-rollback \
+    "$APP" "$STAGED_NEW" "$CURRENT_BUNDLE_ID" "$CURRENT_TEAM_ID" \
+    "$EXPECTED_VERSION" "$CURRENT_VERSION" "$EXPECTED_VERSION"; then
+    record_owned_staged_new || return 1
+    return 0
+  fi
+  return 1
+}
+verify_rolled_back_app() {
+  local ROLLED_BACK_BUNDLE_ID
+  local ROLLED_BACK_TEAM_ID
+  local ROLLED_BACK_VERSION
+  /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP" || return 1
+  /usr/sbin/spctl --assess --type execute --verbose=2 "$APP" || return 1
+  ROLLED_BACK_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" || return 1
+  ROLLED_BACK_TEAM_ID="$(/usr/bin/codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p')" || return 1
+  ROLLED_BACK_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" || return 1
+  [[ "$ROLLED_BACK_BUNDLE_ID" == "$CURRENT_BUNDLE_ID" \
+    && "$ROLLED_BACK_TEAM_ID" == "$CURRENT_TEAM_ID" \
+    && "$ROLLED_BACK_VERSION" == "$CURRENT_VERSION" ]]
+}
+verify_installed_target_app() {
+  /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP" || return 1
+  /usr/sbin/spctl --assess --type execute --verbose=2 "$APP" || return 1
+  INSTALLED_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" || return 1
+  INSTALLED_TEAM_ID="$(/usr/bin/codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p')" || return 1
+  INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" || return 1
+  [[ "$INSTALLED_BUNDLE_ID" == "$CURRENT_BUNDLE_ID" \
+    && "$INSTALLED_TEAM_ID" == "$CURRENT_TEAM_ID" \
+    && "$INSTALLED_VERSION" == "$EXPECTED_VERSION" ]]
+}
 cleanup() {
-  hdiutil detach "$MOUNT" >/dev/null 2>&1 || true
+  local RETURN_CODE=$?
+  trap - EXIT
+  set +e
+  if [[ "$UPDATE_SUCCEEDED" != "1" && "$SWAP_COMPLETED" == "1" && "$SWAP_ROLLED_BACK" != "1" ]]; then
+    if rollback_after_failed_postcheck && verify_rolled_back_app; then
+      SWAP_ROLLED_BACK=1
+    fi
+  fi
+  /usr/bin/hdiutil detach "$MOUNT" >/dev/null 2>&1 || true
+  if [[ "$PENDING_ARTIFACTS_DETECTED" == "1" ]]; then
+    write_update_status "failed" "update_recovery_required" "recovery" 1
+    if [[ -d "$APP" ]]; then
+      /usr/bin/open "$APP" || true
+    fi
+    exit "$RETURN_CODE"
+  fi
+  if [[ "$UPDATE_SUCCEEDED" == "1" ]]; then
+    /bin/rm -f "$DMG"
+    if remove_owned_staged_new && remove_own_update_transaction; then
+      write_update_status "success" "update_installed" "complete" 0
+    else
+      write_update_status "failed" "update_recovery_required" "recovery" 1
+    fi
+    /usr/bin/open "$APP"
+    exit 0
+  fi
+  if [[ "$RETURN_CODE" == "0" ]]; then
+    RETURN_CODE=2
+  fi
+  if [[ "$SWAP_ROLLED_BACK" == "1" ]]; then
+    /bin/rm -f "$DMG"
+    if remove_owned_staged_new && remove_own_update_transaction; then
+      write_update_status "failed" "update_install_failed_rolled_back" "$UPDATE_STAGE" "$RETURN_CODE"
+    else
+      write_update_status "failed" "update_recovery_required" "recovery" 1
+    fi
+  elif [[ "$SWAP_COMPLETED" == "1" ]]; then
+    write_update_status "failed" "update_recovery_required" "recovery" "$RETURN_CODE"
+  elif remove_owned_staged_new && remove_own_update_transaction; then
+    /bin/rm -f "$DMG"
+    write_update_status "failed" "update_install_failed_before_replace" "$UPDATE_STAGE" "$RETURN_CODE"
+  else
+    write_update_status "failed" "update_recovery_required" "recovery" 1
+  fi
+  if [[ -d "$APP" ]]; then
+    /usr/bin/open "$APP" || true
+  fi
+  exit "$RETURN_CODE"
 }
 trap cleanup EXIT
+unsetopt CLOBBER
+if ! exec {UPDATE_LOG_FD}> "$UPDATE_INSTALL_LOG"; then
+  setopt CLOBBER
+  exit 74
+fi
+setopt CLOBBER
+exec 1>&$UPDATE_LOG_FD 2>&1
+write_update_status "running" "update_install_running" "$UPDATE_STAGE" 0
+/bin/sleep 2
+mark_update_stage mount
+/usr/bin/hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
 NEW_APP="$MOUNT/TotalSegmentator Wrapper for Mac.app"
-if [[ ! -d "$NEW_APP" ]]; then
-  echo "TotalSegmentator Wrapper for Mac.app was not found in update DMG" >&2
+if [[ ! -d "$APP" || -L "$APP" || "$(/usr/bin/basename "$APP")" != "TotalSegmentator Wrapper for Mac.app" ]]; then
+  echo "Installed app is not a normal TotalSegmentator Wrapper for Mac.app bundle" >&2
   exit 3
 fi
-/usr/sbin/spctl --assess --type execute --verbose=2 "$NEW_APP"
-if [[ -d "$APP" ]]; then
-  /bin/chmod -R u+w "$APP" >/dev/null 2>&1 || true
-  /bin/mv "$APP" "$BACKUP"
-  RESTORE_BACKUP=1
-fi
-if ! /usr/bin/ditto "$NEW_APP" "$APP"; then
-  if [[ "$RESTORE_BACKUP" == "1" && -d "$BACKUP" && ! -d "$APP" ]]; then
-    /bin/mv "$BACKUP" "$APP" || true
-  fi
+if [[ ! -d "$NEW_APP" || -L "$NEW_APP" ]]; then
+  echo "TotalSegmentator Wrapper for Mac.app was not found in update DMG" >&2
   exit 4
 fi
-if [[ -d "$BACKUP" ]]; then
-  /bin/rm -rf "$BACKUP"
+UPDATE_SWAP_EXECUTABLE="$NEW_APP/Contents/MacOS/TotalSegmentatorWrapperForMac"
+if [[ ! -f "$UPDATE_SWAP_EXECUTABLE" || -L "$UPDATE_SWAP_EXECUTABLE" || ! -x "$UPDATE_SWAP_EXECUTABLE" ]]; then
+  echo "Verified update bundle is missing its atomic update helper" >&2
+  exit 10
 fi
-cleanup
-/usr/bin/open "$APP"
+mark_update_stage verify_download
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$NEW_APP"
+/usr/sbin/spctl --assess --type execute --verbose=2 "$NEW_APP"
+CURRENT_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+NEW_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$NEW_APP/Contents/Info.plist")"
+CURRENT_TEAM_ID="$(/usr/bin/codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p')"
+NEW_TEAM_ID="$(/usr/bin/codesign -dv --verbose=4 "$NEW_APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p')"
+CURRENT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+NEW_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$NEW_APP/Contents/Info.plist")"
+if ! is_safe_token "$CURRENT_BUNDLE_ID" || ! is_safe_token "$CURRENT_TEAM_ID" || ! is_safe_token "$CURRENT_VERSION" || ! is_safe_token "$EXPECTED_VERSION"; then
+  echo "Update identity metadata is not safe" >&2
+  exit 5
+fi
+if [[ -z "$CURRENT_BUNDLE_ID" || "$NEW_BUNDLE_ID" != "$CURRENT_BUNDLE_ID" ]]; then
+  echo "Update app bundle identifier does not match the installed app" >&2
+  exit 6
+fi
+if [[ -z "$CURRENT_TEAM_ID" || "$CURRENT_TEAM_ID" == "not set" || "$NEW_TEAM_ID" != "$CURRENT_TEAM_ID" ]]; then
+  echo "Update app Developer Team does not match the installed app" >&2
+  exit 7
+fi
+if [[ "$NEW_VERSION" != "$EXPECTED_VERSION" ]]; then
+  echo "Update app version does not match the selected update" >&2
+  exit 8
+fi
+if ! VERSION_ORDER="$(compare_semantic_version_triplets "$EXPECTED_VERSION" "$CURRENT_VERSION")"; then
+  echo "Update app versions must be semantic version triplets" >&2
+  exit 9
+fi
+if [[ "$VERSION_ORDER" != "1" ]]; then
+  echo "Update app version must be newer than the installed version" >&2
+  exit 9
+fi
+if has_pending_update_artifacts; then
+  echo "A previous update transaction is still present" >&2
+  PENDING_ARTIFACTS_DETECTED=1
+  exit 11
+fi
+mark_update_stage stage_copy
+/usr/bin/ditto "$NEW_APP" "$STAGED_NEW"
+STAGE_CREATED=1
+if [[ ! -d "$STAGED_NEW" || -L "$STAGED_NEW" ]]; then
+  echo "Staged update bundle is not a normal directory" >&2
+  exit 12
+fi
+record_owned_staged_new || exit 12
+mark_update_stage verify_stage
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$STAGED_NEW"
+/usr/sbin/spctl --assess --type execute --verbose=2 "$STAGED_NEW"
+STAGED_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$STAGED_NEW/Contents/Info.plist")"
+STAGED_TEAM_ID="$(/usr/bin/codesign -dv --verbose=4 "$STAGED_NEW" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p')"
+STAGED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGED_NEW/Contents/Info.plist")"
+STAGED_EXECUTABLE="$STAGED_NEW/Contents/MacOS/TotalSegmentatorWrapperForMac"
+if [[ ! -f "$STAGED_EXECUTABLE" || -L "$STAGED_EXECUTABLE" || ! -x "$STAGED_EXECUTABLE" ]]; then
+  echo "Staged update bundle is missing its atomic update helper" >&2
+  exit 13
+fi
+if [[ "$STAGED_BUNDLE_ID" != "$CURRENT_BUNDLE_ID" || "$STAGED_TEAM_ID" != "$CURRENT_TEAM_ID" || "$STAGED_VERSION" != "$EXPECTED_VERSION" ]]; then
+  echo "Staged update identity does not match the verified update" >&2
+  exit 13
+fi
+write_update_transaction "swap"
+mark_update_stage swap
+if /usr/bin/arch -arm64 "$UPDATE_SWAP_EXECUTABLE" --update-atomic-swap \
+  "$APP" "$STAGED_NEW" "$CURRENT_BUNDLE_ID" "$CURRENT_TEAM_ID" \
+  "$CURRENT_VERSION" "$EXPECTED_VERSION" "$EXPECTED_VERSION"; then
+  :
+else
+  SWAP_RETURN_CODE=$?
+  exit "$SWAP_RETURN_CODE"
+fi
+SWAP_COMPLETED=1
+record_owned_staged_new || exit 71
+mark_update_stage verify_installed
+if ! verify_installed_target_app; then
+  if rollback_after_failed_postcheck && verify_rolled_back_app; then
+    SWAP_ROLLED_BACK=1
+    exit 72
+  fi
+  exit 73
+fi
+UPDATE_SUCCEEDED=1
+UPDATE_STAGE=complete
+exit 0
 """
     try script.write(to: scriptURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
@@ -5225,6 +8338,151 @@ func launchUpdateInstaller(_ scriptURL: URL) throws {
 
 func shellSingleQuote(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+struct SetupDownloadProgress {
+    let source: String
+    let status: String
+    let taskID: Int?
+    let index: Int
+    let taskTotal: Int
+    let completedBytes: Int?
+    let totalBytes: Int?
+    let percent: Int?
+    let rateBPS: Double?
+    let etaSeconds: Int?
+    let resumed: Bool
+    let resumeFromBytes: Int?
+
+    var fraction: Double? {
+        if let percent { return max(0, min(1, Double(percent) / 100)) }
+        if let completedBytes, let totalBytes, totalBytes > 0 {
+            return max(0, min(1, Double(completedBytes) / Double(totalBytes)))
+        }
+        return nil
+    }
+
+    var displayText: String {
+        let model = "モデル \(index)/\(taskTotal)"
+        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "downloading":
+            var parts = ["\(model)を取得中"]
+            if let completedBytes, let totalBytes {
+                parts.append("\(formatByteCount(completedBytes)) / \(formatByteCount(totalBytes))")
+            }
+            if let percent { parts.append("\(percent)%") }
+            if let rateBPS, rateBPS > 0 { parts.append("\(formatByteCount(Int(rateBPS)))/秒") }
+            if let etaSeconds, etaSeconds > 0 { parts.append("残り約\(formatCompactDuration(etaSeconds))") }
+            if resumed {
+                if let resumeFromBytes, resumeFromBytes > 0 {
+                    parts.append("\(formatByteCount(resumeFromBytes))の中断位置から再開")
+                } else {
+                    parts.append("中断位置から再開")
+                }
+            }
+            return parts.joined(separator: " ・ ")
+        case "verifying":
+            var parts = ["\(model)の完全性を確認中"]
+            if let completedBytes, let totalBytes {
+                parts.append("\(formatByteCount(completedBytes)) / \(formatByteCount(totalBytes))")
+            }
+            if let percent { parts.append("\(percent)%") }
+            return parts.joined(separator: " ・ ")
+        case "restart":
+            return "\(model)は再開条件を確認できなかったため先頭から再取得します"
+        case "complete":
+            return "\(model)の準備完了"
+        case "failed":
+            return "\(model)の取得失敗"
+        case "starting":
+            return "\(model)の取得を開始しています"
+        default:
+            return "\(model)の状態を確認中"
+        }
+    }
+}
+
+struct SetupProgressEvent {
+    let step: String
+    let status: String
+    let message: String
+}
+
+struct SetupExecutionLogState {
+    let event: SetupProgressEvent
+    let downloadProgress: SetupDownloadProgress?
+}
+
+func setupExecutionStateFromLog(_ text: String) -> SetupExecutionLogState? {
+    var event: SetupProgressEvent?
+    var downloadProgress: SetupDownloadProgress?
+    for rawLine in text.split(whereSeparator: \.isNewline) {
+        let line = String(rawLine)
+        if line.hasPrefix("SETUP_PROGRESS ") {
+            let fields = String(line.dropFirst("SETUP_PROGRESS ".count))
+            guard let messageRange = fields.range(of: " message=") else { continue }
+            let prefix = fields[..<messageRange.lowerBound]
+            let values = Dictionary(
+                uniqueKeysWithValues: prefix.split(separator: " ").compactMap { field -> (String, String)? in
+                    let parts = field.split(separator: "=", maxSplits: 1).map(String.init)
+                    return parts.count == 2 ? (parts[0], parts[1]) : nil
+                }
+            )
+            if let step = values["step"], let status = values["status"] {
+                event = SetupProgressEvent(
+                    step: step,
+                    status: status,
+                    message: String(fields[messageRange.upperBound...])
+                )
+                if step != SetupStep.downloadTotalsegWeights.rawValue || status != "running" {
+                    downloadProgress = nil
+                }
+            }
+            continue
+        }
+        guard line.hasPrefix("SETUP_DOWNLOAD_PROGRESS ") else { continue }
+        let jsonText = String(line.dropFirst("SETUP_DOWNLOAD_PROGRESS ".count))
+        guard let data = jsonText.data(using: .utf8),
+              let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let source = stringFromJSON(payload["source"]),
+              let status = stringFromJSON(payload["status"]),
+              let index = intFromJSON(payload["index"]),
+              let taskTotal = intFromJSON(payload["task_total"])
+        else { continue }
+        downloadProgress = SetupDownloadProgress(
+            source: source,
+            status: status,
+            taskID: intFromJSON(payload["task_id"]),
+            index: index,
+            taskTotal: taskTotal,
+            completedBytes: intFromJSON(payload["completed_bytes"]),
+            totalBytes: intFromJSON(payload["total_bytes"]),
+            percent: intFromJSON(payload["percent"]),
+            rateBPS: (payload["rate_bps"] as? NSNumber)?.doubleValue,
+            etaSeconds: intFromJSON(payload["eta_seconds"]),
+            resumed: (payload["resumed"] as? Bool) ?? false,
+            resumeFromBytes: intFromJSON(payload["resume_from_bytes"])
+        )
+        let downloadStep = source == "dentalsegmentator"
+            ? SetupStep.downloadDentalsegWeights
+            : SetupStep.downloadTotalsegWeights
+        event = SetupProgressEvent(
+            step: downloadStep.rawValue,
+            status: "running",
+            message: downloadStep.hint
+        )
+    }
+    guard let event else { return nil }
+    return SetupExecutionLogState(event: event, downloadProgress: downloadProgress)
+}
+
+func iosMeshDownloadProgressFromLog(_ text: String) -> SetupDownloadProgress? {
+    guard let progress = setupExecutionStateFromLog(text)?.downloadProgress,
+          progress.source == "ios-meshsegnet"
+    else {
+        return nil
+    }
+    return progress
 }
 
 struct RunLogProgress {
@@ -5438,6 +8696,7 @@ struct ToothSegPreparationProgress {
     let rateBPS: Double?
     let etaSeconds: Int?
     let resumed: Bool
+    let resumeFromBytes: Int?
 
     var fraction: Double? {
         if let percent { return max(0, min(1, Double(percent) / 100)) }
@@ -5456,7 +8715,13 @@ struct ToothSegPreparationProgress {
         if let percent { parts.append("\(percent)%") }
         if let rateBPS, rateBPS > 0 { parts.append("\(formatByteCount(Int(rateBPS)))/秒") }
         if let etaSeconds, etaSeconds > 0 { parts.append("残り約\(formatCompactDuration(etaSeconds))") }
-        if resumed { parts.append("中断位置から再開") }
+        if resumed {
+            if let resumeFromBytes, resumeFromBytes > 0 {
+                parts.append("\(formatByteCount(resumeFromBytes))の中断位置から再開")
+            } else {
+                parts.append("中断位置から再開")
+            }
+        }
         return parts.joined(separator: " ・ ")
     }
 }
@@ -5479,10 +8744,62 @@ func toothSegPreparationProgressFromLog(_ text: String) -> ToothSegPreparationPr
             percent: intFromJSON(payload["percent"]),
             rateBPS: (payload["rate_bps"] as? NSNumber)?.doubleValue,
             etaSeconds: intFromJSON(payload["eta_seconds"]),
-            resumed: (payload["resumed"] as? Bool) ?? false
+            resumed: (payload["resumed"] as? Bool) ?? false,
+            resumeFromBytes: intFromJSON(payload["resume_from_bytes"])
         )
     }
     return last
+}
+
+func dentalSegmentatorPreparationProgressFromLog(
+    _ text: String
+) -> ToothSegPreparationProgress? {
+    guard let download = setupExecutionStateFromLog(text)?.downloadProgress,
+          download.source == "dentalsegmentator"
+    else {
+        return nil
+    }
+    let status = download.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let stage: String
+    let message: String
+    switch status {
+    case "downloading":
+        stage = "download"
+        if download.resumed {
+            message = "DentalSegmentatorのモデル取得を中断位置から再開しています。"
+        } else {
+            message = "DentalSegmentatorのモデルを取得しています。"
+        }
+    case "verifying":
+        stage = "verifying"
+        message = "DentalSegmentatorのモデルの完全性を確認中です。"
+    case "restart":
+        stage = "restart"
+        message = "DentalSegmentatorのモデルは、再開条件を確認できなかったため先頭から再取得します。"
+    case "complete":
+        stage = "complete"
+        message = "DentalSegmentatorのモデルの準備完了です。"
+    case "failed":
+        stage = "failed"
+        message = "DentalSegmentatorのモデルの取得失敗です。"
+    case "starting":
+        stage = "starting"
+        message = "DentalSegmentatorのモデル取得を開始しています。"
+    default:
+        stage = "unknown"
+        message = "DentalSegmentatorのモデルの状態を確認中です。"
+    }
+    return ToothSegPreparationProgress(
+        stage: stage,
+        message: message,
+        downloadedBytes: download.completedBytes,
+        totalBytes: download.totalBytes,
+        percent: download.percent,
+        rateBPS: download.rateBPS,
+        etaSeconds: download.etaSeconds,
+        resumed: download.resumed,
+        resumeFromBytes: download.resumeFromBytes
+    )
 }
 
 func formatCompactDuration(_ seconds: Int) -> String {
@@ -5525,6 +8842,29 @@ func stringFromJSON(_ value: Any?) -> String? {
 func isDirectory(_ url: URL) -> Bool {
     var isDirectory = ObjCBool(false)
     return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+}
+
+func isNiftiFile(_ url: URL) -> Bool {
+    let name = url.lastPathComponent.lowercased()
+    return name.hasSuffix(".nii") || name.hasSuffix(".nii.gz")
+}
+
+func currentArchitectureName() -> String {
+#if arch(arm64)
+    return "arm64"
+#elseif arch(x86_64)
+    return "x86_64"
+#else
+    return "unknown"
+#endif
+}
+
+func isSafeDiagnosticToken(_ value: String) -> Bool {
+    guard !value.isEmpty, value.count <= 80 else {
+        return false
+    }
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_-.")
+    return value.unicodeScalars.allSatisfy { allowed.contains($0) }
 }
 
 func sameFileURL(_ left: URL, _ right: URL) -> Bool {
