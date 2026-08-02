@@ -13,10 +13,26 @@
       "url": "https://github.com/wasserth/TotalSegmentator/releases/download/v2.5.0-weights/Dataset115_mandible.zip",
       "size_bytes": 230321497,
       "sha256": "a9f4a7bd92e093fc0bb5a06450989429df2da1cc4e470d54373b2f3a3175eab9",
-      "sha256_source": "locally-observed-official-asset",
+      "sha256_source": "approved-official-asset-revalidation",
       "publisher_digest_available": false,
-      "local_observation_evidence": "not-preserved-unverified",
-      "revalidation_required_before_release": true,
+      "revalidation_required_before_release": false,
+      "revalidation_evidence": {
+        "schema": "totalsegmentator_wrapper_mac.official_asset_revalidation.v1",
+        "official_url": "https://github.com/wasserth/TotalSegmentator/releases/download/v2.5.0-weights/Dataset115_mandible.zip",
+        "release_tag": "v2.5.0-weights",
+        "filename": "Dataset115_mandible.zip",
+        "size_bytes": 230321497,
+        "sha256": "a9f4a7bd92e093fc0bb5a06450989429df2da1cc4e470d54373b2f3a3175eab9",
+        "verified_at_utc": "2026-08-02T21:48:51Z",
+        "transport": "https-pinned-official-release-asset",
+        "checks": [
+          "complete-size",
+          "sha256",
+          "zip-crc",
+          "expected-model-structure"
+        ],
+        "approval": "approved-for-release"
+      },
       "dataset_dir": "Dataset115_mandible",
       "required_files": [
         "nnUNetTrainer_DASegOrd0_NoMirroring__nnUNetPlans__3d_fullres/plans.json",
@@ -32,10 +48,26 @@
       "url": "https://github.com/wasserth/TotalSegmentator/releases/download/v2.0.0-weights/Dataset297_TotalSegmentator_total_3mm_1559subj.zip",
       "size_bytes": 135386075,
       "sha256": "0baa2c8de2975600eb31801dd5c1825cd2b356f794498659cf3348714c073394",
-      "sha256_source": "locally-observed-official-asset",
+      "sha256_source": "approved-official-asset-revalidation",
       "publisher_digest_available": false,
-      "local_observation_evidence": "not-preserved-unverified",
-      "revalidation_required_before_release": true,
+      "revalidation_required_before_release": false,
+      "revalidation_evidence": {
+        "schema": "totalsegmentator_wrapper_mac.official_asset_revalidation.v1",
+        "official_url": "https://github.com/wasserth/TotalSegmentator/releases/download/v2.0.0-weights/Dataset297_TotalSegmentator_total_3mm_1559subj.zip",
+        "release_tag": "v2.0.0-weights",
+        "filename": "Dataset297_TotalSegmentator_total_3mm_1559subj.zip",
+        "size_bytes": 135386075,
+        "sha256": "0baa2c8de2975600eb31801dd5c1825cd2b356f794498659cf3348714c073394",
+        "verified_at_utc": "2026-08-02T21:48:51Z",
+        "transport": "https-pinned-official-release-asset",
+        "checks": [
+          "complete-size",
+          "sha256",
+          "zip-crc",
+          "expected-model-structure"
+        ],
+        "approval": "approved-for-release"
+      },
       "dataset_dir": "Dataset297_TotalSegmentator_total_3mm_1559subj",
       "required_files": [
         "nnUNetTrainer_4000epochs_NoMirroring__nnUNetPlans__3d_fullres/plans.json",

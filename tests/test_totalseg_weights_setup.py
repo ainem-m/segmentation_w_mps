@@ -52,16 +52,17 @@ class TotalSegWeightsSetupTests(unittest.TestCase):
                 self.assertFalse(assets[task_id]["publisher_digest_available"])
                 self.assertEqual(
                     assets[task_id]["sha256_source"],
-                    "locally-observed-official-asset",
+                    "approved-official-asset-revalidation",
                 )
                 self.assertNotIn("sha256_observed_at", assets[task_id])
-                self.assertEqual(
-                    assets[task_id]["local_observation_evidence"],
-                    "not-preserved-unverified",
-                )
-                self.assertTrue(
+                self.assertNotIn("local_observation_evidence", assets[task_id])
+                self.assertFalse(
                     assets[task_id]["revalidation_required_before_release"]
                 )
+                evidence = assets[task_id]["revalidation_evidence"]
+                self.assertEqual(evidence["official_url"], assets[task_id]["url"])
+                self.assertEqual(evidence["sha256"], assets[task_id]["sha256"])
+                self.assertEqual(evidence["approval"], "approved-for-release")
 
     def test_manifest_rejects_missing_unverified_local_digest_revalidation_marker(self) -> None:
         manifest_path = Path(weights_setup.__file__).with_name(
@@ -71,6 +72,10 @@ class TotalSegWeightsSetupTests(unittest.TestCase):
         local_asset = next(
             asset for asset in manifest["assets"] if asset["task_id"] == 115
         )
+        local_asset["sha256_source"] = "locally-observed-official-asset"
+        local_asset["publisher_digest_available"] = False
+        local_asset["local_observation_evidence"] = "not-preserved-unverified"
+        local_asset.pop("revalidation_evidence")
         local_asset.pop("revalidation_required_before_release", None)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,27 +95,6 @@ class TotalSegWeightsSetupTests(unittest.TestCase):
         local_asset = next(
             asset for asset in manifest["assets"] if asset["task_id"] == 115
         )
-        local_asset["sha256_source"] = "approved-official-asset-revalidation"
-        local_asset["revalidation_required_before_release"] = False
-        local_asset.pop("local_observation_evidence")
-        local_asset["revalidation_evidence"] = {
-            "schema": "totalsegmentator_wrapper_mac.official_asset_revalidation.v1",
-            "official_url": local_asset["url"],
-            "release_tag": local_asset["release_tag"],
-            "filename": local_asset["filename"],
-            "size_bytes": local_asset["size_bytes"],
-            "sha256": local_asset["sha256"],
-            "verified_at_utc": "2026-08-01T00:00:00Z",
-            "transport": "https-pinned-official-release-asset",
-            "checks": [
-                "complete-size",
-                "sha256",
-                "zip-crc",
-                "expected-model-structure",
-            ],
-            "approval": "approved-for-release",
-        }
-
         with tempfile.TemporaryDirectory() as tmp:
             candidate = Path(tmp) / "manifest.json"
             candidate.write_text(json.dumps(manifest), encoding="utf-8")
@@ -170,8 +154,14 @@ class TotalSegWeightsSetupTests(unittest.TestCase):
         self.assertEqual(assets[113].sha256_source, "github-release-digest")
         self.assertEqual(assets[115].release_tag, "v2.5.0-weights")
         self.assertEqual(assets[297].release_tag, "v2.0.0-weights")
-        self.assertEqual(assets[115].sha256_source, "locally-observed-official-asset")
-        self.assertEqual(assets[297].sha256_source, "locally-observed-official-asset")
+        self.assertEqual(
+            assets[115].sha256_source,
+            "approved-official-asset-revalidation",
+        )
+        self.assertEqual(
+            assets[297].sha256_source,
+            "approved-official-asset-revalidation",
+        )
         self.assertTrue(all(asset.totalsegmentator_version == "2.14.0" for asset in assets.values()))
 
     def test_setup_sequence_uses_pinned_version_and_records_three_task_indexes(self) -> None:
@@ -1824,6 +1814,8 @@ class TotalSegWeightsSetupTests(unittest.TestCase):
                         "https://github.com/wasserth/TotalSegmentator/releases/download/"
                         f"{item['release_tag']}/{value}"
                     )
+                    item["revalidation_evidence"]["filename"] = value
+                    item["revalidation_evidence"]["official_url"] = item["url"]
                 candidate = Path(tmp) / "manifest.json"
                 candidate.write_text(json.dumps(payload), encoding="utf-8")
 
