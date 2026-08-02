@@ -67,6 +67,7 @@ totalsegmentator_wrapper_mac = [
   "bin/lib/*.dylib",
   "licenses/*.txt",
   "licenses/*.json",
+  "totalseg_setup_weights_manifest.json",
 ]
 
 [tool.pytest.ini_options]
