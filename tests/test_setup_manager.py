@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
+import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from totalsegmentator_wrapper_mac.setup_manager import (
     bundle_install_record,
     build_dentalseg_weights_command,
+    build_bundled_wheels_install_command,
     build_installed_doctor_command,
+    build_locked_dependencies_install_command,
     build_setup_environment,
     build_totalseg_privacy_command,
     build_totalseg_weights_command,
@@ -17,14 +25,222 @@ from totalsegmentator_wrapper_mac.setup_manager import (
     dentalsegmentator_model_root,
     default_app_support_dir,
     read_setup_state,
+    resolve_bundled_wheels,
     run_setup,
     setup_paths,
     validate_app_support_path,
     validate_safe_command,
 )
+from totalsegmentator_wrapper_mac.totalseg_weights_setup import setup_weight_manifest_sha256
 
 
 class SetupManagerTests(unittest.TestCase):
+    def test_setup_attempt_id_is_preserved_in_result_state_and_child_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"TOTALSEGMENTATOR_WRAPPER_MAC_SETUP_ATTEMPT_ID": "attempt-fixture-123"},
+        ):
+            home = Path(tmp)
+            wheel = home / "app.whl"
+            constraints = home / "constraints.txt"
+            wheel.write_bytes(b"fake")
+            constraints.write_text("# fixture\n", encoding="utf-8")
+            environments: list[dict[str, str] | None] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                environments.append(env)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                allow_network=True,
+                skip_mps_check=True,
+                runner=recording_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.setup_attempt_id, "attempt-fixture-123")
+            state = read_setup_state(result.paths.state_json)
+            assert state is not None
+            self.assertEqual(state["setup_attempt_id"], "attempt-fixture-123")
+            self.assertTrue(environments)
+            self.assertTrue(
+                all(
+                    env is not None
+                    and env["TOTALSEGMENTATOR_WRAPPER_MAC_SETUP_ATTEMPT_ID"] == "attempt-fixture-123"
+                    for env in environments
+                )
+            )
+
+    def test_cross_process_setup_lock_returns_busy_without_running_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            app_support = default_app_support_dir(home)
+            wheel = home / "app.whl"
+            wheel.write_bytes(b"fake")
+            source_root = Path(__file__).resolve().parents[1] / "src"
+            child_code = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "from totalsegmentator_wrapper_mac.setup_manager import exclusive_app_setup_lock\n"
+                "with exclusive_app_setup_lock(Path(sys.argv[1])):\n"
+                " print('locked', flush=True)\n"
+                " sys.stdin.readline()\n"
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(source_root)
+            child = subprocess.Popen(
+                [sys.executable, "-c", child_code, str(app_support)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=environment,
+            )
+            try:
+                assert child.stdout is not None
+                self.assertEqual(child.stdout.readline().strip(), "locked")
+                commands: list[list[str]] = []
+
+                def recording_runner(
+                    command: list[str], cwd: Path | None, env: dict[str, str] | None
+                ) -> subprocess.CompletedProcess[str]:
+                    commands.append(command)
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                result = run_setup(
+                    home=home,
+                    python_executable=home / "python3.12",
+                    wheel=wheel,
+                    runner=recording_runner,
+                    python_inspector=_python312,
+                )
+
+                self.assertEqual(result.status, "failed")
+                self.assertEqual(result.reason, "setup_busy")
+                self.assertEqual(commands, [])
+                self.assertFalse(result.paths.state_json.exists())
+            finally:
+                if child.stdin is not None:
+                    child.stdin.write("release\n")
+                    child.stdin.flush()
+                child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    if stream is not None:
+                        stream.close()
+
+    def test_native_parent_lock_token_delegates_to_its_direct_python_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_support = Path(tmp) / "support"
+            app_support.mkdir()
+            lock_path = app_support / ".totalsegmentator-wrapper-setup.lock"
+            token = "parent-lock-fixture"
+            with lock_path.open("w+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                json.dump(
+                    {
+                        "schema": "totalsegmentator_wrapper_mac.parent_setup_lock.v1",
+                        "token": token,
+                        "pid": os.getpid(),
+                    },
+                    lock,
+                )
+                lock.flush()
+                os.fsync(lock.fileno())
+                environment = os.environ.copy()
+                environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+                environment["TOTALSEGMENTATOR_WRAPPER_MAC_PARENT_SETUP_LOCK_TOKEN"] = token
+                environment["TOTALSEGMENTATOR_WRAPPER_MAC_PARENT_SETUP_LOCK_PID"] = str(os.getpid())
+                child = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import sys\n"
+                            "from pathlib import Path\n"
+                            "from totalsegmentator_wrapper_mac.setup_manager import exclusive_app_setup_lock\n"
+                            "with exclusive_app_setup_lock(Path(sys.argv[1])):\n"
+                            " print('delegated')\n"
+                        ),
+                        str(app_support),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                    timeout=5,
+                    check=False,
+                )
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertEqual(child.stdout.strip(), "delegated")
+
+    def test_setup_lock_symlink_is_rejected_without_truncating_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            app_support = default_app_support_dir(home)
+            app_support.mkdir(parents=True)
+            unrelated = home / "unrelated.txt"
+            unrelated.write_text("preserve me", encoding="utf-8")
+            (app_support / ".totalsegmentator-wrapper-setup.lock").symlink_to(unrelated)
+            wheel = home / "app.whl"
+            wheel.write_bytes(b"fake")
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                runner=recording_runner,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.reason, "setup_lock_failed")
+            self.assertEqual(commands, [])
+            self.assertEqual(unrelated.read_text(encoding="utf-8"), "preserve me")
+
+    def test_setup_lock_hardlink_is_rejected_without_touching_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            app_support = default_app_support_dir(home)
+            app_support.mkdir(parents=True)
+            unrelated = home / "unrelated.txt"
+            unrelated.write_text("preserve me", encoding="utf-8")
+            os.link(unrelated, app_support / ".totalsegmentator-wrapper-setup.lock")
+            wheel = home / "app.whl"
+            wheel.write_bytes(b"fake")
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                runner=recording_runner,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.reason, "setup_lock_failed")
+            self.assertEqual(commands, [])
+            self.assertEqual(unrelated.read_text(encoding="utf-8"), "preserve me")
+
     def test_paths_are_under_app_support(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -72,6 +288,30 @@ class SetupManagerTests(unittest.TestCase):
                 self.assertNotIn("sudo", command)
                 self.assertNotIn("brew", command)
                 self.assertIsInstance(command, list)
+            # The bundled Python uses an @executable_path-relative libpython;
+            # copied venv launchers cannot start because env/lib has no copy.
+            self.assertNotIn("--copies", commands[0])
+
+    def test_totalseg_weights_command_forwards_progress_log(self) -> None:
+        command = build_totalseg_weights_command(
+            Path("/app/env/bin/python"),
+            progress_log=Path("/app/logs/launcher.log"),
+        )
+
+        self.assertIn("totalsegmentator_wrapper_mac.totalseg_weights_setup", command)
+        self.assertIn("--progress-log", command)
+        self.assertIn("/app/logs/launcher.log", command)
+        self.assertEqual(command[-3:], ["115", "297", "113"])
+
+    def test_dentalseg_weights_command_forwards_progress_log(self) -> None:
+        command = build_dentalseg_weights_command(
+            Path("/app/env/bin/python"),
+            Path("/app/models/dentalsegmentator"),
+            progress_log=Path("/app/logs/launcher.log"),
+        )
+
+        self.assertIn("--progress-log", command)
+        self.assertIn("/app/logs/launcher.log", command)
 
     def test_dry_run_setup_does_not_write_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,6 +371,45 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.reason, "runtime_install_failed")
             self.assertTrue(result.paths.state_json.exists())
+
+    def test_dependency_build_failure_is_classified_and_logged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wheel = home / "totalsegmentator_wrapper_mac-0.4.1-cp312-cp312-macosx_11_0_arm64.whl"
+            constraints = home / "constraints.txt"
+            wheel.write_bytes(b"fake")
+            constraints.write_text("fpsample==1.0.2\n", encoding="utf-8")
+
+            def failing_build_runner(command: list[str], cwd: Path | None, env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+                if "pip" in command and "install" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        1,
+                        "Building wheel for fpsample (pyproject.toml): finished with status 'error'",
+                        "ERROR: Failed building wheel for fpsample\nCMake or a C++17 compiler is required",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                allow_network=True,
+                skip_mps_check=True,
+                runner=failing_build_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "dependency_build_failed")
+            install_step = next(step for step in result.steps if step.name == "install_wheel")
+            self.assertIsNotNone(install_step.diagnostic_log)
+            assert install_step.diagnostic_log is not None
+            diagnostic_text = Path(install_step.diagnostic_log).read_text(encoding="utf-8")
+            self.assertIn("Failed building wheel for fpsample", diagnostic_text)
+            self.assertIn("Building wheel for fpsample", diagnostic_text)
 
     def test_wheel_missing_fails_before_runtime_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -270,7 +549,509 @@ class SetupManagerTests(unittest.TestCase):
 
             self.assertIn("-c", command)
             self.assertIn(str(root / "constraints.txt"), command)
-            self.assertIn(str(root / "app.whl") + "[dicom,mps,dentalseg,toothseg]", command)
+            self.assertIn("--find-links", command)
+            self.assertIn(str(root), command)
+            self.assertIn("--only-binary", command)
+            self.assertIn("--isolated", command)
+            self.assertEqual(command[:5], [
+                str(root / "env" / "bin" / "python"),
+                "-I",
+                "-m",
+                "pip",
+                "--isolated",
+            ])
+            binary_index = command.index("--only-binary")
+            self.assertEqual(command[binary_index + 1], ":all:")
+            self.assertNotIn("fpsample", command)
+            self.assertIn(
+                str(root / "app.whl")
+                + "[dicom,mps,dentalseg,toothseg,ios-meshsegnet]",
+                command,
+            )
+
+    def test_locked_dependency_command_requires_hashes_without_broad_root_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock = root / "requirements.lock"
+            command = build_locked_dependencies_install_command(
+                root / "env" / "bin" / "python",
+                requirements_lock=lock,
+                wheel_directory=root / "wheels",
+            )
+            self.assertIn("--require-hashes", command)
+            self.assertIn("--no-deps", command)
+            self.assertIn("-r", command)
+            self.assertEqual(command[command.index("-r") + 1], str(lock))
+            self.assertIn("--only-binary", command)
+            self.assertIn("--isolated", command)
+            self.assertNotIn("totalsegmentator-wrapper-mac", " ".join(command))
+
+    def test_bundled_wheel_install_command_force_reinstalls_exact_local_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fpsample = root / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"
+            acvl_utils = root / "acvl_utils-0.2.6-py3-none-any.whl"
+
+            command = build_bundled_wheels_install_command(
+                root / "env" / "bin" / "python",
+                (fpsample, acvl_utils),
+            )
+
+            self.assertEqual(
+                command,
+                [
+                    str(root / "env" / "bin" / "python"),
+                    "-I",
+                    "-m",
+                    "pip",
+                    "--isolated",
+                    "install",
+                    "--force-reinstall",
+                    "--no-deps",
+                    str(fpsample),
+                    str(acvl_utils),
+                ],
+            )
+
+    def test_bundled_wheel_resolver_rejects_manifest_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resources = Path(tmp)
+            wheels = resources / "wheels"
+            wheels.mkdir()
+            fpsample = wheels / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"
+            acvl_utils = wheels / "acvl_utils-0.2.6-py3-none-any.whl"
+            fpsample.write_bytes(b"fpsample")
+            acvl_utils.write_bytes(b"acvl-utils")
+            manifest_path = resources / "setup_manifest.json"
+            manifest = {
+                "fpsample_wheel_sha256": hashlib.sha256(fpsample.read_bytes()).hexdigest(),
+                "acvl_utils_wheel_sha256": "0" * 64,
+                "bundled": {
+                    "fpsample_wheel": f"wheels/{fpsample.name}",
+                    "acvl_utils_wheel": f"wheels/{acvl_utils.name}",
+                },
+            }
+
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                resolve_bundled_wheels(manifest_path, manifest)
+
+    def test_bundled_wheel_validation_keeps_filesystem_detail_in_local_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            private_path = home / "private-inputs" / "unexpected-wheel.whl"
+
+            with patch(
+                "totalsegmentator_wrapper_mac.setup_manager.resolve_bundled_wheels",
+                side_effect=PermissionError(13, "Permission denied", str(private_path)),
+            ):
+                result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundled_wheel_invalid")
+            validation = next(
+                step for step in result.steps if step.name == "validate_bundled_wheels"
+            )
+            self.assertEqual(
+                validation.error,
+                "Bundled dependency wheel validation failed.",
+            )
+            self.assertIsNotNone(validation.diagnostic_log)
+            assert validation.diagnostic_log is not None
+            self.assertIn(
+                str(private_path),
+                Path(validation.diagnostic_log).read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any("totalseg_weights_setup" in " ".join(command) for command in commands)
+            )
+            state = read_setup_state(result.paths.state_json)
+            assert state is not None
+            self.assertNotIn(str(private_path), json.dumps(state, ensure_ascii=False))
+
+    def test_setup_rejects_wrapper_wheel_hash_mismatch_before_any_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            fixture["payload"]["wheel_sha256"] = "0" * 64
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+            self.assertIsNone(result.wheel)
+            self.assertIsNone(result.constraints)
+
+    def test_setup_rejects_constraints_hash_mismatch_before_any_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            fixture["payload"]["constraints_sha256"] = "f" * 64
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+
+    def test_release_bundle_requires_manifest_bound_hashed_lock_before_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _promote_fixture_wrapper_to_release_identity(fixture)
+            fixture["payload"]["signing_mode"] = "developer-id"
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+
+    def test_release_bundle_installs_hashed_lock_then_local_wrapper_without_deps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _promote_fixture_wrapper_to_release_identity(fixture)
+            resources = fixture["resources"]
+            assert isinstance(resources, Path)
+            lock = resources / "constraints" / "macos-arm64-py312.requirements.lock"
+            lock.write_text(
+                "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
+                "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3\n"
+                "numpy==2.3.3 --hash=sha256:" + "c" * 64 + "\n",
+                encoding="utf-8",
+            )
+            lock_sha256 = hashlib.sha256(lock.read_bytes()).hexdigest()
+            metadata = resources / "constraints" / "macos-arm64-py312.lock.json"
+            metadata.write_text(
+                json.dumps(
+                    _release_lock_metadata(
+                        constraints=fixture["constraints"],
+                        project_file=fixture["project_file"],
+                        requirements_lock=lock,
+                        requirements_lock_sha256=lock_sha256,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            payload = fixture["payload"]
+            assert isinstance(payload, dict)
+            bundled = payload["bundled"]
+            assert isinstance(bundled, dict)
+            payload.update(
+                {
+                    "signing_mode": "developer-id",
+                    "requirements_lock_sha256": lock_sha256,
+                    "dependency_lock_metadata_sha256": hashlib.sha256(
+                        metadata.read_bytes()
+                    ).hexdigest(),
+                    "project_file_sha256": hashlib.sha256(
+                        fixture["project_file"].read_bytes()  # type: ignore[union-attr]
+                    ).hexdigest(),
+                }
+            )
+            bundled.update(
+                {
+                    "requirements_lock": "constraints/macos-arm64-py312.requirements.lock",
+                    "dependency_lock_metadata": "constraints/macos-arm64-py312.lock.json",
+                    "project_file": "constraints/pyproject.toml",
+                }
+            )
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "success")
+            locked = next(command for command in commands if "--require-hashes" in command)
+            self.assertEqual(locked[locked.index("-r") + 1], str(lock))
+            self.assertIn("--no-deps", locked)
+            wrapper = next(
+                command
+                for command in commands
+                if "--no-deps" in command
+                and str(fixture["wheel"]) in command
+            )
+            self.assertNotIn("--require-hashes", wrapper)
+            self.assertEqual(result.wheel_install_mode, "network_require_hashes_lock")
+            self.assertEqual(result.requirements_lock, str(lock))
+
+            for field, invalid_value in (
+                ("schema", "wrong-schema"),
+                ("constraints_sha256", "0" * 64),
+                ("project_file_sha256", "0" * 64),
+                ("root_install_requirement", "totalsegmentator-wrapper-mac"),
+                (
+                    "resolved_distribution_names",
+                    ["acvl-utils", "fpsample", "numpy", "numpy"],
+                ),
+                (
+                    "resolver",
+                    {
+                        "name": "pip-compile",
+                        "version": "7.5.0",
+                        "platform": "macos-13-arm64",
+                        "python": "3.12",
+                    },
+                ),
+            ):
+                with self.subTest(metadata_field=field):
+                    mutated = json.loads(metadata.read_text(encoding="utf-8"))
+                    mutated[field] = invalid_value
+                    metadata.write_text(json.dumps(mutated), encoding="utf-8")
+                    payload["dependency_lock_metadata_sha256"] = hashlib.sha256(
+                        metadata.read_bytes()
+                    ).hexdigest()
+                    _write_fixture_manifest(fixture)
+                    rejected, rejected_commands = _run_packaged_setup(home, fixture)
+
+                    self.assertEqual(rejected.status, "failed")
+                    self.assertEqual(rejected.reason, "bundle_manifest_invalid")
+                    self.assertEqual(rejected_commands, [])
+
+                    metadata.write_text(
+                        json.dumps(
+                            _release_lock_metadata(
+                                constraints=fixture["constraints"],
+                                project_file=fixture["project_file"],
+                                requirements_lock=lock,
+                                requirements_lock_sha256=lock_sha256,
+                            )
+                        ),
+                        encoding="utf-8",
+                    )
+                    payload["dependency_lock_metadata_sha256"] = hashlib.sha256(
+                        metadata.read_bytes()
+                    ).hexdigest()
+                    _write_fixture_manifest(fixture)
+
+            project_file = fixture["project_file"]
+            assert isinstance(project_file, Path)
+            original_project = project_file.read_text(encoding="utf-8")
+            project_file.write_text(
+                original_project + "dependencies = ['unlocked-new-dependency>=1']\n",
+                encoding="utf-8",
+            )
+            rejected, rejected_commands = _run_packaged_setup(home, fixture)
+            self.assertEqual(rejected.status, "failed")
+            self.assertEqual(rejected.reason, "bundle_manifest_invalid")
+            self.assertEqual(rejected_commands, [])
+            project_file.write_text(original_project, encoding="utf-8")
+
+            lock.write_text(
+                "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
+                "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3\n"
+                "numpy==2.3.3 --hash=sha256:" + "c" * 64 + "\n"
+                "unexpected==0.1.0 --hash=sha256:" + "d" * 64 + "\n",
+                encoding="utf-8",
+            )
+            lock_sha256 = hashlib.sha256(lock.read_bytes()).hexdigest()
+            mismatched_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+            mismatched_metadata["requirements_lock_sha256"] = lock_sha256
+            metadata.write_text(json.dumps(mismatched_metadata), encoding="utf-8")
+            payload["requirements_lock_sha256"] = lock_sha256
+            payload["dependency_lock_metadata_sha256"] = hashlib.sha256(
+                metadata.read_bytes()
+            ).hexdigest()
+            _write_fixture_manifest(fixture)
+
+            rejected, rejected_commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(rejected.status, "failed")
+            self.assertEqual(rejected.reason, "bundle_manifest_invalid")
+            self.assertEqual(rejected_commands, [])
+
+    def test_setup_rejects_extra_wrapper_wheel_before_any_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            extra_wheel = fixture["wheels"] / "totalsegmentator_wrapper_mac-0.4.0-cp312-cp312-macosx_11_0_arm64.whl"
+            extra_wheel.write_bytes(b"unexpected wrapper wheel")
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+
+    def test_setup_rejects_symlink_wrapper_wheel_without_leaking_target_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            outside = home / "private-inputs" / "untrusted-wrapper.whl"
+            outside.parent.mkdir()
+            outside.write_bytes(fixture["wheel"].read_bytes())
+            fixture["wheel"].unlink()
+            fixture["wheel"].symlink_to(outside)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+            state = read_setup_state(result.paths.state_json)
+            assert state is not None
+            self.assertNotIn(str(outside), json.dumps(state, ensure_ascii=False))
+
+    def test_setup_rejects_unsafe_manifest_wrapper_relative_path_before_any_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            fixture["payload"]["bundled"]["wheel"] = "../untrusted-wrapper.whl"
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+
+    def test_pip_check_failure_stops_before_model_download_and_keeps_stderr_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            commands: list[list[str]] = []
+            stderr_marker = "/private/diagnostics/untrusted-pip-output"
+
+            def failing_pip_check_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                if command[-1:] == ["check"] and "pip" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        1,
+                        "",
+                        f"ERROR: broken dependency at {stderr_marker}",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=fixture["wheel"],  # type: ignore[arg-type]
+                constraints=fixture["constraints"],  # type: ignore[arg-type]
+                bundle_manifest=fixture["manifest"],  # type: ignore[arg-type]
+                allow_network=True,
+                skip_mps_check=True,
+                skip_dentalseg_model=True,
+                runner=failing_pip_check_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "dependency_consistency_failed")
+            check_step = next(step for step in result.steps if step.name == "verify_dependencies")
+            self.assertEqual(check_step.status, "failed")
+            self.assertNotIn(stderr_marker, check_step.error or "")
+            self.assertIsNotNone(check_step.diagnostic_log)
+            assert check_step.diagnostic_log is not None
+            self.assertIn(stderr_marker, Path(check_step.diagnostic_log).read_text(encoding="utf-8"))
+            wrapper_install_index = next(
+                index for index, command in enumerate(commands) if "--only-binary" in command
+            )
+            bundled_install_index = next(
+                index for index, command in enumerate(commands) if "--force-reinstall" in command
+            )
+            pip_check_index = next(
+                index
+                for index, command in enumerate(commands)
+                if command[-1:] == ["check"] and "pip" in command
+            )
+            self.assertGreater(pip_check_index, wrapper_install_index)
+            self.assertGreater(pip_check_index, bundled_install_index)
+            self.assertFalse(
+                any("totalseg_weights_setup" in " ".join(command) for command in commands)
+            )
+            state = read_setup_state(result.paths.state_json)
+            assert state is not None
+            self.assertNotIn(stderr_marker, json.dumps(state, ensure_ascii=False))
+
+    def test_setup_force_reinstalls_manifest_bundled_wheels_in_reused_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            resources = home / "Resources"
+            wheels = resources / "wheels"
+            wheels.mkdir(parents=True)
+            wheel = wheels / "totalsegmentator_wrapper_mac-0.4.1-cp312-cp312-macosx_11_0_arm64.whl"
+            fpsample = wheels / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"
+            acvl_utils = wheels / "acvl_utils-0.2.6-py3-none-any.whl"
+            constraints = resources / "constraints.txt"
+            manifest = resources / "setup_manifest.json"
+            wheel.write_bytes(b"wrapper")
+            fpsample.write_bytes(b"fpsample bundled wheel")
+            acvl_utils.write_bytes(b"acvl bundled wheel")
+            constraints.write_text("acvl-utils==0.2.6\nfpsample==1.0.2\n", encoding="utf-8")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schema": "totalsegmentator_wrapper_mac.mac_app_manifest.v1",
+                        "app_version": "0.4.1",
+                        "build_id": "test-build",
+                        "dependency_set_id": "deps-bundled-wheels",
+                        "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                        "fpsample_wheel_sha256": hashlib.sha256(fpsample.read_bytes()).hexdigest(),
+                        "acvl_utils_wheel_sha256": hashlib.sha256(acvl_utils.read_bytes()).hexdigest(),
+                        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+                        "normalizer_sha256": "normalizer-a",
+                        "dcm2niix_sha256": "dcm-a",
+                        "sample1_manifest_sha256": "sample-a",
+                        "setup_weights_manifest_sha256": setup_weight_manifest_sha256(),
+                        "update_manifest_url": "",
+                        "bundled": {
+                            "wheel": wheel.name,
+                            "fpsample_wheel": f"wheels/{fpsample.name}",
+                            "acvl_utils_wheel": f"wheels/{acvl_utils.name}",
+                            "constraints": constraints.name,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            paths = setup_paths(home=home)
+            (paths.env_dir / "bin").mkdir(parents=True)
+            (paths.env_dir / "bin" / "python").write_text("existing Python 3.12", encoding="utf-8")
+            installed_site = paths.env_dir / "lib" / "python3.12" / "site-packages"
+            (installed_site / "acvl_utils-0.2.6.dist-info").mkdir(parents=True)
+            (installed_site / "fpsample-1.0.2.dist-info").mkdir(parents=True)
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                bundle_manifest=manifest,
+                allow_network=True,
+                skip_mps_check=True,
+                skip_dentalseg_model=True,
+                runner=recording_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "success")
+            self.assertTrue(result.venv_reused)
+            bundled_step = next(step for step in result.steps if step.name == "install_bundled_wheels")
+            self.assertEqual(bundled_step.status, "success")
+            self.assertIn("--force-reinstall", bundled_step.command)
+            self.assertIn("--no-deps", bundled_step.command)
+            self.assertIn(str(fpsample.resolve()), bundled_step.command)
+            self.assertIn(str(acvl_utils.resolve()), bundled_step.command)
+            self.assertLess(
+                commands.index(bundled_step.command),
+                next(index for index, command in enumerate(commands) if "--only-binary" in command),
+            )
 
     def test_progress_log_records_user_visible_setup_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -379,9 +1160,9 @@ class SetupManagerTests(unittest.TestCase):
             self.assertLess(step_names.index("download_dentalseg_weights"), step_names.index("doctor"))
             weights_step = next(step for step in result.steps if step.name == "download_totalseg_weights")
             command_text = " ".join(weights_step.command)
-            self.assertIn("download_pretrained_weights(115)", command_text)
-            self.assertIn("download_pretrained_weights(297)", command_text)
-            self.assertIn("download_pretrained_weights(113)", command_text)
+            self.assertIn("totalsegmentator_wrapper_mac.totalseg_weights_setup", command_text)
+            self.assertNotIn("download_pretrained_weights", command_text)
+            self.assertEqual(weights_step.command[-3:], ["115", "297", "113"])
             weights_env = next(env for cmd, env in commands if cmd == weights_step.command)
             assert weights_env is not None
             self.assertTrue(weights_env["TOTALSEG_WEIGHTS_PATH"].startswith(str(result.paths.app_support)))
@@ -431,6 +1212,38 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(dentalseg_step.status, "failed")
             self.assertIn("fake dentalseg failure", dentalseg_step.error or "")
 
+    def test_totalseg_integrity_failure_has_specific_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wheel = home / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
+            constraints = home / "constraints.txt"
+            wheel.write_bytes(b"fake")
+            constraints.write_text("# pinned deps\n", encoding="utf-8")
+
+            def failing_weights_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                if "totalseg_weights_setup" in " ".join(command):
+                    return subprocess.CompletedProcess(
+                        command, 1, "", "TotalSegmentator asset SHA-256 mismatch for task 115"
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=wheel,
+                constraints=constraints,
+                allow_network=True,
+                skip_mps_check=True,
+                runner=failing_weights_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "weights_integrity_failed")
+
     def test_skip_dentalseg_model_defers_only_dental_preparation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -467,26 +1280,43 @@ class SetupManagerTests(unittest.TestCase):
     def test_setup_records_installed_bundle_from_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            wheel = home / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
-            constraints = home / "constraints.txt"
-            manifest = home / "setup_manifest.json"
+            resources = home / "Resources"
+            wheels = resources / "wheels"
+            wheels.mkdir(parents=True)
+            wheel = wheels / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
+            fpsample = wheels / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"
+            acvl_utils = wheels / "acvl_utils-0.2.6-py3-none-any.whl"
+            constraints = resources / "constraints.txt"
+            manifest = resources / "setup_manifest.json"
             wheel.write_bytes(b"fake")
+            fpsample.write_bytes(b"fpsample")
+            acvl_utils.write_bytes(b"acvl-utils")
             constraints.write_text("# pinned deps\n", encoding="utf-8")
             manifest.write_text(
-                """
-{
-  "schema": "totalsegmentator_wrapper_mac.mac_app_manifest.v1",
-  "app_version": "0.1.0",
-  "build_id": "test-build",
-  "dependency_set_id": "deps-a",
-  "wheel_sha256": "wheel-a",
-  "constraints_sha256": "constraints-a",
-  "normalizer_sha256": "normalizer-a",
-  "dcm2niix_sha256": "dcm-a",
-  "sample1_manifest_sha256": "sample-a",
-  "update_manifest_url": ""
-}
-""",
+                json.dumps(
+                    {
+                        "schema": "totalsegmentator_wrapper_mac.mac_app_manifest.v1",
+                        "app_version": "0.1.0",
+                        "build_id": "test-build",
+                        "dependency_set_id": "deps-a",
+                        "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                        "fpsample_wheel_sha256": hashlib.sha256(fpsample.read_bytes()).hexdigest(),
+                        "acvl_utils_wheel_sha256": hashlib.sha256(acvl_utils.read_bytes()).hexdigest(),
+                        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+                        "normalizer_sha256": "normalizer-a",
+                        "dcm2niix_sha256": "dcm-a",
+                        "sample1_manifest_sha256": "sample-a",
+                        "setup_weights_manifest_sha256": setup_weight_manifest_sha256(),
+                        "python_runtime": {"fingerprint": "runtime-fixture-v1"},
+                        "update_manifest_url": "",
+                        "bundled": {
+                            "wheel": wheel.name,
+                            "fpsample_wheel": f"wheels/{fpsample.name}",
+                            "acvl_utils_wheel": f"wheels/{acvl_utils.name}",
+                            "constraints": constraints.name,
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -507,9 +1337,16 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             state = read_setup_state(result.paths.state_json)
             assert state is not None
-            self.assertEqual(state["installed_bundle"]["wheel_sha256"], "wheel-a")
+            self.assertEqual(
+                state["installed_bundle"]["wheel_sha256"],
+                hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            )
             self.assertEqual(state["installed_bundle"]["dcm2niix_sha256"], "dcm-a")
             self.assertEqual(state["installed_bundle"]["dependency_set_id"], "deps-a")
+            self.assertEqual(
+                state["installed_bundle"]["python_runtime_fingerprint"],
+                "runtime-fixture-v1",
+            )
 
     def test_setup_records_invalid_bundle_manifest_as_structured_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -545,10 +1382,13 @@ class SetupManagerTests(unittest.TestCase):
                 "build_id": "build-a",
                 "dependency_set_id": "deps-a",
                 "wheel_sha256": "wheel-a",
+                "fpsample_wheel_sha256": "fpsample-a",
+                "acvl_utils_wheel_sha256": "acvl-a",
                 "constraints_sha256": "constraints-a",
                 "normalizer_sha256": "normalizer-a",
                 "dcm2niix_sha256": "dcm-a",
                 "sample1_manifest_sha256": "sample-a",
+                "setup_weights_manifest_sha256": "weights-a",
                 "update_manifest_url": "https://example.invalid/update.json",
             }
         )
@@ -556,7 +1396,32 @@ class SetupManagerTests(unittest.TestCase):
         self.assertEqual(record["schema"], "totalsegmentator_wrapper_mac.installed_bundle.v1")
         self.assertEqual(record["app_version"], "0.1.0")
         self.assertEqual(record["wheel_sha256"], "wheel-a")
+        self.assertEqual(record["fpsample_wheel_sha256"], "fpsample-a")
+        self.assertEqual(record["acvl_utils_wheel_sha256"], "acvl-a")
         self.assertEqual(record["dcm2niix_sha256"], "dcm-a")
+        self.assertEqual(record["setup_weights_manifest_sha256"], "weights-a")
+
+    def test_bundle_install_record_normalizes_declared_python_runtime_fingerprint(self) -> None:
+        top_level = bundle_install_record(
+            {
+                "python_runtime_fingerprint": "runtime-top-level",
+                "python_runtime": {"fingerprint": "runtime-nested"},
+            }
+        )
+        nested = bundle_install_record({"python_runtime": {"fingerprint": "runtime-nested"}})
+        empty_top_level = bundle_install_record(
+            {
+                "python_runtime_fingerprint": "",
+                "python_runtime": {"fingerprint": "runtime-nested"},
+            }
+        )
+        missing = bundle_install_record({})
+
+        self.assertEqual(top_level["python_runtime_fingerprint"], "runtime-top-level")
+        self.assertEqual(nested["python_runtime_fingerprint"], "runtime-nested")
+        self.assertEqual(empty_top_level["python_runtime_fingerprint"], "runtime-nested")
+        self.assertEqual(missing["python_runtime_fingerprint"], "")
+        self.assertNotIn("python_runtime_executable_sha256", top_level)
 
     def test_setup_environment_stays_under_app_support(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -574,6 +1439,26 @@ class SetupManagerTests(unittest.TestCase):
             self.assertTrue(env["nnUNet_preprocessed"].startswith(str(paths.app_support)))
             self.assertTrue(env["nnUNet_results"].startswith(str(paths.app_support)))
             self.assertTrue(env["TOTALSEGMENTATOR_WRAPPER_MAC_DICOM_NORMALIZER"].startswith(str(paths.app_support)))
+
+    def test_setup_environment_discards_hostile_pip_and_python_configuration(self) -> None:
+        hostile = {
+            "PIP_TARGET": "/private/hostile-target",
+            "PIP_PREFIX": "/private/hostile-prefix",
+            "PIP_INDEX_URL": "https://hostile.invalid/simple",
+            "PIP_CONFIG_FILE": "/private/hostile-pip.conf",
+            "PYTHONPATH": "/private/hostile-pythonpath",
+            "PYTHONHOME": "/private/hostile-pythonhome",
+            "PYTHONUSERBASE": "/private/hostile-userbase",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, hostile, clear=False):
+            env = build_setup_environment(setup_paths(home=Path(tmp)))
+
+        for key in hostile:
+            if key == "PIP_CONFIG_FILE":
+                continue
+            self.assertNotIn(key, env)
+        self.assertEqual(env["PIP_CONFIG_FILE"], os.devnull)
+        self.assertEqual(env["PYTHONNOUSERSITE"], "1")
 
 
 def _successful_runner(
@@ -607,6 +1492,181 @@ def _python314(_python: Path) -> dict[str, object]:
         "version": "3.14.4",
         "command": [str(_python), "-c", "version"],
     }
+
+
+def _release_lock_metadata(
+    *,
+    constraints: object,
+    project_file: Path,
+    requirements_lock: Path,
+    requirements_lock_sha256: str,
+) -> dict[str, object]:
+    """A release lock describes the full graph but installs no local overrides."""
+
+    assert isinstance(constraints, Path)
+    return {
+        "schema": "totalsegmentator_wrapper_mac.dependency_lock.v3",
+        "generation_id": "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3",
+        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "project_file": project_file.name,
+        "project_file_sha256": hashlib.sha256(project_file.read_bytes()).hexdigest(),
+        "requirements_lock": requirements_lock.name,
+        "requirements_lock_sha256": requirements_lock_sha256,
+        "root_install_requirement": "totalsegmentator-wrapper-mac[dicom,mps,dentalseg,toothseg,ios-meshsegnet]",
+        "resolved_distribution_names": ["acvl-utils", "fpsample", "numpy"],
+        "install_distribution_names": ["numpy"],
+        "excluded_bundled_overrides": {
+            "acvl-utils": {
+                "version": "0.2.6",
+                "role": "separately_bundled_no_deps_override",
+                "excluded_from_requirements_lock": True,
+                "resolution_input_filename": "acvl_utils-0.2.6-py3-none-any.whl",
+                "resolution_input_sha256": "a" * 64,
+                "resolution_input_metadata_sha256": "c" * 64,
+                "resolution_input_wheel_metadata_sha256": "d" * 64,
+                "release_wheel_hash_binding": "setup_manifest_after_signing",
+            },
+            "fpsample": {
+                "version": "1.0.2",
+                "role": "separately_bundled_no_deps_override",
+                "excluded_from_requirements_lock": True,
+                "resolution_input_filename": "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl",
+                "resolution_input_sha256": "b" * 64,
+                "resolution_input_metadata_sha256": "e" * 64,
+                "resolution_input_wheel_metadata_sha256": "f" * 64,
+                "release_wheel_hash_binding": "setup_manifest_after_signing",
+            },
+        },
+        "resolver": {
+            "name": "pip-compile",
+            "version": "7.5.0",
+            "platform": "macos-14-arm64",
+            "python": "3.12",
+            "pip_version": "25.1.1",
+            "python_full_version": "3.12.11",
+            "macos_version": "14.7.8",
+            "sysconfig_platform": "macosx-14.0-arm64",
+        },
+        "setup_consumes_requirements_lock": True,
+        "pip_require_hashes": True,
+        "resolution_complete": True,
+    }
+
+
+def _packaged_setup_fixture(root: Path) -> dict[str, object]:
+    resources = root / "Resources"
+    wheels = resources / "wheels"
+    constraints_dir = resources / "constraints"
+    wheels.mkdir(parents=True)
+    constraints_dir.mkdir()
+    wheel = wheels / "totalsegmentator_wrapper_mac-0.4.1-cp312-cp312-macosx_11_0_arm64.whl"
+    fpsample = wheels / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"
+    acvl_utils = wheels / "acvl_utils-0.2.6-py3-none-any.whl"
+    constraints = constraints_dir / "macos-arm64-py312.txt"
+    project_file = constraints_dir / "pyproject.toml"
+    manifest = resources / "setup_manifest.json"
+    wheel.write_bytes(b"wrapper wheel")
+    fpsample.write_bytes(b"fpsample wheel")
+    acvl_utils.write_bytes(b"acvl-utils wheel")
+    constraints.write_text("acvl-utils==0.2.6\nfpsample==1.0.2\n", encoding="utf-8")
+    project_file.write_text(
+        "[project]\nname = 'fixture'\nversion = '0'\n",
+        encoding="utf-8",
+    )
+    payload: dict[str, object] = {
+        "schema": "totalsegmentator_wrapper_mac.mac_app_manifest.v1",
+        "app_version": "0.4.1",
+        "build_id": "test-build",
+        "dependency_set_id": "deps-bundled-wheels",
+        "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "fpsample_wheel_sha256": hashlib.sha256(fpsample.read_bytes()).hexdigest(),
+        "acvl_utils_wheel_sha256": hashlib.sha256(acvl_utils.read_bytes()).hexdigest(),
+        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "project_file_sha256": None,
+        "normalizer_sha256": "normalizer-a",
+        "dcm2niix_sha256": "dcm-a",
+        "sample1_manifest_sha256": "sample-a",
+        "setup_weights_manifest_sha256": setup_weight_manifest_sha256(),
+        "update_manifest_url": "",
+        "bundled": {
+            "wheel": wheel.name,
+            "fpsample_wheel": f"wheels/{fpsample.name}",
+            "acvl_utils_wheel": f"wheels/{acvl_utils.name}",
+            "constraints": "constraints/macos-arm64-py312.txt",
+            "project_file": None,
+        },
+    }
+    fixture: dict[str, object] = {
+        "resources": resources,
+        "wheels": wheels,
+        "wheel": wheel,
+        "constraints": constraints,
+        "project_file": project_file,
+        "manifest": manifest,
+        "payload": payload,
+    }
+    _write_fixture_manifest(fixture)
+    return fixture
+
+
+def _write_fixture_manifest(fixture: dict[str, object]) -> None:
+    manifest = fixture["manifest"]
+    payload = fixture["payload"]
+    assert isinstance(manifest, Path)
+    assert isinstance(payload, dict)
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _promote_fixture_wrapper_to_release_identity(
+    fixture: dict[str, object],
+) -> None:
+    wheel = fixture["wheel"]
+    payload = fixture["payload"]
+    assert isinstance(wheel, Path)
+    assert isinstance(payload, dict)
+    release_wheel = wheel.with_name(
+        "totalsegmentator_wrapper_mac-0.4.1-cp312-cp312-macosx_14_0_arm64.whl"
+    )
+    wheel.rename(release_wheel)
+    fixture["wheel"] = release_wheel
+    payload["wheel_sha256"] = hashlib.sha256(release_wheel.read_bytes()).hexdigest()
+    bundled = payload["bundled"]
+    assert isinstance(bundled, dict)
+    bundled["wheel"] = release_wheel.name
+
+
+def _run_packaged_setup(
+    home: Path,
+    fixture: dict[str, object],
+) -> tuple[object, list[list[str]]]:
+    wheel = fixture["wheel"]
+    constraints = fixture["constraints"]
+    manifest = fixture["manifest"]
+    assert isinstance(wheel, Path)
+    assert isinstance(constraints, Path)
+    assert isinstance(manifest, Path)
+    commands: list[list[str]] = []
+
+    def recording_runner(
+        command: list[str], cwd: Path | None, env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_setup(
+        home=home,
+        python_executable=home / "python3.12",
+        wheel=wheel,
+        constraints=constraints,
+        bundle_manifest=manifest,
+        allow_network=True,
+        skip_mps_check=True,
+        skip_dentalseg_model=True,
+        runner=recording_runner,
+        normalizer_inspector=_normalizer_ok,
+        python_inspector=_python312,
+    )
+    return result, commands
 
 
 if __name__ == "__main__":
