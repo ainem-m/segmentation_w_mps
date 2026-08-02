@@ -16,9 +16,12 @@ from unittest.mock import patch
 from scripts.release_build_toolchain import (
     ReleaseBuildToolchainError,
     _run,
+    bootstrap_release_build_toolchain,
     capture_release_build_toolchain_identity,
+    generate_release_source_identity,
     generate_release_build_toolchain_metadata,
     prepare_release_build_toolchain,
+    verify_release_build_toolchain_bootstrap,
     verify_release_build_toolchain_inputs,
     verify_prepared_release_build_toolchain,
     verify_release_build_toolchain_receipt,
@@ -47,9 +50,31 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _fixture(self, root: Path) -> tuple[Path, Path, Path]:
+        project = root / "pyproject.toml"
+        constraints = root / "constraints.txt"
+        fpsample_builder = root / "build_fpsample_wheel_macos.sh"
+        acvl_utils_builder = root / "build_acvl_utils_wheel.sh"
+        for path, content in (
+            (project, "[project]\nname = 'fixture'\nversion = '0'\n"),
+            (constraints, "fixture==1\n"),
+            (fpsample_builder, "#!/bin/bash\n# fixture fpsample builder\n"),
+            (acvl_utils_builder, "#!/bin/bash\n# fixture acvl-utils builder\n"),
+        ):
+            path.write_text(content, encoding="utf-8")
+        source_identity = root / "release-source-identity.json"
+        generate_release_source_identity(
+            output_path=source_identity,
+            project_file=project,
+            constraints=constraints,
+            fpsample_builder=fpsample_builder,
+            acvl_utils_builder=acvl_utils_builder,
+        )
+        source_identity_sha256 = hashlib.sha256(source_identity.read_bytes()).hexdigest()
+        declaration = root / "release-build-toolchain-bootstrap-declaration.json"
         wheelhouse = root / "wheelhouse"
         wheelhouse.mkdir()
         packages = {
+            "pip": "25.1.1",
             "build": "1.2.2",
             "setuptools": "77.0.3",
             "wheel": "0.45.1",
@@ -67,11 +92,38 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             lock_lines.append(f"{name}=={version} --hash=sha256:{digest}")
         lock = root / "release-build-toolchain.requirements.lock"
         lock.write_text("\n".join(lock_lines) + "\n", encoding="utf-8")
+        declaration.write_text(
+            json.dumps(
+                {
+                    "schema": (
+                        "totalsegmentator_wrapper_mac."
+                        "release_build_toolchain_bootstrap_declaration.v1"
+                    ),
+                    "source_identity_sha256": source_identity_sha256,
+                    "requirements": [
+                        {"name": name, "version": version}
+                        for name, version in sorted(packages.items())
+                    ],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         metadata = root / "release-build-toolchain.lock.json"
         metadata.write_text(
             json.dumps(
                 {
-                    "schema": "totalsegmentator_wrapper_mac.release_build_toolchain.v1",
+                    "schema": "totalsegmentator_wrapper_mac.release_build_toolchain.v2",
+                    "bootstrap": {
+                        "schema": (
+                            "totalsegmentator_wrapper_mac."
+                            "release_build_toolchain_bootstrap.v1"
+                        ),
+                        "declaration_sha256": hashlib.sha256(
+                            declaration.read_bytes()
+                        ).hexdigest(),
+                        "source_identity_sha256": source_identity_sha256,
+                    },
                     "lock_filename": lock.name,
                     "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
                     "resolved_distribution_names": sorted(packages),
@@ -105,6 +157,158 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
         )
         return lock, metadata, wheelhouse
 
+    @staticmethod
+    def _bootstrap_kwargs(root: Path) -> dict[str, Path]:
+        return {
+            "bootstrap_declaration_path": (
+                root / "release-build-toolchain-bootstrap-declaration.json"
+            ),
+            "source_identity_path": root / "release-source-identity.json",
+            "project_file": root / "pyproject.toml",
+            "constraints": root / "constraints.txt",
+            "fpsample_builder": root / "build_fpsample_wheel_macos.sh",
+            "acvl_utils_builder": root / "build_acvl_utils_wheel.sh",
+        }
+
+    def test_declarative_bootstrap_selects_exact_local_wheels_and_emits_hashed_lock(self) -> None:
+        """The first toolchain lock may be generated, but never guessed.
+
+        The declaration supplies only reviewed name/version choices.  The
+        bootstrapper inventories the supplied local wheel bytes and writes the
+        exact hashes that later strict phases consume; it is not a resolver or
+        downloader.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "pyproject.toml"
+            constraints = root / "constraints.txt"
+            fpsample_builder = root / "build_fpsample_wheel_macos.sh"
+            acvl_builder = root / "build_acvl_utils_wheel.sh"
+            for path, content in (
+                (project, "[project]\nname = 'fixture'\nversion = '0'\n"),
+                (constraints, "fixture==1\n"),
+                (fpsample_builder, "#!/bin/bash\n# fpsample source identity\n"),
+                (acvl_builder, "#!/bin/bash\n# acvl source identity\n"),
+            ):
+                path.write_text(content, encoding="utf-8")
+            fpsample_builder.chmod(0o755)
+            acvl_builder.chmod(0o755)
+            source_identity = root / "source-identity.json"
+            generate_release_source_identity(
+                output_path=source_identity,
+                project_file=project,
+                constraints=constraints,
+                fpsample_builder=fpsample_builder,
+                acvl_utils_builder=acvl_builder,
+            )
+
+            source_wheelhouse = root / "source-wheels"
+            source_wheelhouse.mkdir()
+            packages = {
+                "pip": "25.1.1",
+                "build": "1.2.2",
+                "setuptools": "77.0.3",
+                "wheel": "0.45.1",
+                "scikit-build-core": "0.11.6",
+                "pybind11": "2.13.6",
+                "cmake": "3.31.4",
+                "ninja": "1.11.1.3",
+            }
+            for name, version in packages.items():
+                self._write_wheel(
+                    source_wheelhouse / f"{name.replace('-', '_')}-{version}-py3-none-any.whl",
+                    name=name,
+                    version=version,
+                )
+            declaration = root / "bootstrap-declaration.json"
+            declaration.write_text(
+                json.dumps(
+                    {
+                        "schema": "totalsegmentator_wrapper_mac.release_build_toolchain_bootstrap_declaration.v1",
+                        "source_identity_sha256": hashlib.sha256(
+                            source_identity.read_bytes()
+                        ).hexdigest(),
+                        "requirements": [
+                            {"name": name, "version": version}
+                            for name, version in sorted(packages.items())
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            python = root / "python"
+            uv = root / "uv"
+            python.write_bytes(b"fixture-python")
+            uv.write_bytes(b"fixture-uv")
+            python.chmod(0o755)
+            uv.chmod(0o755)
+            expected_identity = {
+                "installer": "uv-pip-offline-no-index-require-hashes-no-deps-v1",
+                "uv": {"version": "0.5.22", "binary_sha256": "a" * 64},
+                "python": {
+                    "implementation": "CPython",
+                    "full_version": "3.12.11",
+                    "machine": "arm64",
+                    "sysconfig_platform": "macosx-14.0-arm64",
+                    "executable_sha256": "b" * 64,
+                },
+            }
+            output = root / "bootstrap-output"
+            with patch(
+                "scripts.release_build_toolchain.capture_release_build_toolchain_identity",
+                return_value=expected_identity,
+            ):
+                result = bootstrap_release_build_toolchain(
+                    declaration_path=declaration,
+                    source_identity_path=source_identity,
+                    source_wheelhouse=source_wheelhouse,
+                    output_directory=output,
+                    python_executable=python,
+                    uv_executable=uv,
+                    project_file=project,
+                    constraints=constraints,
+                    fpsample_builder=fpsample_builder,
+                    acvl_utils_builder=acvl_builder,
+                )
+
+            lock = output / "release-build-toolchain.requirements.lock"
+            self.assertEqual(result["lock_path"], str(lock))
+            self.assertIn("pip==25.1.1 --hash=sha256:", lock.read_text(encoding="utf-8"))
+            self.assertTrue((output / "wheelhouse" / "pip-25.1.1-py3-none-any.whl").is_file())
+            verified = verify_release_build_toolchain_inputs(
+                lock_path=lock,
+                metadata_path=output / "release-build-toolchain.lock.json",
+                wheelhouse=output / "wheelhouse",
+            )
+            self.assertEqual(verified["wheel_inputs"]["pip"]["version"], "25.1.1")
+
+    def test_bootstrap_environment_variable_cannot_bypass_component_authorization(self) -> None:
+        """A direct component invocation must reject bootstrap mode early.
+
+        This runs only the bootstrap guard; no source archive, wheel build, or
+        network operation can be reached without the receipt-backed
+        authorization produced by the release runner.
+        """
+
+        script = Path(__file__).resolve().parents[1] / "scripts" / "build_fpsample_wheel_macos.sh"
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_REQUIRED": "1",
+            "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_COMPONENT_RUNNER": "1",
+            "TOTALSEGMENTATOR_WRAPPER_MAC_BOOTSTRAP_PRE_SIGN": "1",
+            "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_PYTHON": sys.executable,
+        }
+        completed = subprocess.run(
+            ["/bin/bash", str(script)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("bootstrap authorization", completed.stderr)
+
     def test_hash_bound_wheelhouse_covers_every_backend_and_transitive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock, metadata, wheelhouse = self._fixture(Path(tmp))
@@ -115,6 +319,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             )
             self.assertEqual(verified["lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest())
             self.assertEqual(set(verified["wheel_inputs"]), {
+                "pip",
                 "build",
                 "setuptools",
                 "wheel",
@@ -123,6 +328,33 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                 "cmake",
                 "ninja",
             })
+
+    def test_bootstrap_rejects_source_bytes_changed_after_identity_generation(self) -> None:
+        """The pre-sign permission cannot outlive its checked source identity."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock, metadata, wheelhouse = self._fixture(root)
+            source = self._bootstrap_kwargs(root)
+            (root / "build_fpsample_wheel_macos.sh").write_text(
+                "#!/bin/bash\n# changed after review\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                ReleaseBuildToolchainError,
+                "source identity no longer matches",
+            ):
+                verify_release_build_toolchain_bootstrap(
+                    lock_path=lock,
+                    metadata_path=metadata,
+                    wheelhouse=wheelhouse,
+                    declaration_path=source["bootstrap_declaration_path"],
+                    source_identity_path=source["source_identity_path"],
+                    project_file=source["project_file"],
+                    constraints=source["constraints"],
+                    fpsample_builder=source["fpsample_builder"],
+                    acvl_utils_builder=source["acvl_utils_builder"],
+                )
 
     def test_missing_fpsample_backend_tool_is_rejected_before_any_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -223,6 +455,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     wheelhouse=wheelhouse,
                     python_executable=Path("/unused/python"),
                     uv_executable=Path("/unused/uv"),
+                    **self._bootstrap_kwargs(root),
                 )
 
             self.assertTrue(generated.is_file())
@@ -238,6 +471,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     wheelhouse=wheelhouse,
                     python_executable=Path("/unused/python"),
                     uv_executable=Path("/unused/uv"),
+                    **self._bootstrap_kwargs(root),
                 )
 
     def test_preparation_command_starts_from_an_allowlisted_environment(self) -> None:
@@ -369,8 +603,9 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     {
                         "schema": (
                             "totalsegmentator_wrapper_mac."
-                            "release_build_toolchain_receipt.v1"
+                            "release_build_toolchain_receipt.v2"
                         ),
+                        "bootstrap": verified["bootstrap"],
                         "lock_sha256": verified["lock_sha256"],
                         "metadata_sha256": verified["metadata_sha256"],
                         "toolchain": {
@@ -426,8 +661,9 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     {
                         "schema": (
                             "totalsegmentator_wrapper_mac."
-                            "release_build_toolchain_receipt.v1"
+                            "release_build_toolchain_receipt.v2"
                         ),
+                        "bootstrap": verified["bootstrap"],
                         "lock_sha256": verified["lock_sha256"],
                         "metadata_sha256": verified["metadata_sha256"],
                         "toolchain": {
@@ -506,8 +742,9 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     {
                         "schema": (
                             "totalsegmentator_wrapper_mac."
-                            "release_build_toolchain_receipt.v1"
+                            "release_build_toolchain_receipt.v2"
                         ),
+                        "bootstrap": verified["bootstrap"],
                         "lock_sha256": verified["lock_sha256"],
                         "metadata_sha256": verified["metadata_sha256"],
                         "toolchain": {
@@ -540,6 +777,8 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                 "scripts.release_build_toolchain._installed_versions",
                 return_value=expected_versions,
             ), patch(
+                "scripts.release_build_toolchain._verify_prepared_pip"
+            ), patch(
                 "scripts.release_build_toolchain.capture_trusted_native_toolchain",
                 return_value=native_toolchain,
             ):
@@ -558,6 +797,8 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             with patch(
                 "scripts.release_build_toolchain._installed_versions",
                 return_value=expected_versions,
+            ), patch(
+                "scripts.release_build_toolchain._verify_prepared_pip"
             ), patch(
                 "scripts.release_build_toolchain.capture_trusted_native_toolchain",
                 return_value=native_toolchain,
@@ -644,6 +885,8 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             ), patch(
                 "scripts.release_build_toolchain._installed_versions",
                 return_value=expected_versions,
+            ), patch(
+                "scripts.release_build_toolchain._verify_prepared_pip"
             ):
                 result = prepare_release_build_toolchain(
                     lock_path=lock,
@@ -653,6 +896,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     uv_executable=uv,
                     work_directory=work_directory,
                     receipt_path=receipt,
+                    **self._bootstrap_kwargs(root),
                 )
 
             published_python = Path(result["prepared_python"])
@@ -728,6 +972,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     uv_executable=uv,
                     work_directory=work_directory,
                     receipt_path=root / "release-build-toolchain-receipt.json",
+                    **self._bootstrap_kwargs(root),
                 )
 
             self.assertEqual(list(work_directory.glob("prepared-venv-*")), [])
@@ -789,6 +1034,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     uv_executable=uv,
                     work_directory=work_directory,
                     receipt_path=root / "release-build-toolchain-receipt.json",
+                    **self._bootstrap_kwargs(root),
                 )
 
     def test_preparation_rejects_work_directory_not_owned_by_current_user(self) -> None:
@@ -847,6 +1093,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     uv_executable=uv,
                     work_directory=work_directory,
                     receipt_path=root / "release-build-toolchain-receipt.json",
+                    **self._bootstrap_kwargs(root),
                 )
 
     def test_preparation_rejects_group_writable_receipt_parent_before_publish(self) -> None:
@@ -913,6 +1160,8 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             ), patch(
                 "scripts.release_build_toolchain._installed_versions",
                 return_value=expected_versions,
+            ), patch(
+                "scripts.release_build_toolchain._verify_prepared_pip"
             ), self.assertRaisesRegex(
                 ReleaseBuildToolchainError, "receipt parent.*group- or other-writable"
             ):
@@ -924,6 +1173,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     uv_executable=uv,
                     work_directory=work_directory,
                     receipt_path=receipt,
+                    **self._bootstrap_kwargs(root),
                 )
 
             self.assertFalse(receipt.exists())
