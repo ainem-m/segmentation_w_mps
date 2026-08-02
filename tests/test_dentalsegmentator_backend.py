@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import stat
 import sys
 import tempfile
 import unittest
+import zipfile
 from importlib import metadata
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +14,7 @@ from unittest.mock import patch
 import nibabel as nib
 import numpy as np
 
+import totalsegmentator_wrapper_mac.dentalsegmentator_setup as dentalseg_setup
 from totalsegmentator_wrapper_mac.device import DeviceCheck
 from totalsegmentator_wrapper_mac.runner_totalseg import run_totalsegmentator
 from totalsegmentator_wrapper_mac.surface_preview import (
@@ -183,19 +186,13 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
             input_path = root / "input.nii.gz"
             input_path.write_bytes(b"fake")
             dataset_root = root / "nnUNet_results" / "Dataset112_DentalSegmentator_v100"
-            dataset_root.mkdir(parents=True)
-            (dataset_root / "dataset.json").write_text("{}", encoding="utf-8")
-            (dataset_root / ".dentalsegmentator_model_ready.json").write_text(
-                json.dumps(
-                    {
-                        "schema": "totalsegmentator_wrapper_mac.dentalsegmentator_model_status.v1",
-                        "model_state": "ready",
-                        "expected_md5": "b71cd5230168d28a4f71b078265b76be",
-                        "dataset_id": "112",
-                        "dataset_name": "Dataset112_DentalSegmentator_v100",
-                    }
-                ),
-                encoding="utf-8",
+            _write_ready_dentalsegmentator_fixture(dataset_root)
+            dentalseg_setup._write_ready_marker(  # noqa: SLF001
+                dataset_root,
+                expected_md5=dentalseg_setup.MODEL_ARCHIVE_MD5,
+                dataset_id="112",
+                dataset_name=dentalseg_setup.DEFAULT_DATASET_NAME,
+                archive_sha256=dentalseg_setup.MODEL_ARCHIVE_SHA256,
             )
             failed_mps = DeviceCheck(
                 status="fail",
@@ -239,6 +236,45 @@ class DentalSegmentatorBackendTests(unittest.TestCase):
             self.assertFalse((root / "case").exists())
             child_runner.assert_not_called()
 
+    def test_macos_app_profile_rejects_legacy_ready_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.nii.gz"
+            input_path.write_bytes(b"fake")
+            dataset_root = root / "nnUNet_results" / dentalseg_setup.DEFAULT_DATASET_NAME
+            _write_ready_dentalsegmentator_fixture(dataset_root)
+            (dataset_root / dentalseg_setup.READY_MARKER_FILENAME).write_text(
+                json.dumps(
+                    {
+                        "schema": dentalseg_setup.MODEL_STATUS_SCHEMA,
+                        "model_state": "ready",
+                        "expected_md5": dentalseg_setup.MODEL_ARCHIVE_MD5,
+                        "dataset_id": "112",
+                        "dataset_name": dentalseg_setup.DEFAULT_DATASET_NAME,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg._run_command_streamed"
+            ) as child_runner:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    backend="dentalsegmentator",
+                    task="craniofacial_structures",
+                    requested_device="mps",
+                    execution_profile="macos-app",
+                    require_mps=True,
+                    dentalseg_nnunet_results=root / "nnUNet_results",
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.error_code, "dentalseg_prepare_required")
+            self.assertFalse((root / "case").exists())
+            child_runner.assert_not_called()
+
 
 def _write_fake_nnunet_predict(path: Path) -> Path:
     path.write_text(
@@ -274,6 +310,23 @@ def _write_fake_nnunet_predict(path: Path) -> Path:
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
+
+
+def _write_ready_dentalsegmentator_fixture(dataset_root: Path) -> None:
+    trainer = dataset_root / dentalseg_setup.DEFAULT_TRAINER_DIR
+    checkpoint = trainer / "fold_0" / "checkpoint_final.pth"
+    checkpoint.parent.mkdir(parents=True)
+    (trainer / "dataset.json").write_text(json.dumps({"name": "fixture"}), encoding="utf-8")
+    (trainer / "plans.json").write_text(
+        json.dumps({"plans_name": "nnUNetPlans"}),
+        encoding="utf-8",
+    )
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("archive/data.pkl", b"fixture-pickle-metadata")
+        archive.writestr("archive/version", b"3\n")
+        archive.writestr("archive/data/0", b"tensor-storage")
+    checkpoint.write_bytes(payload.getvalue())
 
 
 if __name__ == "__main__":
