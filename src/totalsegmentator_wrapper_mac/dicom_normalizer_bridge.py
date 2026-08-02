@@ -149,10 +149,10 @@ def build_dicom_normalizer_prepare_rescue_command(
         "--output",
         str(output_dir),
     ]
-    if series_number is not None:
-        command.extend(["--series-number", str(series_number)])
-    else:
+    if series_key:
         command.extend(["--series-key", str(series_key)])
+    else:
+        command.extend(["--series-number", str(series_number)])
     if dcm2niix is not None:
         command.extend(["--dcm2niix", str(dcm2niix)])
     return command
@@ -186,10 +186,10 @@ def build_dicom_normalizer_export_rescue_stack_command(
         "--output",
         str(output_dir),
     ]
-    if series_number is not None:
-        command.extend(["--series-number", str(series_number)])
-    else:
+    if series_key:
         command.extend(["--series-key", str(series_key)])
+    else:
+        command.extend(["--series-number", str(series_number)])
     return command
 
 
@@ -222,10 +222,10 @@ def build_dicom_normalizer_convert_clean_command(
         "--output",
         str(output_dir),
     ]
-    if series_number is not None:
-        command.extend(["--series-number", str(series_number)])
-    else:
+    if series_key:
         command.extend(["--series-key", str(series_key)])
+    else:
+        command.extend(["--series-number", str(series_number)])
     if dcm2niix is not None:
         command.extend(["--dcm2niix", str(dcm2niix)])
     return command
@@ -265,10 +265,10 @@ def build_dicom_normalizer_prepare_viewer_export_command(
         "--output",
         str(output_dir),
     ]
-    if series_number is not None:
-        command.extend(["--series-number", str(series_number)])
-    else:
+    if series_key:
         command.extend(["--series-key", str(series_key)])
+    else:
+        command.extend(["--series-number", str(series_number)])
     if dcm2niix is not None:
         command.extend(["--dcm2niix", str(dcm2niix)])
     return command

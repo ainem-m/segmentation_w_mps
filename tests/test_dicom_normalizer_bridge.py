@@ -114,6 +114,53 @@ class DicomNormalizerBridgeTests(unittest.TestCase):
             self.assertIn("1.2.3.clean", command)
             self.assertNotIn("--series-number", command)
 
+    def test_all_series_commands_prefer_series_key_when_both_selectors_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = _write_fake_binary(root / "totalsegmentator-wrapper-dicom-normalizer")
+            commands = [
+                build_dicom_normalizer_convert_clean_command(
+                    dicom_dir=root / "dicom",
+                    output_dir=root / "clean",
+                    series_number=42,
+                    series_key="1.2.3.selected",
+                    binary=binary,
+                    project_root=root / "unused",
+                ),
+                build_dicom_normalizer_prepare_rescue_command(
+                    dicom_dir=root / "dicom",
+                    output_dir=root / "rescue",
+                    series_number=42,
+                    series_key="1.2.3.selected",
+                    patched_spacing="0.6,0.6,0.9375",
+                    binary=binary,
+                    project_root=root / "unused",
+                ),
+                build_dicom_normalizer_export_rescue_stack_command(
+                    dicom_dir=root / "dicom",
+                    output_dir=root / "stack",
+                    series_number=42,
+                    series_key="1.2.3.selected",
+                    binary=binary,
+                    project_root=root / "unused",
+                ),
+                build_dicom_normalizer_prepare_viewer_export_command(
+                    dicom_dir=root / "dicom",
+                    output_dir=root / "viewer",
+                    group_id="g001",
+                    series_number=42,
+                    series_key="1.2.3.selected",
+                    binary=binary,
+                    project_root=root / "unused",
+                ),
+            ]
+
+            for command in commands:
+                with self.subTest(command=command[1]):
+                    self.assertIn("--series-key", command)
+                    self.assertIn("1.2.3.selected", command)
+                    self.assertNotIn("--series-number", command)
+
     def test_build_prepare_viewer_export_command_uses_group_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
