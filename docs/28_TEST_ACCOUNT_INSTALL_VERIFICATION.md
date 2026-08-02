@@ -1,6 +1,6 @@
 # Test Account Install Verification
 
-This is the release gate for the current Mac alpha: a separate macOS test
+This is the release gate for the current Mac preview: a separate macOS test
 account with no developer environment must be able to install and run setup
 from the DMG.
 
@@ -12,6 +12,7 @@ This verifies the distribution shape only:
 - no `uv` requirement
 - no existing Python requirement
 - no `sudo`
+- Apple Silicon macOS 14 or later
 - app writes only under `~/Library/Application Support/TotalSegmentatorWrapperMac/`
 - pip and Python bytecode caches stay under App Support
 - the signed app bundle remains valid after setup
@@ -33,7 +34,7 @@ scripts/build_mac_dmg.sh
 Expected artifact:
 
 ```text
-dist/TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg
+dist/TotalSegmentator Wrapper for Mac-0.4.1-release-arm64.dmg
 ```
 
 ## Automated Preflight
@@ -45,7 +46,8 @@ scripts/verify_zero_env_mac_dmg.sh
 ```
 
 This mounts the DMG, copies the app into a temporary clean home directory,
-runs first setup with an empty inherited environment, verifies MPS, verifies
+runs first setup with an empty inherited environment, verifies the macOS 14
+minimum-version contract, verifies MPS, verifies
 the app-bundled DICOM normalizer, checks that pip and Python bytecode caches
 stay under App Support, verifies codesign after setup, and writes
 test-account-style evidence.
@@ -54,7 +56,8 @@ test-account-style evidence.
 
 1. 別のmacOSテスト用アカウントへログインする。
 2. そのアカウントには Homebrew、`uv`、pyenv、Python をインストールしない。
-3. `TotalSegmentator Wrapper for Mac-0.1.2-20260708-modelsetup-arm64.dmg` をそのアカウントへコピーする。
+3. `pyproject.toml` のversionから生成された0.4.1 DMG（既定名は
+   `TotalSegmentator Wrapper for Mac-0.4.1-release-arm64.dmg`）をそのアカウントへコピーする。
 4. DMGを開く。
 5. `TotalSegmentator Wrapper for Mac.app` を `~/Applications` へドラッグする。
    `~/Applications` がない場合はFinderで作成する。
@@ -83,13 +86,59 @@ from another account:
 /Users/Shared/TotalSegmentatorWrapperMac/test_account_install_evidence.json
 ```
 
+Each execution creates a new run ID.  A pre-existing local or shared evidence
+file is first atomically replaced with a non-importable supersession tombstone,
+then that tombstone is placed at `*.superseded-<run-id>` before verification
+starts.  It records `passed: false`, `superseded_by_run_id`, and a bounded
+base64 diagnostic copy of the old JSON; the raw prior PASS is not retained as a
+separately importable file.  Only the current run's final JSON is published at
+the normal path.  A failed verification therefore replaces the normal-path
+JSON with `"passed": false` rather than leaving a previous pass result in place.
+
+This also applies to an early preflight failure such as a missing setup-state
+file or private runtime Python: where the evidence locations are writable, the
+collector publishes a minimal current-run
+`totalsegmentator_wrapper_mac.test_account_install_preflight_failure.v1` JSON.
+It contains `passed: false`, the current run ID, timestamp, and a bounded
+`preflight_failure` reason.  This is deliberately a different, non-importable
+diagnostic schema rather than incomplete v2 release evidence.  The importer
+rejects it as `preflight_failure_evidence_cannot_be_imported`; its purpose is to
+make a prior PASS unusable while preserving the superseded file and current
+failure details for diagnosis.
+
 Required evidence:
 
 - `passed: true`
 - `setup_state_success`
+- `install_wheel_step_success`
+- `wheel_install_hashed_lock`（`network_require_hashes_lock`）
+- `install_bundled_wheels_step_success`
+- `install_locked_dependencies_step_success`
+- `pip_check_step_success`
+- `manifest_has_requirements_lock_sha256` / `manifest_has_dependency_lock_metadata_sha256`
+- `bundled_requirements_lock_sha256_matches_manifest` /
+  `bundled_dependency_lock_metadata_sha256_matches_manifest`
+- `installed_requirements_lock_sha256_matches_manifest` /
+  `installed_dependency_lock_metadata_sha256_matches_manifest`
+- `installed_fpsample_version` / `installed_fpsample_import_sample`
+- `installed_acvl_utils_version` / `installed_acvl_utils_import`
+- `manifest_has_fpsample_wheel_sha256` / `bundled_fpsample_wheel_sha256_matches_manifest`
+- `manifest_has_acvl_utils_wheel_sha256` / `bundled_acvl_utils_wheel_sha256_matches_manifest`
+- `manifest_has_setup_weights_manifest_sha256`
 - `mps_actual_device`
 - `mps_gate_pass`
 - `normalizer_from_app_bundle`
+- `app_and_wheel_macho_macos14_arm64`（all app/wheel Mach-O slices are
+  arm64-compatible and target macOS 14 or earlier; unsafe wheel member paths,
+  case/Unicode-colliding wheel members, escaping `Contents` symlinks, external
+  absolute dyld metadata, and malformed `LC_ID_DYLIB` are rejected; native
+  wheel members are limited to sealed macOS dependencies with no `LC_RPATH`）
+- `dicom_helpers_system_linkage_no_rpath`（normalizer and dcm2niix use only
+  macOS system libraries and no `LC_RPATH`）
+- `normalizer_source_matches_bundled_receipts`（`normalizer_source` matches the
+  bundled normalizer/GDCM source-build receipts）
+- `dcm2niix_source_matches_bundled_receipt_and_pointer`（`dcm2niix_source`
+  matches the bundled content-addressed pointer and source-build receipt）
 - `app_codesign_valid`
 - `spctl_app_accepted`
 - `stapler_dmg_valid`
@@ -102,6 +151,10 @@ Required evidence:
 - `manifest_notarized`
 - `manifest_bundled_python312`
 - `bundled_python_has_no_absolute_symlinks`
+
+`network_constraints_binary_only` は、lockを同梱しない開発用smoke testだけの経路です。
+その証跡は最終release evidenceとしてimportできません。release DMGでは、上記の
+hashed-lock / bundled-wheel / `pip check` のすべてが成功している必要があります。
 
 If any check fails, the goal is not complete.
 
@@ -124,6 +177,23 @@ artifacts/test_account_install/<timestamp>/
 and writes `test_account_install_verdict.json`. The goal is complete only when
 that verdict has `passed: true` for a real separate macOS test account, without
 setting `TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_ZERO_ENV_EVIDENCE`.
+
+The importer accepts only the exact evidence schema-v2 field set with a unique
+boolean result for each required check, and rejects duplicate JSON object keys
+before interpreting the payload. A preflight-failure v1 diagnostic record is
+always rejected with `preflight_failure_evidence_cannot_be_imported`, even when
+its diagnostic fields are well formed. It rejects symlinked evidence files,
+stale evidence (seven days by default), and evidence whose app version does not
+match the current checkout's `pyproject.toml`. The collector records the installed app's version,
+build/dependency IDs, `setup_manifest.json` and `Info.plist` hashes, and, when
+the DMG was supplied for stapler validation, its SHA-256. A release operator can
+also bind that DMG hash explicitly with
+`TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256`.
+
+This is an operational test-account record, not a cryptographic remote
+attestation. Keep the original DMG and imported verdict together, review the
+recorded identity fields, and do not treat a manually edited JSON as proof of a
+release.
 
 The import script rejects evidence from `/tmp` clean-home simulations and from
 the current development account by default. For automated preflight evidence
