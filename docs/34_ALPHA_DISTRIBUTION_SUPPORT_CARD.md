@@ -1,5 +1,10 @@
 # 34 Alpha Distribution Support Card
 
+> **Historical document:** this card records the 0.1.2 distribution only. It
+> must not be used for the current 0.4.1 release. Current builds require an
+> Apple Silicon Mac running macOS 14 or later; the macOS 13 value below is
+> retained solely as historical evidence.
+
 TotalSegmentator Wrapper for Mac `0.1.2` の外部紹介・返事待ち中に使う配布カードと
 問い合わせ対応表。新機能追加ではなく、配布体験と失敗時対応を安定させるための
 運用メモ。
@@ -19,7 +24,7 @@ TotalSegmentator Wrapper for Mac `0.1.2` の外部紹介・返事待ち中に使
 | Lacramy apps hub | `https://app.lacramy.com/` |
 | Cloudflare Pages | `cloudflare/pages/` for app page, `cloudflare/app-hub/` for hub |
 | R2 update manifest | `https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json` |
-| 対応環境 | Apple Silicon Mac, macOS 13以降を想定 |
+| 対応環境（0.1.2当時） | Apple Silicon Mac, macOS 13以降を想定。現行0.4.1は macOS 14以降。 |
 | 同梱Sample | Sample 1 CT input, precomputed 3D HTML preview |
 | 初回Setup | App Support配下に専用runtimeを作成 |
 | 初回Setup所要時間 | zero-env検証では依存導入が約398秒。環境・通信状況により数分 |

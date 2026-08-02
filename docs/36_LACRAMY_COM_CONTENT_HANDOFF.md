@@ -1,5 +1,12 @@
 # 36 Lacramy.com Content Handoff
 
+> **Historical handoff (0.1.2 distribution, 2026-07-08).** This record is
+> retained for audit context and must not be used for current release, upload,
+> redirect, or update-manifest instructions. The current policy is in
+> [`docs/35_CLOUDFLARE_DISTRIBUTION.md`](35_CLOUDFLARE_DISTRIBUTION.md): legacy
+> `stable` remains the exact live 0.3.0 record, while 0.4.1+ can be promoted
+> only through the verified `stable-v2` route after all release gates pass.
+
 lacramy.com のコンテンツ管理スレッドへ引き継ぐためのメモ。
 このリポジトリ側では、TotalSegmentator Wrapper for Mac の配布ページを
 `app.lacramy.com` から app-specific domain へ移し、`app.lacramy.com` を
@@ -16,7 +23,7 @@ lacramy.com のコンテンツ管理スレッドへ引き継ぐためのメモ�
 - アプリ内更新は `downloads.lacramy.com` の stable manifest を使うため、
   lacramy.comコンテンツ側では変更しない。
 
-## 現在のCloudflare状態
+## Historical Cloudflare Snapshot
 
 Cloudflare Pages:
 
@@ -54,7 +61,7 @@ downloads.lacramy.com
   prefix: totalsegmentator-wrapper-mac/
 ```
 
-## Public URL Contract
+## Historical Public URL Contract
 
 0.1.2配布metadata生成後の公開導線の期待状態:
 

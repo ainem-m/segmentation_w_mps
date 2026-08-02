@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <meta
     name="description"
-    content="CTのDICOMを選ぶだけ。初回準備はアプリ内のボタンひとつで行い、MacのGPUを活用して顎骨や歯の3Dデータを作成します。"
+    content="Apple Silicon MacでCT/CBCTから非臨床の3Dプレビューを作成する研究・教育・検証向けアプリです。"
   >
   <meta property="og:type" content="website">
   <meta property="og:locale" content="ja_JP">
@@ -467,6 +467,194 @@
 
     .section {
       padding: 84px 0;
+    }
+
+    #update-0-4-0 {
+      scroll-margin-top: 76px;
+    }
+
+    .update-section {
+      position: relative;
+      overflow: hidden;
+      border-top: 1px solid #cfe0d9;
+      border-bottom: 1px solid #cfe0d9;
+      background:
+        radial-gradient(circle at 92% 8%, rgba(255, 224, 174, 0.64), transparent 28%),
+        linear-gradient(145deg, #f5faf7, #ffffff 60%);
+    }
+
+    .update-section::before {
+      position: absolute;
+      top: -170px;
+      left: -150px;
+      width: 360px;
+      height: 360px;
+      border: 80px solid rgba(20, 118, 111, 0.055);
+      border-radius: 50%;
+      content: "";
+      pointer-events: none;
+    }
+
+    .update-hero {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(430px, 1.1fr);
+      gap: 46px;
+      align-items: center;
+    }
+
+    .update-version {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin: 0 0 18px;
+      color: var(--green-dark);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+    }
+
+    .update-version strong {
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: #f4b85d;
+      color: #42270b;
+    }
+
+    .update-hero h2 {
+      max-width: 14em;
+      font-size: clamp(34px, 4.5vw, 54px);
+      line-height: 1.18;
+    }
+
+    .update-lead {
+      max-width: 650px;
+      margin: 20px 0 0;
+      color: #40585c;
+      font-size: 17px;
+      font-weight: 650;
+    }
+
+    .update-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .update-visual {
+      overflow: hidden;
+      margin: 0;
+      border: 1px solid #d6dfdd;
+      border-radius: 24px;
+      background: #f7f8fb;
+      box-shadow: var(--shadow);
+    }
+
+    .update-visual img {
+      width: 100%;
+      display: block;
+      aspect-ratio: 1432 / 1212;
+      object-fit: cover;
+    }
+
+    .update-visual figcaption {
+      padding: 11px 16px;
+      border-top: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .update-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 36px;
+    }
+
+    .update-card {
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      min-height: 300px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 24px;
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .update-card-index {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 13px;
+      background: var(--green-soft);
+      color: var(--green-dark);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .update-card h3 {
+      margin: 2px 0 0;
+      font-size: 21px;
+      line-height: 1.4;
+    }
+
+    .update-card p {
+      margin: 0;
+      color: #40585c;
+      font-size: 14px;
+    }
+
+    .update-card ul {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .update-card li {
+      position: relative;
+      padding-left: 20px;
+    }
+
+    .update-card li::before {
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      content: "✓";
+      font-weight: 900;
+    }
+
+    .update-support-note {
+      margin-top: 2px !important;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      font-size: 12px !important;
+    }
+
+    .update-support-note a {
+      color: var(--green-dark);
+      font-weight: 800;
+    }
+
+    .update-notice {
+      margin: 24px 0 0;
+      border-left: 4px solid var(--orange);
+      border-radius: 0 14px 14px 0;
+      padding: 14px 17px;
+      background: var(--orange-soft);
+      color: #6c3b16;
+      font-size: 13px;
+      font-weight: 700;
     }
 
     .section.alt {
@@ -1290,6 +1478,7 @@
       .story-grid,
       .benchmark-layout,
       .dicom-grid,
+      .update-hero,
       .feature-detail-grid,
       .feature-detail-grid.visual-first {
         grid-template-columns: 1fr;
@@ -1310,6 +1499,14 @@
 
       .feature-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .update-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .update-card {
+        min-height: 0;
       }
 
       .model-grid {
@@ -1359,6 +1556,18 @@
       .feature-grid,
       .support-grid {
         grid-template-columns: 1fr;
+      }
+
+      .update-hero {
+        gap: 30px;
+      }
+
+      .update-hero h2 {
+        font-size: clamp(30px, 9vw, 42px);
+      }
+
+      .update-visual {
+        border-radius: 18px;
       }
 
       .feature {
@@ -1468,6 +1677,7 @@
         <span>TotalSegmentator Wrapper for Mac</span>
       </a>
       <nav class="nav" aria-label="ページ内ナビゲーション">
+        <a href="#update-0-4-0">公開状況</a>
         <a href="#setup">機能</a>
         <a href="#gpu">処理時間</a>
         <a href="#why">開発した理由</a>
@@ -1546,6 +1756,94 @@
             <span>ドラッグで回転、拡大縮小、表示方向の変更、X-ray表示をお試しください。</span>
           </p>
         </div>
+      </div>
+    </section>
+
+    <section class="section update-section" id="update-0-4-0" aria-labelledby="update-title">
+      <div class="wrap">
+        <div class="update-hero">
+          <div>
+            <p class="update-version">
+              <strong>開発中の更新</strong>
+              Version 0.4.1（公開前）
+            </p>
+            <h2 id="update-title">
+              CTだけじゃない。<br>
+              口腔内スキャンから、歯を1本ずつ。
+            </h2>
+            <p class="update-lead">
+              現在の公開版 0.3.0 はCT/CBCTの3Dプレビューを提供しています。
+              口腔内スキャンを読み込み歯別STLを作成する機能、詳細なエラー報告、単一.dcm対応は次期版での提供に向けて検証中です。
+              0.4.0は公開停止済みです。
+            </p>
+            <div class="update-actions">
+              <a class="button primary" href="/download?from=public-0-3-0">公開版 0.3.0をダウンロード</a>
+              <a class="button" href="#update-details">開発中の機能を見る</a>
+            </div>
+          </div>
+          <figure class="update-visual">
+            <img
+              src="/assets/totalsegmentator-ios-tooth-segmentation.webp"
+              alt="ToothGroupNetwork（TGNet）で歯を1本ずつ色分けした口腔内スキャンの3Dモデル"
+              width="1432"
+              height="1212"
+              loading="lazy"
+              decoding="async"
+            >
+            <figcaption>ToothGroupNetwork（TGNet）で作成した歯別セグメンテーション</figcaption>
+          </figure>
+        </div>
+
+        <div class="update-grid" id="update-details">
+          <article class="update-card">
+            <span class="update-card-index">01</span>
+            <h3>口腔内スキャン → 歯別STL</h3>
+            <p>
+              PLY／STLから歯を分け、歯ごとのSTLと結果JSONを作成します。
+              MacのGPU（MPS）で実行できます。
+            </p>
+            <ul>
+              <li>標準MeshSegNet（この機能の初回実行時に重みを取得）</li>
+              <li>歯ごとのSTLと結果JSONを保存</li>
+              <li>ToothGroupNetwork（TGNet）も選択可能（重みは別途取得）</li>
+            </ul>
+          </article>
+
+          <article class="update-card">
+            <span class="update-card-index">02</span>
+            <h3>エラーを報告しやすく</h3>
+            <p>
+              失敗画面の「エラー情報をコピー」から、作者が調査するための情報を
+              まとめてコピーできます。内容を確認して相談フォームへ貼り付けるだけです。
+            </p>
+            <ul>
+              <li>ファイルやログを自動送信しない</li>
+              <li>Googleアカウントへのログイン不要</li>
+              <li>報告内容をもとに作者側で調査・対応</li>
+            </ul>
+          </article>
+
+          <article class="update-card">
+            <span class="update-card-index">03</span>
+            <h3>単一の.dcmを直接選択</h3>
+            <p>
+              DICOMフォルダに加え、複数断面が1つにまとまったDICOMファイルを
+              そのまま選べるようになりました。
+            </p>
+            <ul>
+              <li>フォルダ／単一ファイルの両方に対応</li>
+              <li>元のDICOMは書き換えない</li>
+              <li>画像処理はMac内で実行</li>
+            </ul>
+          </article>
+        </div>
+
+        <p class="update-notice">
+          口腔内スキャン機能は研究・教育・検証用です。診断・治療には使用しないでください。
+          TGNetの重みは本アプリに同梱・再配布しません。利用する場合は、
+          <a href="https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby" target="_blank" rel="noopener">指定の配布ページ</a>からご自身で取得し、
+          配布元が示す利用条件をご確認ください。ライセンス条件は本アプリでは未確認です。
+        </p>
       </div>
     </section>
 
@@ -1807,6 +2105,7 @@
                 読み込めないDICOMを相談する
               </a>
             </div>
+            <p class="fine-print">Googleアカウントへのログインは不要です。内容は自動送信されません。</p>
             <p class="fine-print">
               すべてのDICOMを必ず読み込めることを保証するものではありません。
               フォームには患者名などを入力せず、DICOMファイル自体も送らないでください。
@@ -1867,8 +2166,8 @@
             <h3>リモート導入・操作サポート</h3>
             <p class="price">60分 5,000円</p>
             <p class="card-copy">
-              画面を共有しながら、インストール、初回準備、基本操作、
-              エラーの確認をお手伝いします。ご希望の方には、個別に日程を調整して対応します。
+              画面を共有しながら、アプリ本体のインストール、初回セットアップ、基本操作、アプリに表示されたエラーの確認をお手伝いします。
+              ご希望の方には、個別に日程を調整して対応します。
               <a href="https://forms.gle/QFPwF1Pi5C8bmSuw6" target="_blank" rel="noopener">相談フォーム</a>、
               または<a href="mailto:support@lacramy.com">support@lacramy.com</a>からお問い合わせください。
               メールの件名に「TotalSegmentator Wrapper」とご記載ください。

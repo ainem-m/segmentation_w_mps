@@ -14,6 +14,33 @@ identity and authorization evidence is retained outside the Git repository.
 
 Decision status: confirmed for publication.
 
+## Intra-oral scan derivative publication surface
+
+<a id="owner-explicit-public-display-consent-2026-08-03"></a>
+
+**Repository decision ID:** `owner-explicit-public-display-consent-2026-08-03`
+(non-secret public-display authorization record; recorded at
+`2026-08-02T21:08:23Z`, which is 2026-08-03 in Asia/Tokyo).
+
+On 2026-08-03 (Asia/Tokyo), the rights holder confirmed that they created
+`ios_upper.ply` by personally scanning their own oral cavity. They explicitly
+authorized public display of the named derived WebP,
+`totalsegmentator-ios-tooth-segmentation.webp`, on the project's public Pages
+site. This approval permits public display of that render; it does not relicense
+the asset under Apache-2.0 or include TGNet checkpoints or weights.
+
+The structured approval and non-secret authorization record are stored in
+`cloudflare/pages/assets/ASSET_PROVENANCE.json`. The named WebP is eligible for
+stable-v2 promotion when the remaining release gates pass.
+
+The source PLY must not be committed, bundled in the app or DMG, uploaded to
+R2, or deployed on Pages. TGNet checkpoints and weights are not included in
+the WebP or authorized for redistribution by this decision.
+
+Decision status: creator ownership and explicit public display approval for the
+named derived WebP confirmed; source PLY and model weights remain excluded from
+distribution.
+
 ## Sample 1 source and publication surface
 
 The source-data rights holder explicitly authorized public distribution of the
