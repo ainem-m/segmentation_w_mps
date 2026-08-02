@@ -3,12 +3,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import errno
 import tempfile
 import unittest
 import zipfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import totalsegmentator_wrapper_mac.toothseg_setup as toothseg_setup
+from totalsegmentator_wrapper_mac.cli import main as cli_main
 from totalsegmentator_wrapper_mac.toothseg_setup import (
     SEMANTIC_MPS_PATCH_SIZE,
     install_toothseg_model,
@@ -26,6 +30,71 @@ INSTANCE_TRAINER = "nnUNetTrainer__nnUNetPlans__3d_fullres_resample_torch_192_bs
 
 
 class ToothSegSetupTests(unittest.TestCase):
+    def test_cli_classifies_disk_full_without_claiming_archive_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result_json = root / "result.json"
+            progress_log = root / "progress.log"
+            private_path = "/Users/patient/private-toothseg.zip"
+            stderr = io.StringIO()
+            with patch(
+                "totalsegmentator_wrapper_mac.toothseg_setup.install_toothseg_model",
+                side_effect=OSError(
+                    errno.ENOSPC,
+                    f"No space left on device: {private_path}",
+                ),
+            ), redirect_stderr(stderr):
+                rc = cli_main(
+                    [
+                        "toothseg-prepare",
+                        "--model-root",
+                        str(root / "models"),
+                        "--progress-log",
+                        str(progress_log),
+                        "--json",
+                        str(result_json),
+                    ]
+                )
+
+            payload = json.loads(result_json.read_text(encoding="utf-8"))
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["error_code"], "insufficient_disk_space")
+            self.assertNotIn("sha256", payload)
+            self.assertIn("insufficient_disk_space", stderr.getvalue())
+            self.assertNotIn(private_path, stderr.getvalue())
+            self.assertNotIn(private_path, json.dumps(payload))
+            self.assertIn(private_path, progress_log.read_text(encoding="utf-8"))
+
+    def test_cli_keeps_non_disk_prepare_failure_generic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result_json = root / "result.json"
+            private_path = "/Users/patient/private-toothseg.zip"
+            progress_log = root / "progress.log"
+            stderr = io.StringIO()
+            with patch(
+                "totalsegmentator_wrapper_mac.toothseg_setup.install_toothseg_model",
+                side_effect=RuntimeError(f"failed at {private_path}"),
+            ), redirect_stderr(stderr):
+                rc = cli_main(
+                    [
+                        "toothseg-prepare",
+                        "--model-root",
+                        str(root / "models"),
+                        "--progress-log",
+                        str(progress_log),
+                        "--json",
+                        str(result_json),
+                    ]
+                )
+
+            payload = json.loads(result_json.read_text(encoding="utf-8"))
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["error_code"], "model_prepare_failed")
+            self.assertNotIn(private_path, stderr.getvalue())
+            self.assertNotIn(private_path, json.dumps(payload))
+            self.assertIn(private_path, progress_log.read_text(encoding="utf-8"))
+
     def test_install_extracts_only_runtime_files_and_marks_both_branches_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -36,15 +105,30 @@ class ToothSegSetupTests(unittest.TestCase):
             distributions.write_text('{"means": [], "covs": []}', encoding="utf-8")
             distributions_sha256 = hashlib.sha256(distributions.read_bytes()).hexdigest()
             model_root = root / "models"
+            model_url = "https://example.test/ToothSeg.zip"
+            distributions_url = "https://example.test/fdi_pair_distrs.json"
+
+            def open_fixture(request: str | object, **_kwargs: object) -> _BytesResponse:
+                url = request if isinstance(request, str) else request.full_url  # type: ignore[union-attr]
+                if url == model_url:
+                    return _BytesResponse(archive.read_bytes(), url=model_url)
+                if url == distributions_url:
+                    return _BytesResponse(distributions.read_bytes(), url=distributions_url)
+                raise AssertionError(f"unexpected fixture URL: {url}")
 
             progress_output = io.StringIO()
-            with redirect_stdout(progress_output):
+            with (
+                redirect_stdout(progress_output),
+                patch.object(toothseg_setup, "PAIR_DISTRIBUTIONS_URL", distributions_url),
+                patch.object(toothseg_setup, "PAIR_DISTRIBUTIONS_SHA256", distributions_sha256),
+                patch.object(toothseg_setup.urllib.request, "urlopen", side_effect=open_fixture),
+            ):
                 result = install_toothseg_model(
-                    model_url=archive.as_uri(),
+                    model_url=model_url,
                     model_zip=model_root / "ToothSeg.zip",
                     expected_md5=expected_md5,
                     nnunet_results=model_root / "nnUNet_results",
-                    pair_distributions_url=distributions.as_uri(),
+                    pair_distributions_url=distributions_url,
                     pair_distributions_sha256=distributions_sha256,
                 )
 
@@ -115,7 +199,13 @@ class ToothSegSetupTests(unittest.TestCase):
 
             marker_path = model_root / "nnUNet_results" / ".toothseg_model_ready.json"
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
-            marker.pop("semantic_mps_patch_size")
+            for legacy_absent_key in (
+                "semantic_mps_patch_size",
+                "runtime_files",
+                "integrity_manifest_source",
+                "legacy_marker_migrated",
+            ):
+                marker.pop(legacy_absent_key)
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
             semantic_plan["configurations"]["3d_fullres_resample_torch_256_bs8_ctnorm"]["patch_size"] = [
                 256,
@@ -130,14 +220,20 @@ class ToothSegSetupTests(unittest.TestCase):
                 / "plans.json"
             ).write_text(json.dumps(semantic_plan), encoding="utf-8")
 
-            migrated = install_toothseg_model(
-                model_url="https://unreachable.invalid/ToothSeg.zip",
-                model_zip=model_root / "ToothSeg.zip",
-                expected_md5=expected_md5,
-                nnunet_results=model_root / "nnUNet_results",
-                pair_distributions_url="https://unreachable.invalid/fdi_pair_distrs.json",
-                pair_distributions_sha256=distributions_sha256,
-            )
+            with (
+                patch.object(toothseg_setup, "PAIR_DISTRIBUTIONS_URL", distributions_url),
+                patch.object(toothseg_setup, "PAIR_DISTRIBUTIONS_SHA256", distributions_sha256),
+                patch.object(toothseg_setup.urllib.request, "urlopen") as urlopen,
+            ):
+                migrated = install_toothseg_model(
+                    model_url="https://unreachable.invalid/ToothSeg.zip",
+                    model_zip=model_root / "ToothSeg.zip",
+                    expected_md5=expected_md5,
+                    nnunet_results=model_root / "nnUNet_results",
+                    pair_distributions_url=distributions_url,
+                    pair_distributions_sha256=distributions_sha256,
+                )
+            urlopen.assert_not_called()
             self.assertTrue(migrated["reused_existing_checkpoints"])
             self.assertFalse(migrated["downloaded"])
             self.assertEqual(
@@ -155,7 +251,14 @@ class ToothSegSetupTests(unittest.TestCase):
             partial = model_root / "ToothSeg.zip.part"
             partial.write_bytes(b"partial")
             partial.with_name("ToothSeg.zip.part.json").write_text(
-                json.dumps({"url": "https://example.test/ToothSeg.zip", "expected_md5": "abc"}),
+                json.dumps(
+                    {
+                        "schema": toothseg_setup.PARTIAL_DOWNLOAD_SCHEMA,
+                        "url": "https://example.test/ToothSeg.zip",
+                        "expected_md5": "abc",
+                        "total_bytes": None,
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -172,12 +275,20 @@ class ToothSegSetupTests(unittest.TestCase):
             expected_md5 = _md5(archive)
 
             with self.assertRaisesRegex(RuntimeError, "unsafe ToothSeg archive member"):
-                install_toothseg_model(
-                    model_url=archive.as_uri(),
-                    model_zip=root / "models" / "ToothSeg.zip",
-                    expected_md5=expected_md5,
-                    nnunet_results=root / "models" / "nnUNet_results",
-                )
+                with patch.object(
+                    toothseg_setup.urllib.request,
+                    "urlopen",
+                    return_value=_BytesResponse(
+                        archive.read_bytes(),
+                        url="https://example.test/ToothSeg.zip",
+                    ),
+                ):
+                    install_toothseg_model(
+                        model_url="https://example.test/ToothSeg.zip",
+                        model_zip=root / "models" / "ToothSeg.zip",
+                        expected_md5=expected_md5,
+                        nnunet_results=root / "models" / "nnUNet_results",
+                    )
 
 
 def _write_model_archive(path: Path, *, unsafe: bool = False) -> None:
@@ -200,7 +311,10 @@ def _write_model_archive(path: Path, *, unsafe: bool = False) -> None:
             else:
                 plans = {"configurations": {}}
             archive.writestr(f"{prefix}/plans.json", json.dumps(plans))
-            archive.writestr(f"{prefix}/fold_5/checkpoint_final.pth", b"weights")
+            archive.writestr(
+                f"{prefix}/fold_5/checkpoint_final.pth",
+                _fake_pytorch_checkpoint_bytes(),
+            )
             archive.writestr(f"{prefix}/fold_5/checkpoint_best.pth", b"unused")
         if unsafe:
             archive.writestr("ToothSeg/../../escaped.txt", "no")
@@ -208,6 +322,40 @@ def _write_model_archive(path: Path, *, unsafe: bool = False) -> None:
 
 def _md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()  # noqa: S324 - test fixture integrity.
+
+
+def _fake_pytorch_checkpoint_bytes() -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_STORED) as checkpoint:
+        checkpoint.writestr("archive/data.pkl", b"fixture-pickle-metadata")
+        checkpoint.writestr("archive/version", b"3\n")
+        checkpoint.writestr("archive/byteorder", b"little")
+        checkpoint.writestr("archive/data/0", b"tensor-storage")
+    return payload.getvalue()
+
+
+class _BytesResponse:
+    def __init__(self, payload: bytes, *, url: str) -> None:
+        self.payload = payload
+        self.url = url
+        self.status = 200
+        self.headers = {"Content-Length": str(len(payload))}
+
+    def __enter__(self) -> _BytesResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _size: int = -1) -> bytes:
+        payload, self.payload = self.payload, b""
+        return payload
+
+    def getcode(self) -> int:
+        return self.status
+
+    def geturl(self) -> str:
+        return self.url
 
 
 if __name__ == "__main__":

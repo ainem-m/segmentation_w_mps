@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from totalsegmentator_wrapper_mac.benchmark import write_json
 from totalsegmentator_wrapper_mac.dicom_normalizer_bridge import (
@@ -24,6 +27,305 @@ TASKS = ("craniofacial_structures", "teeth")
 BACKENDS = ("totalsegmentator", "dentalsegmentator", "toothseg")
 DEVICES = ("auto", "mps", "cpu")
 SMOOTH_PRESET_NAMES = ("none", "slicer_like", "medium", "strong")
+
+_SAFE_RUN_ERROR_CODES = frozenset(
+    {
+        "operation_failed",
+        "runner_failed",
+        "mps_required",
+        "mps_unavailable",
+        "totalseg_setup_weights_missing_or_invalid",
+        "insufficient_disk_space",
+        "dentalseg_prepare_required",
+        "toothseg_prepare_required",
+        "backend_failed",
+        "totalseg_backend_nonzero_exit",
+        "totalseg_backend_launch_failed",
+        "dentalseg_failed",
+        "toothseg_failed",
+        "toothseg_mps_oom",
+        "toothseg_input_invalid",
+        "toothseg_download_failed",
+        "cancelled",
+        "preview_generation_failed",
+        "preview_generation_cancelled",
+        "toothseg_refine_failed",
+        "toothseg_refine_cancelled",
+        "toothseg_model_preparation_failed",
+        "dentalseg_model_preparation_failed",
+    }
+)
+_SAFE_RUN_REASONS = {
+    "operation_failed": "The requested operation did not complete.",
+    "runner_failed": "The segmentation run did not complete.",
+    "mps_required": "This app execution profile requires MPS.",
+    "mps_unavailable": "MPS validation did not pass for this app run.",
+    "totalseg_setup_weights_missing_or_invalid": "The app setup models are missing or failed validation.",
+    "insufficient_disk_space": "Model preparation could not continue because available disk space is insufficient.",
+    "dentalseg_prepare_required": "Prepare the DentalSegmentator model before starting an app-profile run.",
+    "toothseg_prepare_required": "Prepare the ToothSeg model before starting an app-profile run.",
+    "backend_failed": "The segmentation backend did not complete.",
+    "totalseg_backend_nonzero_exit": "The TotalSegmentator backend exited without completing the requested inference.",
+    "totalseg_backend_launch_failed": "The TotalSegmentator backend could not start.",
+    "dentalseg_failed": "DentalSegmentator did not complete.",
+    "toothseg_failed": "ToothSeg did not complete.",
+    "toothseg_mps_oom": "ToothSeg exceeded available MPS memory after dental ROI preparation.",
+    "toothseg_input_invalid": "ToothSeg could not create a valid dental ROI from the existing teeth result.",
+    "toothseg_download_failed": "The ToothSeg model download did not complete.",
+    "cancelled": "The operation was cancelled before completion.",
+    "preview_generation_failed": "The 3D preview could not be generated.",
+    "preview_generation_cancelled": "The 3D preview generation was cancelled.",
+    "toothseg_refine_failed": "The high-resolution ToothSeg refinement did not complete.",
+    "toothseg_refine_cancelled": "The ToothSeg high-resolution run was cancelled.",
+    "toothseg_model_preparation_failed": "ToothSeg model preparation did not complete.",
+    "dentalseg_model_preparation_failed": "DentalSegmentator model preparation did not complete.",
+}
+_SAFE_RUN_STAGES = frozenset(
+    {
+        "backend_launch",
+        "backend_inference",
+        "preflight_execution_profile",
+        "preflight_mps_validation",
+        "preflight_model_validation",
+        "preflight_unknown",
+    }
+)
+_SAFE_RUN_CAUSES = frozenset(
+    {
+        "backend_process_exited_nonzero",
+        "backend_process_launch_failed",
+        "mps_requirement_not_met",
+        "mps_validation_failed",
+        "model_preparation_required",
+        "setup_weights_validation_failed",
+        "preflight_validation_failed",
+    }
+)
+_SAFE_RUN_RECOVERY_HINTS = frozenset(
+    {
+        "review_local_log_then_retry",
+        "select_mps_then_retry",
+        "restore_mps_then_retry",
+        "prepare_model_then_retry",
+        "rerun_setup_then_retry",
+        "review_setup_then_retry",
+    }
+)
+_SAFE_DIAGNOSTIC_LOG_KINDS = frozenset({"local_engineering_diagnostic"})
+_SAFE_RUN_VERSION_VALUES = frozenset({"2.14.0", "2.12.0", "3.12", "unknown"})
+_SAFE_INPUT_KINDS = frozenset({"nifti", "unknown"})
+_SAFE_INPUT_SIZE_BUCKETS = frozenset(
+    {"lt_10_mib", "10_to_100_mib", "100_to_500_mib", "ge_500_mib", "unknown"}
+)
+_RFC3339_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def _model_preparation_failure_payload(
+    *,
+    schema: str,
+    model_name: str,
+    exc: Exception,
+) -> dict[str, object]:
+    disk_full = isinstance(exc, OSError) and exc.errno == errno.ENOSPC
+    return {
+        "schema": schema,
+        "status": "failed",
+        "model_state": "failed",
+        "error_code": "insufficient_disk_space" if disk_full else "model_prepare_failed",
+        "safe_reason": (
+            "Model preparation could not continue because available disk space is insufficient."
+            if disk_full
+            else f"{model_name} model preparation did not complete."
+        ),
+        "mps_state": "not_applicable",
+        "occurred_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _append_model_preparation_failure_log(
+    progress_log: Path,
+    *,
+    progress_prefix: str,
+    error_code: str,
+    exc: Exception,
+) -> None:
+    try:
+        with progress_log.open("a", encoding="utf-8") as handle:
+            handle.write(
+                f"{progress_prefix}_DIAGNOSTIC error_code={error_code} "
+                f"exception={exc!r}\n"
+            )
+            handle.write(f"{progress_prefix}_PROGRESS status=failed\n")
+    except OSError:
+        # The primary error can itself be ENOSPC. A secondary logging failure
+        # must not replace the stable safe error returned to the application.
+        pass
+
+
+def _parse_run_attempt_id(value: str) -> str:
+    try:
+        return str(UUID(value))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("run attempt ID must be a UUID") from exc
+
+
+def _safe_run_attempt_id(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(UUID(value))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _safe_occurred_at(value: object) -> str | None:
+    if not isinstance(value, str) or not _RFC3339_TIMESTAMP_RE.fullmatch(value):
+        return None
+    try:
+        parsed = datetime.fromisoformat(
+            value.removesuffix("Z") + "+00:00" if value.endswith("Z") else value
+        )
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _allowlisted_run_token(value: object, allowed: frozenset[str], default: str) -> str:
+    return value if isinstance(value, str) and value in allowed else default
+
+
+def _safe_run_result_payload(args: argparse.Namespace, result: object) -> dict[str, object]:
+    """Build the only run payload the GUI can read or copy outside the Mac.
+
+    The result object and subprocess output are not trusted here: the CLI can be
+    invoked directly, and its JSON is later read by Swift.  Keep all free-form
+    process details in the local engineering diagnostic instead.
+    """
+
+    attempt_id = _safe_run_attempt_id(args.run_attempt_id)
+    if attempt_id is None:
+        # The parser always populates this, but avoid writing an unsafe field if
+        # a caller constructs an argparse namespace in a test or integration.
+        attempt_id = "unknown"
+    status = "success" if getattr(result, "status", None) == "success" else "failed"
+    result_code = (
+        _allowlisted_run_token(
+            getattr(result, "error_code", None), _SAFE_RUN_ERROR_CODES, "operation_failed"
+        )
+        if status == "failed"
+        else None
+    )
+    result_attempt_id = _safe_run_attempt_id(getattr(result, "run_attempt_id", None))
+    diagnostic_reference = _safe_run_attempt_id(
+        getattr(result, "diagnostic_log_reference", None)
+    )
+    diagnostic_kind = _allowlisted_run_token(
+        getattr(result, "diagnostic_log_kind", None),
+        _SAFE_DIAGNOSTIC_LOG_KINDS,
+        "none",
+    )
+    if (
+        status != "failed"
+        or diagnostic_reference != attempt_id
+        or result_attempt_id != attempt_id
+    ):
+        diagnostic_kind = "none"
+        diagnostic_reference = None
+    elif diagnostic_kind != "local_engineering_diagnostic":
+        # A UUID is a correlation reference only when it names the single
+        # allowlisted local diagnostic artifact; do not emit dangling IDs.
+        diagnostic_reference = None
+
+    return {
+        "schema": "totalsegmentator_wrapper_mac.safe_run_result.v1",
+        "status": status,
+        "feature": args.backend,
+        "task": args.task,
+        "run_attempt_id": attempt_id,
+        "failed_stage": (
+            _allowlisted_run_token(
+                getattr(result, "failed_stage", None), _SAFE_RUN_STAGES, "unknown"
+            )
+            if status == "failed"
+            else None
+        ),
+        "error_code": result_code,
+        "specific_cause": (
+            _allowlisted_run_token(
+                getattr(result, "specific_cause", None), _SAFE_RUN_CAUSES, "unknown"
+            )
+            if status == "failed"
+            else None
+        ),
+        "safe_reason": _SAFE_RUN_REASONS.get(result_code) if result_code else None,
+        "retryable": (
+            getattr(result, "retryable", None)
+            if status == "failed" and isinstance(getattr(result, "retryable", None), bool)
+            else None
+        ),
+        "recovery_hint_code": (
+            _allowlisted_run_token(
+                getattr(result, "recovery_hint_code", None),
+                _SAFE_RUN_RECOVERY_HINTS,
+                "unknown",
+            )
+            if status == "failed"
+            else None
+        ),
+        "diagnostic_log_kind": diagnostic_kind,
+        "diagnostic_log_reference": diagnostic_reference or "none",
+        "backend_version": _allowlisted_run_token(
+            getattr(result, "backend_version", None), _SAFE_RUN_VERSION_VALUES, "unknown"
+        ),
+        "model_version": _allowlisted_run_token(
+            getattr(result, "model_version", None), _SAFE_RUN_VERSION_VALUES, "unknown"
+        ),
+        "runtime_python_version": _allowlisted_run_token(
+            getattr(result, "runtime_python_version", None),
+            _SAFE_RUN_VERSION_VALUES,
+            "unknown",
+        ),
+        "runtime_torch_version": _allowlisted_run_token(
+            getattr(result, "runtime_torch_version", None),
+            _SAFE_RUN_VERSION_VALUES,
+            "unknown",
+        ),
+        "input_kind": _allowlisted_run_token(
+            getattr(result, "input_kind", None), _SAFE_INPUT_KINDS, "unknown"
+        ),
+        "input_size_bucket": _allowlisted_run_token(
+            getattr(result, "input_size_bucket", None),
+            _SAFE_INPUT_SIZE_BUCKETS,
+            "unknown",
+        ),
+        "mps_state": _allowlisted_run_token(
+            getattr(result, "mps_state", None),
+            frozenset(
+                {
+                    "cpu",
+                    "failed_or_unknown",
+                    "not_applicable",
+                    "not_required",
+                    "required",
+                    "unavailable",
+                    "unknown",
+                    "validated",
+                }
+            ),
+            "unknown",
+        ),
+        "actual_device": _allowlisted_run_token(
+            getattr(result, "actual_device", None), frozenset({"cpu", "mps"}), "unknown"
+        ),
+        "fallback_used": getattr(result, "fallback_used", None) is True,
+        "occurred_at": _safe_occurred_at(getattr(result, "occurred_at", None)),
+        "teeth_detected": getattr(result, "teeth_detected", None) is True,
+        "refine_available": getattr(result, "refine_available", None) is True,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,6 +528,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--execution-profile", choices=("macos-app",), default=None)
     run.add_argument("--require-mps", action="store_true")
     run.add_argument(
+        "--run-attempt-id",
+        type=_parse_run_attempt_id,
+        default=None,
+        help="Optional UUID used only to correlate local engineering diagnostics.",
+    )
+    run.add_argument(
         "--result-json",
         type=Path,
         default=None,
@@ -373,6 +681,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "run" and args.run_attempt_id is None:
+        args.run_attempt_id = str(uuid4())
     if args.command == "doctor":
         result = smoke_test_mps_convtranspose3d().to_dict()
         result["dicom_normalizer"] = inspect_dicom_normalizer()
@@ -454,19 +764,20 @@ def main(argv: list[str] | None = None) -> int:
                 nnunet_preprocessed=model_root / "nnUNet_preprocessed",
                 dataset_id=DENTALSEGMENTATOR_DATASET_ID,
                 dataset_name=DENTALSEGMENTATOR_DATASET_NAME,
+                progress_log=args.progress_log,
             )
         except Exception as exc:  # noqa: BLE001
-            payload = {
-                "schema": "totalsegmentator_wrapper_mac.dentalsegmentator_model_setup.v1",
-                "status": "failed",
-                "model_state": "failed",
-                "error_code": "model_prepare_failed",
-                "safe_reason": "DentalSegmentator model preparation did not complete.",
-                "mps_state": "not_applicable",
-                "occurred_at": datetime.now(UTC).isoformat(),
-            }
-            with args.progress_log.open("a", encoding="utf-8") as handle:
-                handle.write("DENTALSEG_PROGRESS status=failed\n")
+            payload = _model_preparation_failure_payload(
+                schema="totalsegmentator_wrapper_mac.dentalsegmentator_model_setup.v1",
+                model_name="DentalSegmentator",
+                exc=exc,
+            )
+            _append_model_preparation_failure_log(
+                args.progress_log,
+                progress_prefix="DENTALSEG",
+                error_code=str(payload["error_code"]),
+                exc=exc,
+            )
             print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
             write_json(args.json, payload)
             return 1
@@ -506,18 +817,18 @@ def main(argv: list[str] | None = None) -> int:
                 expected_md5=TOOTHSEG_MODEL_MD5,
                 nnunet_results=model_root / "nnUNet_results",
             )
-        except Exception:  # noqa: BLE001
-            payload = {
-                "schema": "totalsegmentator_wrapper_mac.toothseg_model_setup.v1",
-                "status": "failed",
-                "model_state": "failed",
-                "error_code": "model_prepare_failed",
-                "safe_reason": "ToothSeg model preparation did not complete.",
-                "mps_state": "not_applicable",
-                "occurred_at": datetime.now(UTC).isoformat(),
-            }
-            with args.progress_log.open("a", encoding="utf-8") as handle:
-                handle.write("TOOTHSEG_PROGRESS status=failed\n")
+        except Exception as exc:  # noqa: BLE001
+            payload = _model_preparation_failure_payload(
+                schema="totalsegmentator_wrapper_mac.toothseg_model_setup.v1",
+                model_name="ToothSeg",
+                exc=exc,
+            )
+            _append_model_preparation_failure_log(
+                args.progress_log,
+                progress_prefix="TOOTHSEG",
+                error_code=str(payload["error_code"]),
+                exc=exc,
+            )
             print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
             write_json(args.json, payload)
             return 1
@@ -819,22 +1130,12 @@ def main(argv: list[str] | None = None) -> int:
             teeth_force_split=args.teeth_force_split,
             teeth_robust_craniofacial_preflight=args.teeth_robust_craniofacial_preflight,
             toothseg_refine=args.toothseg_refine,
+            run_attempt_id=args.run_attempt_id,
         )
+        safe_payload = _safe_run_result_payload(args, result)
         if args.result_json is not None:
-            safe_payload = {
-                "schema": "totalsegmentator_wrapper_mac.safe_run_result.v1",
-                "status": result.status,
-                "feature": args.backend,
-                "task": args.task,
-                "error_code": result.error_code,
-                "safe_reason": result.safe_reason,
-                "mps_state": result.mps_state,
-                "occurred_at": result.occurred_at,
-                "teeth_detected": result.teeth_detected,
-                "refine_available": result.refine_available,
-            }
             write_json(args.result_json, safe_payload)
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        print(json.dumps(safe_payload, indent=2, ensure_ascii=False))
         return 0 if result.status == "success" else result.returncode or 1
 
     if args.command == "benchmark":
