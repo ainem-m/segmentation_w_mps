@@ -26,6 +26,10 @@ from scripts.release_build_toolchain import (
     verify_prepared_release_build_toolchain,
     verify_release_build_toolchain_receipt,
 )
+from scripts.verify_release_input_readiness import (
+    ReleaseInputReadinessError,
+    verify_release_toolchain_bootstrap_artifact,
+)
 
 
 class ReleaseBuildToolchainTests(unittest.TestCase):
@@ -283,6 +287,69 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             )
             self.assertEqual(verified["wheel_inputs"]["pip"]["version"], "25.1.1")
 
+    def test_source_identity_closes_over_bootstrap_execution_scripts(self) -> None:
+        """Every checked-in implementation that can authorize or alter bytes is bound."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "pyproject.toml"
+            constraints = root / "constraints.txt"
+            fpsample_builder = root / "build_fpsample_wheel_macos.sh"
+            acvl_utils_builder = root / "build_acvl_utils_wheel.sh"
+            for path in (
+                project,
+                constraints,
+                fpsample_builder,
+                acvl_utils_builder,
+            ):
+                path.write_text(f"fixture: {path.name}\n", encoding="utf-8")
+            identity = generate_release_source_identity(
+                output_path=root / "source-identity.json",
+                project_file=project,
+                constraints=constraints,
+                fpsample_builder=fpsample_builder,
+                acvl_utils_builder=acvl_utils_builder,
+            )
+
+            self.assertEqual(
+                identity["schema"],
+                "totalsegmentator_wrapper_mac.release_source_identity.v2",
+            )
+            files = identity["files"]
+            self.assertIsInstance(files, dict)
+            assert isinstance(files, dict)
+            self.assertEqual(
+                set(files),
+                {
+                    "project_file",
+                    "constraints",
+                    "fpsample_builder",
+                    "acvl_utils_builder",
+                    "release_toolchain",
+                    "component_runner",
+                    "fpsample_signer",
+                    "license_verifier",
+                    "dependency_lock_generator",
+                },
+            )
+            self.assertEqual(
+                {entry["filename"] for entry in files.values()},
+                {
+                    "pyproject.toml",
+                    "constraints.txt",
+                    "build_fpsample_wheel_macos.sh",
+                    "build_acvl_utils_wheel.sh",
+                    "release_build_toolchain.py",
+                    "run_release_component_build.sh",
+                    "sign_fpsample_wheel_macos.py",
+                    "verify_license_distribution.py",
+                    "generate_macos_arm64_py312_lock.py",
+                },
+            )
+            for entry in files.values():
+                self.assertEqual(Path(entry["filename"]).name, entry["filename"])
+                self.assertFalse(Path(entry["filename"]).is_absolute())
+
     def test_bootstrap_environment_variable_cannot_bypass_component_authorization(self) -> None:
         """A direct component invocation must reject bootstrap mode early.
 
@@ -355,6 +422,79 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                     fpsample_builder=source["fpsample_builder"],
                     acvl_utils_builder=source["acvl_utils_builder"],
                 )
+
+    def test_bootstrap_rejects_authorization_pipeline_change_after_declaration(self) -> None:
+        """Producer or authorization drift revokes bootstrap and readiness."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            protected = {
+                "release_toolchain": scripts / "release_build_toolchain.py",
+                "component_runner": scripts / "run_release_component_build.sh",
+                "fpsample_signer": scripts / "sign_fpsample_wheel_macos.py",
+                "license_verifier": scripts / "verify_license_distribution.py",
+                "dependency_lock_generator": (
+                    scripts / "generate_macos_arm64_py312_lock.py"
+                ),
+            }
+            for name, path in protected.items():
+                path.write_text(f"# fixture {name}\n", encoding="utf-8")
+
+            with patch("scripts.release_build_toolchain.ROOT", root):
+                lock, metadata, wheelhouse = self._fixture(root)
+                source = self._bootstrap_kwargs(root)
+                for name, path in protected.items():
+                    with self.subTest(source=name):
+                        original = path.read_text(encoding="utf-8")
+                        try:
+                            path.write_text(
+                                original + "# changed after review\n", encoding="utf-8"
+                            )
+                            with self.assertRaisesRegex(
+                                ReleaseBuildToolchainError,
+                                "source identity no longer matches",
+                            ):
+                                verify_release_build_toolchain_bootstrap(
+                                    lock_path=lock,
+                                    metadata_path=metadata,
+                                    wheelhouse=wheelhouse,
+                                    declaration_path=source[
+                                        "bootstrap_declaration_path"
+                                    ],
+                                    source_identity_path=source["source_identity_path"],
+                                    project_file=source["project_file"],
+                                    constraints=source["constraints"],
+                                    fpsample_builder=source["fpsample_builder"],
+                                    acvl_utils_builder=source["acvl_utils_builder"],
+                                )
+                            with self.assertRaisesRegex(
+                                ReleaseInputReadinessError,
+                                "source identity no longer matches",
+                            ):
+                                verify_release_toolchain_bootstrap_artifact(
+                                    lock_path=lock,
+                                    metadata_path=metadata,
+                                    wheelhouse=wheelhouse,
+                                    declaration_path=source[
+                                        "bootstrap_declaration_path"
+                                    ],
+                                    source_identity_path=source[
+                                        "source_identity_path"
+                                    ],
+                                    receipt_path=root / "unused-receipt.json",
+                                    pre_sign_wheel_receipt_path=(
+                                        root / "unused-pre-sign-receipt.json"
+                                    ),
+                                    pre_sign_wheel_directory=root / "unused-dist",
+                                    project_file=source["project_file"],
+                                    constraints=source["constraints"],
+                                    fpsample_builder=source["fpsample_builder"],
+                                    acvl_utils_builder=source["acvl_utils_builder"],
+                                )
+                        finally:
+                            path.write_text(original, encoding="utf-8")
 
     def test_missing_fpsample_backend_tool_is_rejected_before_any_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # before those bytes are allowed to become a hash lock.  This is intentionally
 # distinct from the receipt produced after a venv has been prepared.
 RELEASE_SOURCE_IDENTITY_SCHEMA = (
-    "totalsegmentator_wrapper_mac.release_source_identity.v1"
+    "totalsegmentator_wrapper_mac.release_source_identity.v2"
 )
 RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_SCHEMA = (
     "totalsegmentator_wrapper_mac.release_build_toolchain_bootstrap_declaration.v1"
@@ -112,6 +112,11 @@ SOURCE_IDENTITY_FILE_KEYS = (
     "constraints",
     "fpsample_builder",
     "acvl_utils_builder",
+    "release_toolchain",
+    "component_runner",
+    "fpsample_signer",
+    "license_verifier",
+    "dependency_lock_generator",
 )
 BOOTSTRAP_LOCK_FILENAME = "release-build-toolchain.requirements.lock"
 BOOTSTRAP_METADATA_FILENAME = "release-build-toolchain.lock.json"
@@ -263,9 +268,12 @@ def _source_identity_paths(
     """Return the reviewed source files that define a bootstrap attempt.
 
     A component's source URL/archive digest currently lives in its checked-in
-    builder script.  Hashing that script together with the project and source
-    constraints makes the exact declarations used for the pre-sign build
-    explicit without copying mutable shell constants into a second policy.
+    builder script.  The authorization/receipt implementation, sealed runner,
+    fpsample signer, acvl-utils license verifier, and canonical dependency-lock
+    generator can also authorize or change the bytes and provenance recorded
+    by the release pipeline, so they are part of the same exact source closure.
+    Only portable filenames and digests are persisted; operator-local absolute
+    paths never enter the identity.
     """
 
     return {
@@ -278,6 +286,21 @@ def _source_identity_paths(
         ).expanduser().absolute(),
         "acvl_utils_builder": (
             acvl_utils_builder or ROOT / "scripts" / "build_acvl_utils_wheel.sh"
+        ).expanduser().absolute(),
+        "release_toolchain": (
+            ROOT / "scripts" / "release_build_toolchain.py"
+        ).expanduser().absolute(),
+        "component_runner": (
+            ROOT / "scripts" / "run_release_component_build.sh"
+        ).expanduser().absolute(),
+        "fpsample_signer": (
+            ROOT / "scripts" / "sign_fpsample_wheel_macos.py"
+        ).expanduser().absolute(),
+        "license_verifier": (
+            ROOT / "scripts" / "verify_license_distribution.py"
+        ).expanduser().absolute(),
+        "dependency_lock_generator": (
+            ROOT / "scripts" / "generate_macos_arm64_py312_lock.py"
         ).expanduser().absolute(),
     }
 
