@@ -7,8 +7,10 @@ import stat
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
     READY_MARKER_FILENAME,
@@ -20,17 +22,55 @@ from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
 
 
 class DentalSegmentatorSetupTests(unittest.TestCase):
+    def test_download_reports_actual_bytes_and_resume_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = _write_file(root / "source.zip", b"progress fixture" * 1024)
+            destination = root / "model.zip"
+            progress_log = root / "launcher.log"
+            payload = source.read_bytes()
+
+            with _captured_output(), patch(
+                "totalsegmentator_wrapper_mac.dentalsegmentator_setup.urllib.request.urlopen",
+                return_value=_FakeResponse(payload, url="https://example.test/source.zip"),
+            ):
+                download_with_md5(
+                    "https://example.test/source.zip",
+                    destination,
+                    expected_md5=file_md5(source),
+                    timeout_sec=1,
+                    progress_log=progress_log,
+                )
+
+            payloads = [
+                json.loads(line.split(" ", 1)[1])
+                for line in progress_log.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(payloads[-1]["source"], "dentalsegmentator")
+            self.assertEqual(payloads[-1]["status"], "complete")
+            downloading = [item for item in payloads if item["status"] == "downloading"]
+            self.assertTrue(downloading)
+            self.assertEqual(downloading[-1]["completed_bytes"], source.stat().st_size)
+            self.assertEqual(downloading[-1]["total_bytes"], source.stat().st_size)
+            self.assertEqual(downloading[-1]["percent"], 100)
+            self.assertFalse(downloading[-1]["resumed"])
+
     def test_downloads_verifies_and_installs_model_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source_zip = root / "Dataset112_DentalSegmentator_v100.zip"
-            source_zip.write_bytes(b"fake dentalsegmentator zip")
+            source_zip = _write_model_archive(
+                root / "Dataset112_DentalSegmentator_v100.zip"
+            )
             expected_md5 = hashlib.md5(source_zip.read_bytes()).hexdigest()  # noqa: S324
             installer = _write_fake_installer(root / "fake_nnunet_install.py")
+            model_url = "https://example.test/Dataset112_DentalSegmentator_v100.zip"
 
-            with _captured_output():
+            with _captured_output(), patch(
+                "totalsegmentator_wrapper_mac.dentalsegmentator_setup.urllib.request.urlopen",
+                return_value=_FakeResponse(source_zip.read_bytes(), url=model_url),
+            ):
                 result = install_dentalsegmentator_model(
-                    model_url=source_zip.as_uri(),
+                    model_url=model_url,
                     model_zip=root / "cache" / source_zip.name,
                     expected_md5=expected_md5,
                     nnunet_results=root / "models" / "nnUNet_results",
@@ -69,7 +109,7 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
 
             with _captured_output():
                 second = install_dentalsegmentator_model(
-                    model_url=source_zip.as_uri(),
+                    model_url=model_url,
                     model_zip=root / "cache" / source_zip.name,
                     expected_md5=expected_md5,
                     nnunet_results=root / "models" / "nnUNet_results",
@@ -109,10 +149,18 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
             root = Path(tmp)
             source_zip = root / "Dataset112_DentalSegmentator_v100.zip"
             source_zip.write_bytes(b"wrong content")
+            model_url = "https://example.test/Dataset112_DentalSegmentator_v100.zip"
 
-            with self.assertRaises(RuntimeError), _captured_output():
+            with (
+                self.assertRaises(RuntimeError),
+                _captured_output(),
+                patch(
+                    "totalsegmentator_wrapper_mac.dentalsegmentator_setup.urllib.request.urlopen",
+                    return_value=_FakeResponse(source_zip.read_bytes(), url=model_url),
+                ),
+            ):
                 install_dentalsegmentator_model(
-                    model_url=source_zip.as_uri(),
+                    model_url=model_url,
                     model_zip=root / "cache" / source_zip.name,
                     expected_md5="0" * 32,
                     nnunet_results=root / "models" / "nnUNet_results",
@@ -174,8 +222,6 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
             self.assertEqual(result["status"], "resumable")
 
     def test_invalid_range_response_restarts_from_zero(self) -> None:
-        from unittest.mock import patch
-
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             destination = root / "model.zip"
@@ -207,6 +253,9 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
                 def getcode(self) -> int:
                     return self.status
 
+                def geturl(self) -> str:
+                    return "https://example.invalid/model.zip"
+
             def fake_urlopen(request: object, timeout: int):
                 requests.append(request)
                 return FakeResponse(b"complete")
@@ -223,7 +272,7 @@ class DentalSegmentatorSetupTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"complete")
             self.assertEqual(len(requests), 2)
             self.assertTrue(hasattr(requests[0], "headers"))
-            self.assertEqual(requests[1], "https://example.invalid/model.zip")
+            self.assertIsNone(requests[1].get_header("Range"))
 
 
 def _write_file(path: Path, content: bytes) -> Path:
@@ -231,19 +280,61 @@ def _write_file(path: Path, content: bytes) -> Path:
     return path
 
 
+class _FakeResponse:
+    status = 200
+
+    def __init__(self, payload: bytes, *, url: str) -> None:
+        self.payload = io.BytesIO(payload)
+        self.headers = {"Content-Length": str(len(payload))}
+        self.url = url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.payload.close()
+
+    def read(self, size: int = -1) -> bytes:
+        return self.payload.read(size)
+
+    def getcode(self) -> int:
+        return self.status
+
+    def geturl(self) -> str:
+        return self.url
+
+
+def _write_model_archive(path: Path) -> Path:
+    trainer = "Dataset112_DentalSegmentator_v100/nnUNetTrainer__nnUNetPlans__3d_fullres"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(f"{trainer}/dataset.json", json.dumps({"name": "fixture"}))
+        archive.writestr(f"{trainer}/plans.json", json.dumps({"plans_name": "nnUNetPlans"}))
+        archive.writestr(f"{trainer}/fold_0/checkpoint_final.pth", _fake_checkpoint())
+    return path
+
+
+def _fake_checkpoint() -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_STORED) as checkpoint:
+        checkpoint.writestr("archive/data.pkl", b"fixture-pickle-metadata")
+        checkpoint.writestr("archive/version", b"3\n")
+        checkpoint.writestr("archive/data/0", b"tensor-storage")
+    return payload.getvalue()
+
+
 def _write_fake_installer(path: Path) -> Path:
     path.write_text(
         "#!/usr/bin/env python3\n"
-        "import json\n"
         "import os\n"
         "import sys\n"
+        "import zipfile\n"
         "from pathlib import Path\n"
         "zip_path = Path(sys.argv[1])\n"
         "root = Path(os.environ['nnUNet_results'])\n"
-        "target = root / 'Dataset112_DentalSegmentator_v100' / 'nnUNetTrainer__nnUNetPlans__3d_fullres'\n"
-        "target.mkdir(parents=True, exist_ok=True)\n"
-        "(target / 'dataset.json').write_text(json.dumps({'name': 'Dataset112_DentalSegmentator_v100'}), encoding='utf-8')\n"
-        "print(f'installed {zip_path.name} into {target}')\n",
+        "root.mkdir(parents=True, exist_ok=True)\n"
+        "with zipfile.ZipFile(zip_path) as archive:\n"
+        "    archive.extractall(root)\n"
+        "print(f'installed {zip_path.name} into {root}')\n",
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
