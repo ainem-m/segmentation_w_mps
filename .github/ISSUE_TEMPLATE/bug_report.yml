@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: アプリのバージョン
-      placeholder: 例 0.3.0
+      placeholder: 例 0.4.1
     validations:
       required: true
   - type: input

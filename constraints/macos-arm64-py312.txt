@@ -1,11 +1,16 @@
 # Tested Mac Preview runtime for Apple Silicon / Python 3.12.
-# Keep setup installs constrained; do not let the alpha app resolve broad torch ranges.
+# Keep setup installs constrained; do not let the distributed preview resolve broad torch ranges.
 torch==2.12.0
 TotalSegmentator==2.14.0
 nnunetv2==2.8.1
 acvl-utils==0.2.6
 scipy==1.18.0
+scikit-learn>=1.5,<2
 matplotlib==3.11.0
+open3d==0.19.0
+trimesh==4.12.2
+fast-simplification==0.1.13
+fpsample==1.0.2
 nibabel>=5.2,<6
 numpy>=1.26,<3
 scikit-image>=0.22,<1
