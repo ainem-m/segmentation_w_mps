@@ -5,6 +5,7 @@ import os
 import re
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Callable
+from uuid import UUID, uuid4
 
 from totalsegmentator_wrapper_mac.benchmark import environment_metadata, input_metadata, write_json
 from totalsegmentator_wrapper_mac import __version__
@@ -135,6 +137,18 @@ DENTALSEGMENTATOR_ZENODO_DOI = "10.5281/zenodo.10829675"
 DENTALSEGMENTATOR_MODEL_ZIP = "Dataset112_DentalSegmentator_v100.zip"
 MACOS_APP_EXECUTION_PROFILE = "macos-app"
 TOOTHSEG_ZENODO_DOI = "10.5281/zenodo.14893540"
+LOCAL_ENGINEERING_DIAGNOSTIC_SCHEMA = (
+    "totalsegmentator_wrapper_mac.local_engineering_diagnostic.v1"
+)
+LOCAL_ENGINEERING_DIAGNOSTIC_KIND = "local_engineering_diagnostic"
+LOCAL_ENGINEERING_DIAGNOSTIC_FILENAME = "engineering_diagnostic.json"
+PRIMARY_BACKEND_NONZERO_EXIT_CODE = "totalseg_backend_nonzero_exit"
+PRIMARY_BACKEND_NONZERO_EXIT_CAUSE = "backend_process_exited_nonzero"
+PRIMARY_BACKEND_LAUNCH_ERROR_CODE = "totalseg_backend_launch_failed"
+PRIMARY_BACKEND_LAUNCH_ERROR_CAUSE = "backend_process_launch_failed"
+PRIMARY_BACKEND_RECOVERY_HINT = "review_local_log_then_retry"
+PINNED_TOTALSEGMENTATOR_VERSION = "2.14.0"
+PINNED_TORCH_VERSION = "2.12.0"
 
 
 @dataclass(frozen=True)
@@ -156,6 +170,20 @@ class TotalSegRunResult:
     execution_profile: str | None = None
     teeth_detected: bool = False
     refine_available: bool = False
+    run_attempt_id: str | None = None
+    failed_stage: str | None = None
+    specific_cause: str | None = None
+    retryable: bool | None = None
+    recovery_hint_code: str | None = None
+    diagnostic_log_kind: str | None = None
+    diagnostic_log_reference: str | None = None
+    backend_version: str | None = None
+    model_version: str | None = None
+    runtime_python_version: str | None = None
+    runtime_torch_version: str | None = None
+    input_kind: str | None = None
+    input_size_bucket: str | None = None
+    fallback_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -226,13 +254,18 @@ def _is_strict_mps_profile(execution_profile: str | None, require_mps: bool) -> 
 
 def _strict_preflight_failure(
     *,
+    input_path: Path,
     requested_device: str,
     task: str,
     execution_profile: str | None,
     error_code: str,
     safe_reason: str,
     mps_state: str,
+    run_attempt_id: str,
 ) -> TotalSegRunResult:
+    failed_stage, specific_cause, retryable, recovery_hint_code = _strict_preflight_contract(
+        error_code
+    )
     return TotalSegRunResult(
         status="failed",
         returncode=2,
@@ -249,6 +282,50 @@ def _strict_preflight_failure(
         mps_state=mps_state,
         occurred_at=datetime.now(UTC).isoformat(),
         execution_profile=execution_profile,
+        run_attempt_id=run_attempt_id,
+        failed_stage=failed_stage,
+        specific_cause=specific_cause,
+        retryable=retryable,
+        recovery_hint_code=recovery_hint_code,
+        fallback_used=False,
+        **_safe_runtime_diagnostics(input_path=input_path),
+    )
+
+
+def _strict_preflight_contract(error_code: str) -> tuple[str, str, bool, str]:
+    if error_code == "mps_required":
+        return (
+            "preflight_execution_profile",
+            "mps_requirement_not_met",
+            True,
+            "select_mps_then_retry",
+        )
+    if error_code == "mps_unavailable":
+        return (
+            "preflight_mps_validation",
+            "mps_validation_failed",
+            True,
+            "restore_mps_then_retry",
+        )
+    if error_code in {"dentalseg_prepare_required", "toothseg_prepare_required"}:
+        return (
+            "preflight_model_validation",
+            "model_preparation_required",
+            True,
+            "prepare_model_then_retry",
+        )
+    if error_code == "totalseg_setup_weights_missing_or_invalid":
+        return (
+            "preflight_model_validation",
+            "setup_weights_validation_failed",
+            True,
+            "rerun_setup_then_retry",
+        )
+    return (
+        "preflight_unknown",
+        "preflight_validation_failed",
+        False,
+        "review_setup_then_retry",
     )
 
 
@@ -278,6 +355,216 @@ def _result_safe_fields(result: TotalSegRunResult) -> dict[str, str | None]:
         "teeth_detected": result.teeth_detected,
         "refine_available": result.refine_available,
     }
+
+
+def _normalize_run_attempt_id(value: str | None) -> str:
+    if value is None:
+        return str(uuid4())
+    try:
+        return str(UUID(value))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("run_attempt_id must be a UUID") from exc
+
+
+def _safe_distribution_version(distribution: str, expected: str) -> str:
+    try:
+        return expected if metadata.version(distribution) == expected else "unknown"
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _safe_runtime_diagnostics(*, input_path: Path) -> dict[str, str]:
+    """Return fixed-format facts suitable for the app-facing result JSON.
+
+    These fields deliberately answer only whether the app's pinned runtime is in
+    use.  They never forward package metadata, filenames, image headers, or a
+    read error into a report that a user might copy outside the Mac.
+    """
+
+    input_name = input_path.name.lower()
+    input_kind = "nifti" if input_name.endswith((".nii", ".nii.gz")) else "unknown"
+    try:
+        size_bytes = input_path.stat().st_size
+    except OSError:
+        input_size_bucket = "unknown"
+    else:
+        mib = 1024 * 1024
+        if size_bytes < 10 * mib:
+            input_size_bucket = "lt_10_mib"
+        elif size_bytes < 100 * mib:
+            input_size_bucket = "10_to_100_mib"
+        elif size_bytes < 500 * mib:
+            input_size_bucket = "100_to_500_mib"
+        else:
+            input_size_bucket = "ge_500_mib"
+    return {
+        "backend_version": _safe_distribution_version(
+            "TotalSegmentator", PINNED_TOTALSEGMENTATOR_VERSION
+        ),
+        "model_version": PINNED_TOTALSEGMENTATOR_VERSION,
+        "runtime_python_version": (
+            "3.12" if sys.version_info[:2] == (3, 12) else "unknown"
+        ),
+        "runtime_torch_version": _safe_distribution_version("torch", PINNED_TORCH_VERSION),
+        "input_kind": input_kind,
+        "input_size_bucket": input_size_bucket,
+    }
+
+
+def _fallback_used(device_check: DeviceCheck) -> bool:
+    if device_check.actual_device is None:
+        return False
+    if device_check.requested_device == "auto":
+        return device_check.actual_device == "cpu"
+    return device_check.actual_device != device_check.requested_device
+
+
+def _write_local_engineering_diagnostic(
+    *,
+    case: CaseOutput,
+    run_attempt_id: str,
+    failed_stage: str,
+    error_code: str,
+    specific_cause: str,
+    exception_type: str,
+    sanitized_message: str,
+    subprocess_return_code: int | None,
+    stderr_tail: str,
+) -> tuple[str, str]:
+    """Persist sensitive process details locally without naming a local path publicly."""
+
+    payload = {
+        "schema": LOCAL_ENGINEERING_DIAGNOSTIC_SCHEMA,
+        "run_attempt_id": run_attempt_id,
+        "failed_stage": failed_stage,
+        "error_code": error_code,
+        "specific_cause": specific_cause,
+        "exception_type": exception_type,
+        "sanitized_message": sanitized_message,
+        "subprocess_return_code": subprocess_return_code,
+        "stderr_tail": stderr_tail[-4000:],
+    }
+    try:
+        _write_owner_only_diagnostic_json(
+            directory=case.logs_dir,
+            filename=LOCAL_ENGINEERING_DIAGNOSTIC_FILENAME,
+            payload=payload,
+        )
+    except OSError:
+        return "unavailable", "unavailable"
+    try:
+        with case.run_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "RUN_ENGINEERING_DIAGNOSTIC "
+                f"run_attempt_id={run_attempt_id} "
+                f"failed_stage={failed_stage} "
+                f"error_code={error_code} "
+                f"specific_cause={specific_cause}\n"
+            )
+    except OSError:
+        # The JSON diagnostic is the correlation record; inability to add an
+        # index line to the human-readable log must not hide the primary failure.
+        pass
+    return LOCAL_ENGINEERING_DIAGNOSTIC_KIND, run_attempt_id
+
+
+def _write_owner_only_diagnostic_json(
+    *,
+    directory: Path,
+    filename: str,
+    payload: dict[str, Any],
+) -> None:
+    """Atomically replace a raw local diagnostic without following symlinks.
+
+    The artifact may contain process stderr, unlike app-facing result JSON. Keep
+    it in a caller-owned 0700 directory and write the replacement as 0600 via
+    a directory file descriptor so a pre-existing symlink is never followed.
+    """
+
+    if not filename or Path(filename).name != filename:
+        raise OSError("diagnostic filename must be a single path component")
+    directory_fd = _open_owner_only_diagnostic_directory(directory)
+    temporary_name = f".{filename}.{uuid4().hex}.tmp"
+    temporary_fd: int | None = None
+    try:
+        try:
+            existing = os.lstat(filename, dir_fd=directory_fd)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and stat.S_ISLNK(existing.st_mode):
+            raise OSError("refusing to replace diagnostic symlink")
+
+        data = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        temporary_fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        os.fchmod(temporary_fd, 0o600)
+        offset = 0
+        while offset < len(data):
+            written = os.write(temporary_fd, data[offset:])
+            if written <= 0:
+                raise OSError("could not write engineering diagnostic")
+            offset += written
+        os.fsync(temporary_fd)
+        os.close(temporary_fd)
+        temporary_fd = None
+
+        os.replace(
+            temporary_name,
+            filename,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary_name = ""
+        os.fsync(directory_fd)
+    finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        os.close(directory_fd)
+
+
+def _open_owner_only_diagnostic_directory(directory: Path) -> int:
+    """Open and repair the dedicated diagnostic directory without symlink use."""
+
+    initial = os.lstat(directory)
+    if stat.S_ISLNK(initial.st_mode) or not stat.S_ISDIR(initial.st_mode):
+        raise OSError("engineering diagnostic directory is not a real directory")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(directory, flags)
+    try:
+        metadata = os.fstat(directory_fd)
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise OSError("engineering diagnostic directory is not caller-owned")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            os.fchmod(directory_fd, 0o700)
+            metadata = os.fstat(directory_fd)
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise OSError("engineering diagnostic directory is not owner-only")
+    except Exception:
+        os.close(directory_fd)
+        raise
+    return directory_fd
+
+
+def _local_exception_detail(exc: BaseException) -> str:
+    """Retain an OS error target only in the local engineering artifact."""
+
+    detail = repr(exc)
+    filename = getattr(exc, "filename", None)
+    if isinstance(filename, str) and filename and filename not in detail:
+        return f"{detail}\nfilename={filename}"
+    return detail
 
 
 def _teeth_detected_from_mask_stats(mask_stats_path: Path) -> bool:
@@ -384,10 +671,12 @@ def run_totalsegmentator(
     require_mps: bool = False,
     emit_run_stages: bool = True,
     event_sink: RunEventSink | None = None,
+    run_attempt_id: str | None = None,
 ) -> TotalSegRunResult:
     input_path = input_path.resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"Input not found: {input_path}")
+    run_attempt_id = _normalize_run_attempt_id(run_attempt_id)
     if backend not in {"totalsegmentator", "dentalsegmentator", "toothseg"}:
         raise ValueError(f"Unsupported backend: {backend}")
     if robust_crop and task != "craniofacial_structures":
@@ -405,21 +694,25 @@ def run_totalsegmentator(
     strict_mps = _is_strict_mps_profile(execution_profile, require_mps)
     if strict_mps and requested_device != "mps":
         return _strict_preflight_failure(
+            input_path=input_path,
             requested_device=requested_device,
             task=task,
             execution_profile=execution_profile,
             error_code="mps_required",
             safe_reason="This app execution profile requires MPS.",
             mps_state="required",
+            run_attempt_id=run_attempt_id,
         )
     if execution_profile == MACOS_APP_EXECUTION_PROFILE and not require_mps:
         return _strict_preflight_failure(
+            input_path=input_path,
             requested_device=requested_device,
             task=task,
             execution_profile=execution_profile,
             error_code="mps_required",
             safe_reason="The macOS app execution profile requires --require-mps.",
             mps_state="required",
+            run_attempt_id=run_attempt_id,
         )
     if strict_mps and backend == "dentalsegmentator":
         from totalsegmentator_wrapper_mac.dentalsegmentator_setup import (
@@ -442,12 +735,14 @@ def run_totalsegmentator(
             model_ready = model_status["model_state"] == "ready"
         if not model_ready:
             return _strict_preflight_failure(
+                input_path=input_path,
                 requested_device=requested_device,
                 task=task,
                 execution_profile=execution_profile,
                 error_code="dentalseg_prepare_required",
                 safe_reason="Prepare the DentalSegmentator model before starting an app-profile run.",
                 mps_state="required",
+                run_attempt_id=run_attempt_id,
             )
 
     if strict_mps and backend == "toothseg":
@@ -464,12 +759,14 @@ def run_totalsegmentator(
             model_ready = model_status["model_state"] == "ready"
         if not model_ready:
             return _strict_preflight_failure(
+                input_path=input_path,
                 requested_device=requested_device,
                 task=task,
                 execution_profile=execution_profile,
                 error_code="toothseg_prepare_required",
                 safe_reason="Prepare the ToothSeg model before starting an app-profile run.",
                 mps_state="required",
+                run_attempt_id=run_attempt_id,
             )
 
     device_check: DeviceCheck | None = None
@@ -477,12 +774,42 @@ def run_totalsegmentator(
         device_check = resolve_device("mps", skip_device_check=False)
         if device_check.status != "pass" or device_check.actual_device != "mps":
             return _strict_preflight_failure(
+                input_path=input_path,
                 requested_device=requested_device,
                 task=task,
                 execution_profile=execution_profile,
                 error_code="mps_unavailable",
                 safe_reason="MPS validation did not pass for this app run.",
                 mps_state="unavailable",
+                run_attempt_id=run_attempt_id,
+            )
+
+    needs_totalseg_weights = backend == "totalsegmentator" or (
+        backend == "toothseg" and teeth_craniofacial_case is None
+    )
+    if execution_profile == MACOS_APP_EXECUTION_PROFILE and needs_totalseg_weights:
+        from totalsegmentator_wrapper_mac.totalseg_weights_setup import (
+            validate_setup_weights_registry,
+        )
+
+        configured_weights = totalseg_weights
+        if configured_weights is None:
+            configured = os.environ.get("TOTALSEG_WEIGHTS_PATH")
+            configured_weights = Path(configured) if configured else None
+        try:
+            if configured_weights is None:
+                raise ValueError("TotalSegmentator setup weights path is not configured")
+            validate_setup_weights_registry(configured_weights)
+        except (OSError, RuntimeError, ValueError):
+            return _strict_preflight_failure(
+                input_path=input_path,
+                requested_device=requested_device,
+                task=task,
+                execution_profile=execution_profile,
+                error_code="totalseg_setup_weights_missing_or_invalid",
+                safe_reason="The app setup models are missing or failed validation.",
+                mps_state="validated",
+                run_attempt_id=run_attempt_id,
             )
 
     refine_diagnostics = backend == "toothseg" and toothseg_refine
@@ -659,17 +986,74 @@ def run_totalsegmentator(
             log_path=case.run_log_path,
             event_sink=event_sink,
         )
-    proc_returncode, elapsed, stdout, stderr = _run_command_streamed(
-        command=command,
-        env=env,
-        log_path=case.run_log_path,
-        safe_command=sanitized_command(command, input_path, case.raw_segmentations_dir),
-        append=True,
-        progress_route=route,
-        progress_stage_id="segment",
-        progress_scope="subtask",
-        event_sink=event_sink,
-    )
+    safe_runtime = _safe_runtime_diagnostics(input_path=input_path)
+    try:
+        proc_returncode, elapsed, stdout, stderr = _run_command_streamed(
+            command=command,
+            env=env,
+            log_path=case.run_log_path,
+            safe_command=sanitized_command(command, input_path, case.raw_segmentations_dir),
+            append=True,
+            progress_route=route,
+            progress_stage_id="segment",
+            progress_scope="subtask",
+            event_sink=event_sink,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        local_exception_detail = _local_exception_detail(exc)
+        diagnostic_kind, diagnostic_reference = _write_local_engineering_diagnostic(
+            case=case,
+            run_attempt_id=run_attempt_id,
+            failed_stage="backend_launch",
+            error_code=PRIMARY_BACKEND_LAUNCH_ERROR_CODE,
+            specific_cause=PRIMARY_BACKEND_LAUNCH_ERROR_CAUSE,
+            exception_type=type(exc).__name__,
+            sanitized_message="TotalSegmentator could not start the backend process.",
+            subprocess_return_code=None,
+            stderr_tail=local_exception_detail,
+        )
+        result = TotalSegRunResult(
+            status="failed",
+            returncode=127,
+            elapsed_seconds=0.0,
+            requested_device=requested_device,
+            actual_device=device_check.actual_device,
+            fallback_reason=device_check.fallback_reason,
+            task=task,
+            output_dir=str(case.root),
+            stdout_tail="",
+            stderr_tail=local_exception_detail,
+            error_code=PRIMARY_BACKEND_LAUNCH_ERROR_CODE,
+            safe_reason="The TotalSegmentator backend could not start.",
+            mps_state=_mps_state(device_check),
+            occurred_at=datetime.now(UTC).isoformat(),
+            execution_profile=execution_profile,
+            run_attempt_id=run_attempt_id,
+            failed_stage="backend_launch",
+            specific_cause=PRIMARY_BACKEND_LAUNCH_ERROR_CAUSE,
+            retryable=True,
+            recovery_hint_code=PRIMARY_BACKEND_RECOVERY_HINT,
+            diagnostic_log_kind=diagnostic_kind,
+            diagnostic_log_reference=diagnostic_reference,
+            fallback_used=_fallback_used(device_check),
+            **safe_runtime,
+        )
+        _write_metadata(
+            case,
+            input_path,
+            task,
+            result,
+            device_check,
+            robust_crop=robust_crop,
+            higher_order_resampling=higher_order_resampling,
+        )
+        generate_output_report(
+            case=case,
+            source_volume_path=source_for_summary,
+            task=task,
+            run_result=result,
+        )
+        return result
 
     if emit_run_stages and proc_returncode == 0:
         _emit_run_stage(
@@ -684,6 +1068,20 @@ def run_totalsegmentator(
             collect_mask_stats(case.root / "segmentations", recursive=True),
         )
     teeth_detected = _teeth_detected_from_mask_stats(case.mask_stats_path)
+    diagnostic_kind: str | None = None
+    diagnostic_reference: str | None = None
+    if proc_returncode != 0:
+        diagnostic_kind, diagnostic_reference = _write_local_engineering_diagnostic(
+            case=case,
+            run_attempt_id=run_attempt_id,
+            failed_stage="backend_inference",
+            error_code=PRIMARY_BACKEND_NONZERO_EXIT_CODE,
+            specific_cause=PRIMARY_BACKEND_NONZERO_EXIT_CAUSE,
+            exception_type="BackendProcessExit",
+            sanitized_message="TotalSegmentator exited with a nonzero status.",
+            subprocess_return_code=proc_returncode,
+            stderr_tail=stderr,
+        )
     result = TotalSegRunResult(
         status="success" if proc_returncode == 0 else "failed",
         returncode=proc_returncode,
@@ -697,11 +1095,24 @@ def run_totalsegmentator(
         stderr_tail=stderr[-4000:],
         teeth_detected=teeth_detected,
         refine_available=teeth_detected and proc_returncode == 0,
-        error_code="backend_failed" if proc_returncode != 0 else None,
-        safe_reason="The segmentation backend did not complete." if proc_returncode != 0 else None,
+        error_code=PRIMARY_BACKEND_NONZERO_EXIT_CODE if proc_returncode != 0 else None,
+        safe_reason=(
+            "The TotalSegmentator backend exited without completing the requested inference."
+            if proc_returncode != 0
+            else None
+        ),
         mps_state=_mps_state(device_check),
         occurred_at=datetime.now(UTC).isoformat() if proc_returncode != 0 else None,
         execution_profile=execution_profile,
+        run_attempt_id=run_attempt_id,
+        failed_stage="backend_inference" if proc_returncode != 0 else None,
+        specific_cause=PRIMARY_BACKEND_NONZERO_EXIT_CAUSE if proc_returncode != 0 else None,
+        retryable=True if proc_returncode != 0 else None,
+        recovery_hint_code=PRIMARY_BACKEND_RECOVERY_HINT if proc_returncode != 0 else None,
+        diagnostic_log_kind=diagnostic_kind,
+        diagnostic_log_reference=diagnostic_reference,
+        fallback_used=_fallback_used(device_check),
+        **safe_runtime,
     )
     _write_metadata(
         case,
@@ -2096,6 +2507,20 @@ def _write_metadata(
             "mps_state": safe_fields["mps_state"],
             "occurred_at": safe_fields["occurred_at"],
             "execution_profile": result.execution_profile,
+            "run_attempt_id": result.run_attempt_id,
+            "failed_stage": result.failed_stage,
+            "specific_cause": result.specific_cause,
+            "retryable": result.retryable,
+            "recovery_hint_code": result.recovery_hint_code,
+            "diagnostic_log_kind": result.diagnostic_log_kind,
+            "diagnostic_log_reference": result.diagnostic_log_reference,
+            "backend_version": result.backend_version,
+            "model_version": result.model_version,
+            "runtime_python_version": result.runtime_python_version,
+            "runtime_torch_version": result.runtime_torch_version,
+            "input_kind": result.input_kind,
+            "input_size_bucket": result.input_size_bucket,
+            "fallback_used": result.fallback_used,
             "robust_crop": robust_crop,
             "higher_order_resampling": higher_order_resampling,
         },

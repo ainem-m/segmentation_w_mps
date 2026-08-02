@@ -7,11 +7,14 @@ import stat
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import totalsegmentator_wrapper_mac.totalseg_weights_setup as weights_setup
 from totalsegmentator_wrapper_mac.cli import main as cli_main
+from totalsegmentator_wrapper_mac.device import DeviceCheck
 
 from totalsegmentator_wrapper_mac.runner_totalseg import (
     RUN_PROGRESS_PREFIX,
@@ -30,6 +33,121 @@ from totalsegmentator_wrapper_mac.runner_totalseg import (
 
 
 class RunnerTests(unittest.TestCase):
+    def test_app_profile_rejects_same_size_setup_weight_tamper_before_upstream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "sample.nii.gz"
+            weights = root / "weights"
+            input_path.write_bytes(b"fixture")
+            assets = weights_setup.load_setup_weight_manifest()
+            for asset in assets:
+                for relative in asset.required_files:
+                    path = weights / asset.dataset_dir / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if relative.endswith(".json"):
+                        path.write_bytes(b"{}")
+                    else:
+                        checkpoint = io.BytesIO()
+                        with zipfile.ZipFile(checkpoint, "w") as archive:
+                            archive.writestr("checkpoint/data.pkl", b"metadata")
+                            archive.writestr("checkpoint/data/0", b"tensor")
+                        path.write_bytes(checkpoint.getvalue())
+            weights_setup._write_ready_registry(  # noqa: SLF001 - preflight contract fixture.
+                weights,
+                assets,
+                manifest_sha256=weights_setup.setup_weight_manifest_sha256(),
+                integrity_source="legacy-deep-validation",
+                archive_verified=False,
+            )
+            tampered = weights / assets[0].dataset_dir / assets[0].required_files[0]
+            original_size = tampered.stat().st_size
+            tampered.write_bytes(b"[]")
+            self.assertEqual(tampered.stat().st_size, original_size)
+            mps = DeviceCheck(
+                status="pass",
+                requested_device="mps",
+                actual_device="mps",
+                fallback_reason=None,
+                python=sys.version,
+                platform="test",
+                machine="arm64",
+                torch_version="test",
+                mps_built=True,
+                mps_available=True,
+                convtranspose3d_fp32="pass",
+                elapsed_seconds=0.0,
+                error=None,
+            )
+
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg.resolve_device",
+                return_value=mps,
+            ), patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg._run_command_streamed"
+            ) as upstream:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    task="craniofacial_structures",
+                    requested_device="mps",
+                    totalseg_weights=weights,
+                    execution_profile="macos-app",
+                    require_mps=True,
+                )
+
+            self.assertEqual(result.error_code, "totalseg_setup_weights_missing_or_invalid")
+            upstream.assert_not_called()
+
+    def test_app_profile_invalid_setup_weights_fails_before_upstream_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "sample.nii.gz"
+            weights = root / "weights"
+            input_path.write_bytes(b"fixture")
+            weights.mkdir()
+            (weights / ".totalsegmentator-wrapper-setup-weights.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            mps = DeviceCheck(
+                status="pass",
+                requested_device="mps",
+                actual_device="mps",
+                fallback_reason=None,
+                python=sys.version,
+                platform="test",
+                machine="arm64",
+                torch_version="test",
+                mps_built=True,
+                mps_available=True,
+                convtranspose3d_fp32="pass",
+                elapsed_seconds=0.0,
+                error=None,
+            )
+
+            with patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg.resolve_device",
+                return_value=mps,
+            ), patch(
+                "totalsegmentator_wrapper_mac.runner_totalseg._run_command_streamed"
+            ) as upstream:
+                result = run_totalsegmentator(
+                    input_path=input_path,
+                    output_root=root / "case",
+                    task="craniofacial_structures",
+                    requested_device="mps",
+                    totalseg_weights=weights,
+                    execution_profile="macos-app",
+                    require_mps=True,
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.error_code, "totalseg_setup_weights_missing_or_invalid")
+            self.assertEqual(result.mps_state, "validated")
+            self.assertNotIn(str(root), result.safe_reason or "")
+            self.assertFalse((root / "case").exists())
+            upstream.assert_not_called()
+
     def test_teeth_detection_uses_nonempty_label_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stats_path = Path(tmp) / "mask_stats.json"
