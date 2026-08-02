@@ -1,0 +1,20 @@
+{
+  "schema": "totalsegmentator_wrapper_mac.cloudflare_release.v1",
+  "app_name": "TotalSegmentator Wrapper for Mac",
+  "channel": "withdrawn",
+  "version": "0.4.0",
+  "release_id": "0.4.0",
+  "file_name": "TotalSegmentator Wrapper for Mac-0.4.0-20260731-final-arm64.dmg",
+  "file_size_bytes": 60046477,
+  "sha256": "198e6cccdd35c1c18ba21317eed091c3bdd9e31487a9c5b3237c7320158b343a",
+  "download_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.4.0/TotalSegmentator%20Wrapper%20for%20Mac-0.4.0-20260731-final-arm64.dmg",
+  "update_manifest_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/stable/update.json",
+  "release_notes_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.4.0/RELEASE_NOTES.txt",
+  "published_at": "2026-07-31T04:48:36Z",
+  "notarized": true,
+  "clinical_use": false,
+  "deprecated": true,
+  "withdrawn_at": "2026-08-01T00:31:00Z",
+  "recommended_version": "0.3.0",
+  "withdrawal_notice_url": "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.4.0/WITHDRAWN.txt"
+}

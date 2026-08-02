@@ -1,0 +1,7 @@
+TotalSegmentator Wrapper for Mac 0.4.0 — withdrawn from stable
+
+0.4.0 is no longer stable while a setup issue is being fixed.
+The current recommended version is 0.3.0.
+
+The 0.4.0 artifact is retained for traceability and is not offered by the
+stable update manifest.
