@@ -39,8 +39,15 @@ Contents/Resources/bin/totalsegmentator-wrapper-dicom-normalizer
 Contents/Resources/bin/dcm2niix
 ```
 
-`scripts/build_mac_app.sh` requires `TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX` and fails the packaging
-build if the executable is missing or not executable. The app manifest records:
+Developer ID/notarized packaging resolves dcm2niix only from the verified macOS
+14 artifact pointer
+`build/dcm2niix-macos14-arm64/current-artifact.json`. Prepare it with
+`scripts/build_dcm2niix_macos14_arm64.sh` before app packaging; the release
+build stops if the pointer or its receipt-bearing artifact is absent. The
+`TOTALSEGMENTATOR_WRAPPER_MAC_DCM2NIIX` path override is development-only and
+is rejected for Developer ID/notarized builds. See
+[`docs/45_DCM2NIIX_MACOS14_SOURCE_BUILD.md`](45_DCM2NIIX_MACOS14_SOURCE_BUILD.md)
+for the artifact contract. The app manifest records:
 
 ```text
 dcm2niix_sha256

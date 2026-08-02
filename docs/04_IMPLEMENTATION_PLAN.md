@@ -209,6 +209,45 @@ UI acceptance:
 [ ] 3D preview can be opened
 ```
 
+### Error diagnostics completion (0.4.1)
+
+The user-copyable report and the local engineering diagnostics now preserve a
+shared attempt ID without copying raw logs or local paths into the support
+form payload.
+
+Completed:
+
+```text
+[x] Add a correlation ID (`job_id` or `request_id`) to the user-copyable report
+    and every related backend log/metadata record.
+[x] Record the failed stage (setup, input preparation, model loading,
+    preprocessing, inference, postprocessing, or 3D preview generation).
+[x] Preserve a specific machine-readable cause code beneath the top-level
+    `backend_failed` category (for example MPS OOM, subprocess exit,
+    timeout, missing model, or invalid backend output).
+[x] Record whether retry is safe and provide a cause-specific recovery hint.
+[x] Retain the original exception type, sanitized message, subprocess return
+    code, and stderr tail in engineering diagnostics.
+[x] Include the backend/model/runtime versions and non-identifying input
+    characteristics needed to reproduce the failure.
+[x] Keep PHI, secrets, full local paths, and raw stack traces out of the
+    user-copyable report; write detailed diagnostics only to the local log.
+[x] Add a regression test that reproduces a backend failure and proves the
+    same primary path emits the correlation ID, stage, specific cause, and
+    diagnostic log reference without silently falling back.
+```
+
+Acceptance:
+
+```text
+[x] A copied error report identifies where and why the operation failed, tells
+    the user whether/how to retry, and can be correlated with a detailed local
+    diagnostic record.
+[x] An unexpected backend failure remains distinguishable from known causes
+    instead of being mislabeled with a guessed cause.
+[x] Existing safe-report redaction tests continue to pass.
+```
+
 ## Phase 7: Demo materials
 
 Deliverables:

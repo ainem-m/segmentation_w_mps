@@ -8,7 +8,7 @@ Apple Silicon搭載Macで、CTから顎骨や歯の3Dデータを作成するた
 [製品ページ](https://totalsegmentator.lacramy.com/) ·
 [ダウンロード](https://totalsegmentator.lacramy.com/download) ·
 [日本語マニュアル](docs/USER_MANUAL_JA.md) ·
-[不具合を報告](https://github.com/ainem-m/segmentation_w_mps/issues)
+[不具合・互換性を相談（Googleフォーム・ログイン不要）](https://forms.gle/QFPwF1Pi5C8bmSuw6)
 
 ![DentalSegmentatorによる顎骨と歯のX-ray表示](cloudflare/pages/assets/benchmark-dentalseg.png)
 
@@ -24,7 +24,7 @@ Apple Silicon搭載Macで、CTから顎骨や歯の3Dデータを作成するた
 ## 動作環境
 
 - Apple Silicon（M1以降）搭載Mac
-- macOS 13以降
+- macOS 14以降
 - 初回準備とモデル取得のためのインターネット接続
 - 十分な空き容量
 
@@ -49,6 +49,18 @@ Intel搭載Mac、Windows、Linux向けの配布アプリはありません。
 | TotalSegmentator | 顎骨と歯の全体像を短時間で確認 | [TotalSegmentator](https://github.com/wasserth/TotalSegmentator) |
 | DentalSegmentator | 顎骨、上下の歯、下顎管などを分けて確認 | [DentalSegmentator](https://github.com/gaudot/SlicerDentalSegmentator) |
 | ToothSeg | 歯を一本ずつ検出して確認 | [ToothSeg](https://github.com/MIC-DKFZ/ToothSeg) |
+
+### 口腔内スキャン（0.4.1）
+
+0.4.1では、口腔内スキャンのPLY／STLから歯別STLを作成できます。
+
+- MeshSegNetでは、アプリに同梱されるのは実装のみです。重み（Apache-2.0）は
+  口腔内スキャン機能の初回使用時に固定配布元から取得し、SHA-256を検証します。
+- TGNetの重みは指定の配布ページから利用者が取得するもので、アプリには同梱されません。
+  ライセンスは本アプリでは未確認です。配布ページ:
+  <https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby?usp=sharing>
+- 歯別STLに加えて`gingiva.stl`が作られることがあります。TGNetでは歯肉、
+  MeshSegNetの`gingiva.stl`は背景を含む候補のため、目視確認が必要です。
 
 本リポジトリはTotalSegmentatorの公式アプリではありません。各プロジェクトの
 名称は、利用している技術と由来を示すために記載しています。

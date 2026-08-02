@@ -38,6 +38,8 @@ code is copied or modified in the future.
 | DentalSegmentator checkpoint | first-use Zenodo download | DOI `10.5281/zenodo.10829675`, CC BY 4.0 | no; third party |
 | ToothSeg code integration | dependency/integration | upstream Apache-2.0 and pinned source notice | no; third party |
 | ToothSeg checkpoint | first-use Zenodo download | DOI `10.5281/zenodo.14893540`, CC BY 4.0 | no; third party |
+| MeshSegNet Teeth3DS checkpoint | separate user-provided/downloaded file | pinned Hugging Face Space commit, Apache-2.0 declaration, fixed SHA-256 | no; third party |
+| Specified TGNet FPS-plus-boundary two-checkpoint set | local ZIP or directory selected by the user | license not verified; provenance and SHA-256 recorded for every checkpoint per result | no; never provided by this project |
 | dcm2niix and DICOM runtime libraries | bundled in app/wheel | license files under `resources/third_party/licenses/` | no; third party |
 | Python dependencies and bundled runtime | bundled/installed | generated strict license inventory | no; third party |
 | Sample 1 source NIfTI | bundled | rights-holder authorization in `docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md`; hashes in `resources/sample1/sample_manifest.json` | first-party data authorization; not source code |
@@ -67,6 +69,39 @@ ToothSeg record `14893540` reports:
 The application downloads both model archives separately; neither checkpoint is
 part of the Apache-2.0 application bundle.
 
+The experimental IOS MeshSegNet path accepts only the pinned checkpoint with
+SHA-256
+`3d2e44db8865ff3968803e86dadcf73cf9c4b738ddc35bfb3bc42c02347d7a0c`.
+Its result JSON records the canonical Hugging Face Space source, pinned commit,
+model-card URL, declared Apache-2.0 license, and the fact that this project does
+not redistribute the checkpoint. Upper- and lower-jaw IOS meshes use separate,
+strictly validated jaw/FDI mappings; an unsupported or incompatible mapping is
+rejected rather than guessed.
+
+The packaged application UI accepts only the specified TGNet
+FPS-plus-boundary two-checkpoint set selected from the user's local filesystem.
+It requires `tgnet_fps.h5` and `tgnet_bdl.h5` and strictly verifies every
+file's pinned SHA-256 before accepting the selection. Active state-dict keys,
+tensor shapes, roles, and class counts are then strictly verified before
+inference. Such checkpoints are not bundled, downloaded, or redistributed by
+this project. The user must obtain them from the distribution page linked by
+the application and review the terms shown by the distributor. Result metadata
+records `model_family=tgnet`, `source=user-provided`,
+`license=not-verified`, `bundled_by_app=false`, every checkpoint's SHA-256 and
+role, and the architecture-validation result.
+
+A lower-level research compatibility adapter can inspect a compatible single
+checkpoint for developer validation, but it is not exposed by the packaged
+application UI. This internal compatibility path does not weaken the packaged
+UI's pinned-file and pinned-SHA-256 policy.
+
+The TGNet-compatible network and inference pipeline are independently
+implemented from the published thesis and the user-provided checkpoint tensor
+structure. No code from an unverified TGNet source repository is copied into
+the application. The adapter is part of the first-party application code, but
+that does not assign the application's Apache-2.0 license to a user-provided
+checkpoint.
+
 ## TotalSegmentator task audit
 
 The packaged application and public CLI allow exactly:
@@ -83,6 +118,24 @@ application's robust crop path.
 
 No task from the upstream commercial-model section is exposed, predownloaded,
 or included. Release tests must keep the allowlist and setup weight IDs aligned.
+
+### Setup archive checksum provenance
+
+The three setup archives use two different kinds of checksum evidence. Task 113
+has a publisher-provided GitHub release digest. Tasks 115 and 297 do not have a
+publisher digest. On 2026-08-02T21:48:51Z an approved revalidation downloaded
+both exact official GitHub release assets with the app's resumable downloader,
+then verified the complete archive SHA-256, ZIP CRC, and expected model layout.
+The locally observed values are
+`a9f4a7bd92e093fc0bb5a06450989429df2da1cc4e470d54373b2f3a3175eab9`
+for task 115 (230,321,497 bytes) and
+`0baa2c8de2975600eb31801dd5c1825cd2b356f794498659cf3348714c073394`
+for task 297 (135,386,075 bytes). They remain explicitly described as local
+observations rather than publisher-provided digests. The relevant upstream
+GitHub release API metadata reports `immutable: false`, so pinning a release
+URL must not be described as an assertion that the upstream asset is
+immutable. The model archives and extracted weights remain local ignored
+artifacts and are not committed or bundled.
 
 ## Assets and publication decision
 
@@ -104,8 +157,16 @@ Apache-2.0.
 - Build a new app and DMG. Existing 0.1.x/0.2.x immutable release objects were
   created before this license transition and must not be relabelled or reused.
 - Run the strict dependency inventory with zero unresolved items.
+- Require the bundled `acvl-utils 0.2.6` wheel to be `py3-none-any`, contain no
+  native code, retain Apache-2.0 metadata and text, and have a complete,
+  hash-consistent wheel RECORD. Its SHA-256 must match `setup_manifest.json`.
 - Verify source, wheel, app, and mounted DMG contain the wrapper `LICENSE`,
-  `NOTICE`, DentalSegmentator notice, ToothSeg notice, and no first-party
-  proprietary wording.
+  `NOTICE`, DentalSegmentator notice, ToothSeg notice, canonical MeshSegNet
+  notice, TGNet user-provided/license-not-verified policy notice, and no
+  first-party proprietary wording or user-provided model payload.
+- Require the wheel and app to contain the canonical TotalSegmentator 2.14.0
+  setup-weights manifest for task IDs 113, 115, and 297. Verify its URL, size,
+  SHA-256, required layout, and app-manifest SHA-256 without bundling the model
+  archives.
 - For a public macOS binary, complete Developer ID signing, notarization,
   stapling, and Gatekeeper checks on the newly built artifact.

@@ -52,7 +52,8 @@ https://www.nitrc.org/plugins/mwiki/index.php/dcm2nii:MainPage
 | DICOMDIR | index object classified as `dicomdir_only`; referenced file IDs counted | add deeper directory-record parsing only if real failures require it |
 | Compressed JPEG/JPEG-LS/JPEG2000/RLE | GDCM decodes pixels in-process; clean CT may be losslessly transcoded before dcm2niix | validate additional vendor samples |
 | Invalid compressed payload | hard `pixel_decode_failed`; no metadata-only fallback | keep |
-| Enhanced CT multi-frame | pixels decoded, but classified `enhanced_ct_geometry_unverified` | validate every shared/per-frame functional-group geometry item |
+| Enhanced CT multi-frame | pixels decoded, but classified `geometry_rescue_candidate` while per-frame geometry is unverified | validate every shared/per-frame functional-group geometry item |
+| MONOCHROME1, signed 8-bit, non-identity/incomplete rescale, Modality LUT, Shared/Per-frame Pixel Value Transform | classification and dcm2niix routes remain available; manual raw `export-rescue-stack` fails before writing artifacts | do not reinterpret raw decoded samples in the app |
 | Missing geometry original CT | reject | normalize only with validated geometry source |
 
 ## Current C++ Additions
@@ -80,7 +81,8 @@ It also classifies:
 DICOMDIR -> dicomdir_only / audit_referenced_files
 compressed pixel data -> native GDCM decode, then normal geometry classification
 invalid compressed pixel data -> pixel_decode_failed
-Enhanced CT or multi-frame CT -> enhanced_ct_geometry_unverified
+Enhanced CT or multi-frame CT -> geometry_rescue_candidate
+unsupported raw pixel semantics -> raw export fails; audit classification remains unchanged
 single-file multi-frame Secondary Capture axial stack -> secondary_capture_rescue_candidate
 viewer/MPR export mixed geometry -> viewer_export_mpr_mixed_candidate
 ```
@@ -117,6 +119,19 @@ multi-frame Secondary Capture:
   output shape: 32 x 32 x 40
   output spacing: 0.6 x 0.6 x 0.9375
 
+multi-frame identity Rescale Slope/Intercept (1/0):
+  audit: geometry_rescue_candidate
+  export-rescue-stack: success
+
+MONOCHROME1 / signed 8-bit / non-identity or incomplete rescale /
+Modality LUT / Shared or Per-frame Pixel Value Transform:
+  audit: secondary_capture_rescue_candidate for an otherwise eligible stack
+  export-rescue-stack: fail with a fixed rescue_* reason before artifacts are written
+
+geometry-complete CT with Rescale Slope 1 / Intercept -1024:
+  audit: original_ct_geometry_ok
+  convert-clean: success through dcm2niix
+
 no-DICM-prefix implicit VR CT-like file:
   audit: parsed as DICOM
   classification: reject because geometry is incomplete and slice count is too small
@@ -149,25 +164,28 @@ totalsegmentator-wrapper-dicom-normalizer audit \
 
 totalsegmentator-wrapper-dicom-normalizer convert-clean \
   --dicom-dir <dir> \
-  --series-number <n> \
+  --series-key <audit-series-key> \
   --output <artifact_dir>
 
 totalsegmentator-wrapper-dicom-normalizer prepare-rescue \
   --dicom-dir <dir> \
-  --series-number <n> \
+  --series-key <audit-series-key> \
   --patched-spacing X,Y,Z \
   --output <artifact_dir>
 
 totalsegmentator-wrapper-dicom-normalizer prepare-viewer-export \
   --dicom-dir <dir> \
-  --series-number <n> \
+  --series-key <audit-series-key> \
   --group-id <gNNN> \
   --output <artifact_dir>
 ```
 
 `convert-clean` is allowed only for `original_ct_geometry_ok`.
-`prepare-rescue` is allowed only for `secondary_capture_rescue_candidate` and
-still requires explicit spacing. Neither command starts segmentation.
+`prepare-rescue` is allowed only for `secondary_capture_rescue_candidate` or
+`geometry_rescue_candidate` and still requires explicit spacing. Neither command
+starts segmentation. `--series-key` is the preferred selector; a legacy
+`--series-number` is rejected when it matches more than one series rather than
+choosing a largest or arbitrary duplicate.
 `prepare-viewer-export` is allowed only for `viewer_export_mpr_mixed_candidate`.
 It re-audits the series, isolates the selected group, runs dcm2niix on selected
 files only, requires exactly one NIfTI, validates header shape/spacing against
@@ -196,8 +214,12 @@ stair-stepped and remain non-diagnostic preview.
 reports GDCM as its primary backend and includes native compressed pixel decoding
 and lossless transcoding. Optional command-line transcoders are diagnostic only;
 they are not a silent fallback. Synthetic codec fixtures cover JPEG, JPEG-LS,
-JPEG 2000, and RLE. Enhanced CT remains blocked from clean conversion until
-per-frame geometry validation is implemented.
+JPEG 2000, and RLE. Enhanced and other multi-frame CT remain rejected from the
+clean-conversion path; decoded pixels can proceed through the explicit
+shape-confirmation rescue path while per-frame geometry is unverified. The
+stricter MONOCHROME/bit-depth/rescale/LUT checks apply only when the app manually
+writes raw decoded samples with `export-rescue-stack`; dcm2niix-backed routes are
+not globally rejected by that boundary.
 
 ## Safety Position
 
@@ -210,6 +232,9 @@ Rules:
 ```text
 - preserve rescue warning flags
 - require explicit spacing for screen-save rescue
+- in the manual raw stack exporter, reject pixel-value transforms that this app
+  cannot faithfully apply; do not invert MONOCHROME1, apply rescale/LUTs, or
+  infer per-frame transformations
 - do not OCR burned-in text automatically yet
 - do not infer original CT geometry from screen-save pixels
 - do not pass a mixed viewer/MPR export series to dcm2niix as a whole and then
