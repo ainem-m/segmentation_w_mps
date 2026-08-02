@@ -9,6 +9,17 @@
 
 namespace dicom_normalizer {
 
+struct GdcmPixelValueTransformInfo {
+    bool rescale_slope_present = false;
+    bool rescale_intercept_present = false;
+    bool modality_lut_present = false;
+    bool shared_pixel_value_transform_present = false;
+    bool per_frame_pixel_value_transform_present = false;
+    // Empty only when raw decoded samples are safe for the rescue-to-inference path.
+    // This is intentionally a fixed diagnostic token, never a raw DICOM value.
+    std::string rescue_reject_reason;
+};
+
 struct GdcmProbe {
     bool parsed = false;
     bool has_dicm_prefix = false;
@@ -64,6 +75,7 @@ struct GdcmDecodedImage {
     int high_bit = 0;
     int pixel_representation = 0;
     std::string photometric_interpretation;
+    GdcmPixelValueTransformInfo pixel_value_transform;
     std::vector<std::uint8_t> pixels;
 };
 

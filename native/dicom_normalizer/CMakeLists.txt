@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(totalsegmentator_wrapper_dicom_normalizer VERSION 0.3.0 LANGUAGES CXX)
+project(totalsegmentator_wrapper_dicom_normalizer VERSION 0.4.1 LANGUAGES CXX)
 
 find_package(
   GDCM 3.0 REQUIRED CONFIG

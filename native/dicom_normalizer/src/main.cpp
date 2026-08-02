@@ -28,7 +28,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr std::string_view kVersion = "0.3.0";
+constexpr std::string_view kVersion = "0.4.1";
 constexpr std::size_t kDicomdirReadLimitBytes = 64 * 1024 * 1024;
 constexpr std::size_t kPreviewReadLimitBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kMinVolumeSlices = 32;
@@ -628,13 +628,25 @@ std::string series_key(const DicomMeta& meta) {
         return meta.series_instance_uid;
     }
     std::ostringstream out;
-    out << "series-number:";
+    out << "missing-series-uid:study=";
+    if (!meta.study_instance_uid.empty()) {
+        out << dicom_normalizer::sha256_hex(meta.study_instance_uid);
+    } else {
+        out << "none";
+    }
+    out << ";frame=";
+    if (!meta.frame_of_reference_uid.empty()) {
+        out << dicom_normalizer::sha256_hex(meta.frame_of_reference_uid);
+    } else {
+        out << "none";
+    }
+    out << ";number=";
     if (meta.series_number.has_value()) {
         out << *meta.series_number;
     } else {
-        out << "unknown";
+        out << "none";
     }
-    out << ":" << meta.series_description;
+    out << ";description=" << dicom_normalizer::sha256_hex(meta.series_description);
     return out.str();
 }
 
@@ -947,8 +959,12 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
     int max_number_of_frames = 0;
     int compressed_count = 0;
     int pixel_decode_failure_count = 0;
+    int study_instance_uid_present_count = 0;
+    int frame_of_reference_uid_present_count = 0;
     bool instance_order_unambiguous = true;
     std::set<int> seen_instance_numbers;
+    std::set<std::string> study_instance_uids;
+    std::set<std::string> frame_of_reference_uids;
     for (const auto& item : series.files) {
         pixel_spacing_count += item.has_pixel_spacing ? 1 : 0;
         position_count += item.has_image_position_patient ? 1 : 0;
@@ -956,6 +972,14 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         max_number_of_frames = std::max(max_number_of_frames, item.number_of_frames.value_or(0));
         compressed_count += is_compressed_transfer_syntax(item.transfer_syntax_uid) ? 1 : 0;
         pixel_decode_failure_count += item.has_pixel_data && !item.pixel_decode_ok ? 1 : 0;
+        if (!item.study_instance_uid.empty()) {
+            ++study_instance_uid_present_count;
+            study_instance_uids.insert(item.study_instance_uid);
+        }
+        if (!item.frame_of_reference_uid.empty()) {
+            ++frame_of_reference_uid_present_count;
+            frame_of_reference_uids.insert(item.frame_of_reference_uid);
+        }
         if (!item.instance_number.has_value()
             || !seen_instance_numbers.insert(*item.instance_number).second) {
             instance_order_unambiguous = false;
@@ -1030,6 +1054,49 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
             "exclude_series",
             false,
             "Do not use for dental volume segmentation.");
+    }
+
+    std::vector<std::string> identity_consistency_reasons;
+    if (study_instance_uid_present_count > 0
+        && study_instance_uid_present_count != file_count) {
+        identity_consistency_reasons.push_back(
+            "inconsistent_study_instance_uid_presence");
+    }
+    if (study_instance_uids.size() > 1) {
+        identity_consistency_reasons.push_back("mixed_study_instance_uid");
+    }
+    if (frame_of_reference_uid_present_count > 0
+        && frame_of_reference_uid_present_count != file_count) {
+        identity_consistency_reasons.push_back(
+            "inconsistent_frame_of_reference_uid_presence");
+    }
+    if (frame_of_reference_uids.size() > 1) {
+        identity_consistency_reasons.push_back("mixed_frame_of_reference_uid");
+    }
+    if (!identity_consistency_reasons.empty()) {
+        return make(
+            "reject",
+            "reject",
+            "none",
+            identity_consistency_reasons,
+            join(identity_consistency_reasons, ","),
+            "request_consistent_series_export",
+            false,
+            "Files sharing one Series Instance UID have inconsistent Study Instance UID or Frame of Reference UID values. The normalizer will not merge or process them.");
+    }
+
+    if (first.series_instance_uid.empty()
+        && first.study_instance_uid.empty()
+        && first.frame_of_reference_uid.empty()) {
+        return make(
+            "reject",
+            "reject",
+            "none",
+            {"missing_stable_series_grouping_identity"},
+            "missing_stable_series_grouping_identity",
+            "request_export_with_dicom_series_identity",
+            false,
+            "Series Instance UID, Study Instance UID, and Frame of Reference UID are all missing. The normalizer cannot safely distinguish logical series.");
     }
 
     if (pixel_decode_failure_count > 0) {
@@ -1122,15 +1189,18 @@ Classification classify_series(const SeriesSummary& series, const OptionalTools&
         if (first.geometry_from_functional_groups) {
             reasons.push_back("functional_group_geometry_detected");
         }
+        reasons.push_back("per_frame_geometry_not_fully_validated");
+        reasons.push_back("manual_spacing_required");
+        reasons.push_back("not_segmentation_grade_original_ct");
         return make(
-            "enhanced_ct_geometry_unverified",
-            "geometry validation required",
-            "none",
+            "geometry_rescue_candidate",
+            "C: rescue only",
+            "C: rescue only",
             reasons,
-            "per_frame_geometry_not_fully_validated",
-            "validate_all_per_frame_functional_groups_or_request_original_export",
+            "",
+            "prepare_rescue_with_explicit_spacing",
             false,
-            "GDCM decoded the image, but every per-frame position/orientation must be validated before clean conversion.");
+            "Per-frame geometry is not trusted for clean conversion. Confirm the reconstructed shape before non-diagnostic preview generation.");
     }
 
     const bool geometry_ok =
@@ -1401,24 +1471,30 @@ DicomdirSummary audit_dicomdirs(const fs::path& dir) {
     DicomdirSummary summary;
     std::set<std::string> referenced;
     std::set<fs::path> resolved;
-    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
-        if (!entry.is_regular_file()) {
-            continue;
+    auto inspect = [&](const fs::path& path) {
+        if (upper(path.filename().string()) != "DICOMDIR") {
+            return;
         }
-        if (upper(entry.path().filename().string()) != "DICOMDIR") {
-            continue;
-        }
-        DicomMeta meta = parse_dicom_file(entry.path());
+        DicomMeta meta = parse_dicom_file(path);
         if (meta.sop_class_uid != "1.2.840.10008.1.3.10"
             && !contains_word(upper(meta.sop_class_name), "MEDIA STORAGE DIRECTORY")) {
-            continue;
+            return;
         }
         ++summary.dicomdir_file_count;
-        for (const auto& file_id : parse_dicomdir_referenced_file_ids(entry.path())) {
+        for (const auto& file_id : parse_dicomdir_referenced_file_ids(path)) {
             referenced.insert(file_id);
-            fs::path resolved_path = resolve_dicomdir_file_id(entry.path().parent_path(), file_id);
+            fs::path resolved_path = resolve_dicomdir_file_id(path.parent_path(), file_id);
             if (!resolved_path.empty()) {
                 resolved.insert(fs::weakly_canonical(resolved_path));
+            }
+        }
+    };
+    if (fs::is_regular_file(dir)) {
+        inspect(dir);
+    } else {
+        for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+            if (entry.is_regular_file()) {
+                inspect(entry.path());
             }
         }
     }
@@ -1909,27 +1985,33 @@ std::string audit_json(
 
 std::vector<SeriesSummary> audit_directory(const fs::path& dir, int& skipped) {
     if (!fs::exists(dir)) {
-        throw std::runtime_error("DICOM directory does not exist: " + dir.string());
+        throw std::runtime_error("DICOM input does not exist: " + dir.string());
     }
-    if (!fs::is_directory(dir)) {
-        throw std::runtime_error("Not a directory: " + dir.string());
+    if (!fs::is_directory(dir) && !fs::is_regular_file(dir)) {
+        throw std::runtime_error("DICOM input is not a regular file or directory: " + dir.string());
     }
 
     std::map<std::string, SeriesSummary> grouped;
     skipped = 0;
-    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        DicomMeta meta = parse_dicom_file(entry.path());
+    auto inspect = [&](const fs::path& path) {
+        DicomMeta meta = parse_dicom_file(path);
         if (!meta.parsed) {
             ++skipped;
-            continue;
+            return;
         }
         const std::string key = series_key(meta);
         auto& summary = grouped[key];
         summary.key = key;
         summary.files.push_back(std::move(meta));
+    };
+    if (fs::is_regular_file(dir)) {
+        inspect(dir);
+    } else {
+        for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+            if (entry.is_regular_file()) {
+                inspect(entry.path());
+            }
+        }
     }
 
     std::vector<SeriesSummary> result;
@@ -1972,9 +2054,9 @@ std::optional<SeriesSummary> find_series_by_number(
     if (matches.empty()) {
         return std::nullopt;
     }
-    std::sort(matches.begin(), matches.end(), [](const SeriesSummary& lhs, const SeriesSummary& rhs) {
-        return lhs.files.size() > rhs.files.size();
-    });
+    if (matches.size() != 1) {
+        throw std::runtime_error("ambiguous_series_number_use_series_key");
+    }
     return matches.front();
 }
 
@@ -1997,10 +2079,13 @@ std::optional<SeriesSummary> find_requested_series(
     const std::vector<SeriesSummary>& series,
     const Args& args
 ) {
+    if (!args.series_key.empty()) {
+        return find_series_by_key(series, args.series_key);
+    }
     if (args.series_number.has_value()) {
         return find_series_by_number(series, *args.series_number);
     }
-    return find_series_by_key(series, args.series_key);
+    return std::nullopt;
 }
 
 std::optional<ViewerExportGroup> find_viewer_export_group(
@@ -2017,11 +2102,11 @@ std::optional<ViewerExportGroup> find_viewer_export_group(
 }
 
 std::string requested_series_description(const Args& args) {
-    if (args.series_number.has_value()) {
-        return "series number " + std::to_string(*args.series_number);
-    }
     if (!args.series_key.empty()) {
         return "series key " + args.series_key;
+    }
+    if (args.series_number.has_value()) {
+        return "series number " + std::to_string(*args.series_number);
     }
     return "no series selector";
 }
@@ -2691,7 +2776,10 @@ int prepare_viewer_export(const Args& args) {
     if (classification.status != "viewer_export_mpr_mixed_candidate") {
         throw std::runtime_error(
             "prepare-viewer-export requires viewer_export_mpr_mixed_candidate, got "
-            + classification.status);
+            + classification.status
+            + (classification.reject_reason.empty()
+                ? std::string{}
+                : ": " + classification.reject_reason));
     }
     auto selected_group = find_viewer_export_group(*selected, args.group_id);
     if (!selected_group.has_value()) {
@@ -2760,8 +2848,11 @@ std::string rescue_stack_source_manifest_json(
 ) {
     std::ostringstream canonical;
     for (const auto& entry : stack.entries) {
-        canonical << "I:" << entry.instance_number
-            << "\tH:" << entry.content_sha256 << "\n";
+        canonical << "I:" << entry.instance_number;
+        if (stack.multiframe_source) {
+            canonical << "\tF:" << entry.frame_number;
+        }
+        canonical << "\tH:" << entry.content_sha256 << "\n";
     }
     std::ostringstream out;
     out << "{\n";
@@ -2783,7 +2874,8 @@ std::string rescue_stack_source_manifest_json(
         << json_string(stack.photometric_interpretation) << "\n";
     out << "  },\n";
     out << "  \"ordering\": {\n";
-    out << "    \"source\": \"instance_number\",\n";
+    out << "    \"source\": "
+        << json_string(stack.multiframe_source ? "frame_number" : "instance_number") << ",\n";
     out << "    \"ambiguous\": false,\n";
     out << "    \"direction\": \"ascending\"\n";
     out << "  },\n";
@@ -2798,8 +2890,11 @@ std::string rescue_stack_source_manifest_json(
         for (std::size_t index = 0; index < stack.entries.size(); ++index) {
             const auto& entry = stack.entries[index];
             out << "      {\"ordinal\": " << entry.ordinal
-                << ", \"instance_number\": " << entry.instance_number
-                << ", \"content_sha256\": " << json_string(entry.content_sha256)
+                << ", \"instance_number\": " << entry.instance_number;
+            if (stack.multiframe_source) {
+                out << ", \"frame_number\": " << entry.frame_number;
+            }
+            out << ", \"content_sha256\": " << json_string(entry.content_sha256)
                 << "}";
             if (index + 1 != stack.entries.size()) {
                 out << ",";
@@ -2830,7 +2925,11 @@ int export_rescue_stack(const Args& args) {
         && classification.status != "geometry_rescue_candidate"
         && classification.status != "secondary_capture_reference_candidate") {
         throw std::runtime_error(
-            "export-rescue-stack requires a geometry rescue or reference candidate");
+            "export-rescue-stack requires a geometry rescue or reference candidate, got "
+            + classification.status
+            + (classification.reject_reason.empty()
+                ? std::string{}
+                : ": " + classification.reject_reason));
     }
 
     std::vector<dicom_normalizer::RescueStackInput> inputs;
@@ -2886,7 +2985,10 @@ int prepare_rescue(const Args& args) {
         && classification.status != "geometry_rescue_candidate") {
         throw std::runtime_error(
             "prepare-rescue requires a geometry rescue candidate, got "
-            + classification.status);
+            + classification.status
+            + (classification.reject_reason.empty()
+                ? std::string{}
+                : ": " + classification.reject_reason));
     }
 
     const fs::path root = args.output;
@@ -2965,7 +3067,11 @@ int convert_clean(const Args& args) {
     const auto classification = classify_series(*selected, tools);
     if (classification.status != "original_ct_geometry_ok") {
         throw std::runtime_error(
-            "convert-clean requires original_ct_geometry_ok, got " + classification.status);
+            "convert-clean requires original_ct_geometry_ok, got "
+            + classification.status
+            + (classification.reject_reason.empty()
+                ? std::string{}
+                : ": " + classification.reject_reason));
     }
 
     const fs::path root = args.output;
@@ -3005,14 +3111,14 @@ void print_usage() {
         << "totalsegmentator-wrapper-dicom-normalizer " << kVersion << "\n\n"
         << "Usage:\n"
         << "  totalsegmentator-wrapper-dicom-normalizer doctor [--output <doctor.json>]\n"
-        << "  totalsegmentator-wrapper-dicom-normalizer audit --dicom-dir <dir> --output <audit.json>\n"
-        << "  totalsegmentator-wrapper-dicom-normalizer convert-clean --dicom-dir <dir> (--series-number <n>|--series-key <key>) "
+        << "  totalsegmentator-wrapper-dicom-normalizer audit --dicom-dir <file-or-dir> --output <audit.json>\n"
+        << "  totalsegmentator-wrapper-dicom-normalizer convert-clean --dicom-dir <file-or-dir> (--series-number <n>|--series-key <key>) "
         << "--output <artifact_dir>\n"
-        << "  totalsegmentator-wrapper-dicom-normalizer prepare-rescue --dicom-dir <dir> (--series-number <n>|--series-key <key>) "
+        << "  totalsegmentator-wrapper-dicom-normalizer prepare-rescue --dicom-dir <file-or-dir> (--series-number <n>|--series-key <key>) "
         << "--patched-spacing X,Y,Z --output <artifact_dir>\n\n"
-        << "  totalsegmentator-wrapper-dicom-normalizer export-rescue-stack --dicom-dir <dir> "
+        << "  totalsegmentator-wrapper-dicom-normalizer export-rescue-stack --dicom-dir <file-or-dir> "
         << "(--series-number <n>|--series-key <key>) --output <artifact_dir>\n"
-        << "  totalsegmentator-wrapper-dicom-normalizer prepare-viewer-export --dicom-dir <dir> "
+        << "  totalsegmentator-wrapper-dicom-normalizer prepare-viewer-export --dicom-dir <file-or-dir> "
         << "(--series-number <n>|--series-key <key>) --group-id <gNNN> --output <artifact_dir>\n\n"
         << "Current phase:\n"
         << "  audit, clean CT conversion, secondary-capture rescue, and viewer/MPR export rescue.\n";

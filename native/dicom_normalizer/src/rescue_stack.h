@@ -16,6 +16,7 @@ struct RescueStackInput {
 struct RescueStackEntry {
     int ordinal = 0;
     int instance_number = 0;
+    int frame_number = 1;
     std::string content_sha256;
 };
 
@@ -25,6 +26,7 @@ struct RescueStackResult {
     int size_z = 0;
     std::string dtype;
     std::string photometric_interpretation;
+    bool multiframe_source = false;
     std::vector<RescueStackEntry> entries;
 };
 

@@ -145,6 +145,99 @@ std::vector<std::string> nested_values(const gdcm::File& file, const gdcm::Tag& 
     return values;
 }
 
+bool data_set_contains_tag_recursively(
+    const gdcm::DataSet& data_set,
+    const gdcm::Tag& target
+) {
+    if (data_set.FindDataElement(target)) {
+        return true;
+    }
+    for (auto iterator = data_set.Begin(); iterator != data_set.End(); ++iterator) {
+        const gdcm::SmartPointer<gdcm::SequenceOfItems> sequence = iterator->GetValueAsSQ();
+        if (!sequence) {
+            continue;
+        }
+        for (std::size_t index = 1; index <= sequence->GetNumberOfItems(); ++index) {
+            if (data_set_contains_tag_recursively(
+                    sequence->GetItem(index).GetNestedDataSet(), target)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool functional_group_contains_pixel_value_transform(
+    const gdcm::DataSet& data_set,
+    const gdcm::Tag& functional_group_sequence
+) {
+    if (!data_set.FindDataElement(functional_group_sequence)) {
+        return false;
+    }
+    const gdcm::SmartPointer<gdcm::SequenceOfItems> groups =
+        data_set.GetDataElement(functional_group_sequence).GetValueAsSQ();
+    if (!groups) {
+        // Parsed-but-opaque functional groups must not be treated as evidence that
+        // raw samples are safe for the rescue-to-inference path.
+        return true;
+    }
+    const gdcm::Tag pixel_value_transform_sequence(0x0028, 0x9145);
+    for (std::size_t index = 1; index <= groups->GetNumberOfItems(); ++index) {
+        if (data_set_contains_tag_recursively(
+                groups->GetItem(index).GetNestedDataSet(), pixel_value_transform_sequence)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+GdcmPixelValueTransformInfo inspect_pixel_value_transform(const gdcm::File& file) {
+    GdcmPixelValueTransformInfo result;
+    const auto& data_set = file.GetDataSet();
+    const gdcm::Tag rescale_intercept(0x0028, 0x1052);
+    const gdcm::Tag rescale_slope(0x0028, 0x1053);
+    result.rescale_intercept_present = data_set.FindDataElement(rescale_intercept);
+    result.rescale_slope_present = data_set.FindDataElement(rescale_slope);
+    result.modality_lut_present = data_set.FindDataElement(gdcm::Tag(0x0028, 0x3000));
+    result.shared_pixel_value_transform_present =
+        functional_group_contains_pixel_value_transform(
+            data_set, gdcm::Tag(0x5200, 0x9229));
+    result.per_frame_pixel_value_transform_present =
+        functional_group_contains_pixel_value_transform(
+            data_set, gdcm::Tag(0x5200, 0x9230));
+
+    if (result.modality_lut_present) {
+        result.rescue_reject_reason = "rescue_modality_lut_unsupported";
+        return result;
+    }
+    if (result.shared_pixel_value_transform_present) {
+        result.rescue_reject_reason = "rescue_shared_pixel_value_transform_unsupported";
+        return result;
+    }
+    if (result.per_frame_pixel_value_transform_present) {
+        result.rescue_reject_reason = "rescue_per_frame_pixel_value_transform_unsupported";
+        return result;
+    }
+    if (result.rescale_slope_present != result.rescale_intercept_present) {
+        result.rescue_reject_reason = "rescue_incomplete_rescale_transform";
+        return result;
+    }
+    if (!result.rescale_slope_present) {
+        return result;
+    }
+
+    const auto slope = parse_double(top_level_string(file, rescale_slope));
+    const auto intercept = parse_double(top_level_string(file, rescale_intercept));
+    if (!slope.has_value() || !intercept.has_value()) {
+        result.rescue_reject_reason = "rescue_invalid_rescale_transform";
+        return result;
+    }
+    if (*slope != 1.0 || *intercept != 0.0) {
+        result.rescue_reject_reason = "rescue_nonidentity_rescale_transform";
+    }
+    return result;
+}
+
 bool has_dicm_prefix(const fs::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -300,6 +393,7 @@ GdcmDecodedImage decode_dicom_image(const fs::path& path) {
             return result;
         }
         const auto& image = reader.GetImage();
+        result.pixel_value_transform = inspect_pixel_value_transform(reader.GetFile());
         const auto& pixel_format = image.GetPixelFormat();
         result.columns = static_cast<int>(image.GetColumns());
         result.rows = static_cast<int>(image.GetRows());

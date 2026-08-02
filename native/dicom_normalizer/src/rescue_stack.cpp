@@ -32,14 +32,19 @@ void validate_allowed_image(const GdcmDecodedImage& image) {
         throw std::runtime_error(
             image.error.empty() ? "gdcm_pixel_decode_failed" : image.error);
     }
-    if (image.number_of_frames != 1) {
-        throw std::runtime_error("unsupported_multiframe");
+    if (image.number_of_frames <= 0) {
+        throw std::runtime_error("invalid_frame_count");
+    }
+    if (!image.pixel_value_transform.rescue_reject_reason.empty()) {
+        throw std::runtime_error(image.pixel_value_transform.rescue_reject_reason);
     }
     if (image.samples_per_pixel != 1) {
         throw std::runtime_error("unsupported_samples_per_pixel");
     }
-    if (image.photometric_interpretation != "MONOCHROME1"
-        && image.photometric_interpretation != "MONOCHROME2") {
+    if (image.photometric_interpretation == "MONOCHROME1") {
+        throw std::runtime_error("rescue_monochrome1_unsupported");
+    }
+    if (image.photometric_interpretation != "MONOCHROME2") {
         throw std::runtime_error("unsupported_photometric_interpretation");
     }
     if (image.bits_allocated != 8 && image.bits_allocated != 16) {
@@ -52,10 +57,17 @@ void validate_allowed_image(const GdcmDecodedImage& image) {
     if (image.pixel_representation != 0 && image.pixel_representation != 1) {
         throw std::runtime_error("unsupported_pixel_representation");
     }
+    if (image.bits_allocated == 8 && image.pixel_representation == 1) {
+        throw std::runtime_error("rescue_signed_8bit_unsupported");
+    }
+    if (image.rows <= 0 || image.columns <= 0) {
+        throw std::runtime_error("unexpected_decoded_buffer_layout");
+    }
     const auto expected = static_cast<std::size_t>(image.rows)
         * static_cast<std::size_t>(image.columns)
+        * static_cast<std::size_t>(image.number_of_frames)
         * static_cast<std::size_t>(image.bits_allocated / 8);
-    if (image.rows <= 0 || image.columns <= 0 || image.pixels.size() != expected) {
+    if (image.pixels.size() != expected) {
         throw std::runtime_error("unexpected_decoded_buffer_layout");
     }
 }
@@ -105,9 +117,11 @@ RescueStackResult export_rescue_stack_npy(
     if (inputs.empty()) {
         throw std::runtime_error("empty_rescue_stack");
     }
-    for (const auto& input : inputs) {
-        if (!input.instance_number.has_value()) {
-            throw std::runtime_error("ambiguous_instance_order");
+    if (inputs.size() > 1) {
+        for (const auto& input : inputs) {
+            if (!input.instance_number.has_value()) {
+                throw std::runtime_error("ambiguous_instance_order");
+            }
         }
     }
     std::sort(inputs.begin(), inputs.end(), [](const auto& lhs, const auto& rhs) {
@@ -117,20 +131,27 @@ RescueStackResult export_rescue_stack_npy(
         return lhs.content_sha256 < rhs.content_sha256;
     });
     std::set<int> instances;
-    for (const auto& input : inputs) {
-        if (!instances.insert(*input.instance_number).second) {
-            throw std::runtime_error("ambiguous_instance_order");
+    if (inputs.size() > 1) {
+        for (const auto& input : inputs) {
+            if (!instances.insert(*input.instance_number).second) {
+                throw std::runtime_error("ambiguous_instance_order");
+            }
         }
     }
 
     const auto first = decode_dicom_image(inputs.front().path);
     validate_allowed_image(first);
+    if (inputs.size() > 1 && first.number_of_frames != 1) {
+        throw std::runtime_error("mixed_multiframe_series");
+    }
     RescueStackResult result;
     result.size_x = first.columns;
     result.size_y = first.rows;
-    result.size_z = static_cast<int>(inputs.size());
+    result.size_z = inputs.size() == 1
+        ? first.number_of_frames : static_cast<int>(inputs.size());
     result.dtype = numpy_dtype(first);
     result.photometric_interpretation = first.photometric_interpretation;
+    result.multiframe_source = inputs.size() == 1 && first.number_of_frames > 1;
 
     if (!output_path.parent_path().empty()) {
         std::filesystem::create_directories(output_path.parent_path());
@@ -152,6 +173,9 @@ RescueStackResult export_rescue_stack_npy(
             const auto image =
                 index == 0 ? first : decode_dicom_image(inputs[index].path);
             validate_allowed_image(image);
+            if (inputs.size() > 1 && image.number_of_frames != 1) {
+                throw std::runtime_error("mixed_multiframe_series");
+            }
             if (image.rows != first.rows
                 || image.columns != first.columns
                 || image.samples_per_pixel != first.samples_per_pixel
@@ -168,11 +192,15 @@ RescueStackResult export_rescue_stack_npy(
             if (!output) {
                 throw std::runtime_error("cannot_write_rescue_stack");
             }
-            result.entries.push_back({
-                static_cast<int>(index + 1),
-                *inputs[index].instance_number,
-                inputs[index].content_sha256,
-            });
+            const int instance_number = inputs[index].instance_number.value_or(1);
+            for (int frame = 1; frame <= image.number_of_frames; ++frame) {
+                result.entries.push_back({
+                    static_cast<int>(result.entries.size() + 1),
+                    instance_number,
+                    frame,
+                    inputs[index].content_sha256,
+                });
+            }
         }
         output.close();
         if (!output) {

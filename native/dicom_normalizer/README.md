@@ -22,9 +22,13 @@ cmake --build build/dicom_normalizer --parallel
 ```
 
 GDCM 3.x development files are required to build. On macOS,
-`scripts/build_dicom_normalizer_mac.sh` also bundles the complete native runtime
-under `build/dicom_normalizer/lib` and rewrites load paths to `@loader_path`, so
-the shipped helper does not require Homebrew on the user's Mac.
+`scripts/build_dicom_normalizer_mac.sh` can bundle the native runtime under
+`build/dicom_normalizer/lib` and rewrite load paths to `@loader_path`. This is
+not, by itself, a macOS-version compatibility attestation: a release targeting
+macOS 14+ must independently inspect every bundled Mach-O load command and
+reject a helper whose `minos` exceeds the declared deployment target. A helper
+built against the host's Homebrew runtime must not be assumed runnable on an
+older supported macOS release.
 
 The binary is:
 
@@ -43,7 +47,7 @@ external transcoder availability.
 
 ```bash
 totalsegmentator-wrapper-dicom-normalizer audit \
-  --dicom-dir path/to/dicom_folder \
+  --dicom-dir path/to/dicom_folder_or_single_file \
   --output artifacts/dicom_audit_cpp.json
 ```
 
@@ -52,9 +56,9 @@ Classifications:
 ```text
 original_ct_geometry_ok
 secondary_capture_rescue_candidate
+geometry_rescue_candidate
 compressed_pixel_data
 pixel_decode_failed
-enhanced_ct_geometry_unverified
 dicomdir_only
 reject
 ```
@@ -63,12 +67,34 @@ The audit JSON also records `next_action`, `reject_reason`,
 `requires_external_tool`, DICOMDIR reference counts, and optional tool
 availability for `gdcmconv`, `dcmdjpeg`, and `dcmconv`.
 
+## Series Selection
+
+Pass `--series-key` whenever the audit supplied one. It is the stable selection
+handle and always takes precedence when both selectors are present. A legacy
+`--series-number` request is accepted only if it identifies exactly one series;
+duplicate Series Numbers fail with `ambiguous_series_number_use_series_key`.
+The normalizer never picks the largest duplicate series as a tie-breaker.
+
+If Series Instance UID is missing, the fallback key is path-free and separates
+files by the available Study Instance UID and Frame of Reference UID, plus the
+existing Series Number and Series Description values. UID and description
+components are SHA-256 digests in the key. Files that also lack both Study
+Instance UID and Frame of Reference UID remain visible in the audit but are
+classified `reject` with `missing_stable_series_grouping_identity`; conversion
+and rescue do not guess a grouping from filenames or directory layout.
+
+A present Series Instance UID remains the canonical raw selection key. Before
+conversion or rescue, every file under that key must have consistent Study
+Instance UID and Frame of Reference UID values, including consistent tag
+presence. Mixed values or partial tag loss are classified `reject`; the
+normalizer does not split a duplicated Series UID using geometry or paths.
+
 ## Convert Clean
 
 ```bash
 totalsegmentator-wrapper-dicom-normalizer convert-clean \
-  --dicom-dir path/to/dicom_folder \
-  --series-number 3 \
+  --dicom-dir path/to/dicom_folder_or_single_file \
+  --series-key <audit-series-key> \
   --output artifacts/case_clean
 ```
 
@@ -86,8 +112,8 @@ This path:
 
 ```bash
 totalsegmentator-wrapper-dicom-normalizer prepare-rescue \
-  --dicom-dir path/to/dicom_folder \
-  --series-number 200 \
+  --dicom-dir path/to/dicom_folder_or_single_file \
+  --series-key <audit-series-key> \
   --patched-spacing 0.6,0.6,0.9375 \
   --output artifacts/case_rescue
 ```
@@ -95,7 +121,7 @@ totalsegmentator-wrapper-dicom-normalizer prepare-rescue \
 This path:
 
 ```text
-- accepts only secondary_capture_rescue_candidate series
+- accepts only secondary_capture_rescue_candidate or geometry_rescue_candidate series
 - requires explicit spacing
 - isolates selected DICOM files with safe sequential filenames
 - runs dcm2niix with uncompressed NIfTI output
@@ -107,6 +133,24 @@ This path:
 
 The patched NIfTI uses identity orientation and explicit spacing. Treat it as a
 pseudo volume for rescue inspection, not as clean original CT geometry.
+
+The raw `export-rescue-stack` path directly writes GDCM-decoded samples without
+applying DICOM display or modality transforms. That manual raw-export path has a
+strict pixel-semantics boundary:
+
+```text
+- MONOCHROME2 only
+- unsigned 8-bit or signed/unsigned 16-bit decoded samples
+- Rescale Slope and Rescale Intercept both absent, or exactly 1 and 0
+- no Modality LUT
+- no Shared or Per-frame Pixel Value Transformation Sequence
+```
+
+MONOCHROME1, signed 8-bit, non-identity or incomplete rescale pairs, a Modality
+LUT, and Shared/Per-frame pixel-value transforms fail before a raw stack artifact
+is written. This check does not turn an otherwise valid CT series into an audit
+reject. `convert-clean`, `prepare-rescue`, and `prepare-viewer-export` continue to
+route DICOM through dcm2niix, which applies supported DICOM pixel transforms.
 
 ## Design Boundary
 
@@ -135,6 +179,9 @@ manual_spacing_required: true
 Compressed transfer syntaxes are decoded and, when needed for dcm2niix, losslessly
 transcoded to Explicit VR Little Endian with embedded GDCM. A decode failure is a
 hard `pixel_decode_failed` result; it never silently falls back to metadata-only
-acceptance. Enhanced CT pixel data is decoded, but the series remains
-`enhanced_ct_geometry_unverified` until every per-frame functional-group geometry
-item can be validated.
+acceptance. Enhanced or multi-frame CT pixel data is decoded, but it is never
+accepted as clean CT geometry without complete per-frame validation. It is
+routed through the explicit shape-confirmation rescue path as
+`geometry_rescue_candidate` with `per_frame_geometry_not_fully_validated`
+provenance. Only the manual raw `export-rescue-stack` operation is subject to
+the stricter no-transform boundary above.
