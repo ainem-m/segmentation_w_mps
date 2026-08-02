@@ -1,0 +1,24 @@
+MeshSegNet Teeth3DS-trained checkpoint
+
+Model ID:
+huathedev/3D-Teeth-Scan-Semantic-Segmentation-with-MeshSegNet
+
+Source:
+https://huggingface.co/spaces/huathedev/3D-Teeth-Scan-Semantic-Segmentation-with-MeshSegNet
+
+Pinned source commit:
+4178a5c748be683b68fc85423e09bd53096e3daf
+
+Checkpoint filename:
+model.tar
+
+Expected SHA-256:
+3d2e44db8865ff3968803e86dadcf73cf9c4b738ddc35bfb3bc42c02347d7a0c
+
+Declared license:
+Apache License 2.0
+https://www.apache.org/licenses/LICENSE-2.0
+
+The checkpoint is downloaded and stored separately. It is not relicensed by
+this project and is not included in the source distribution unless a release
+inventory explicitly says otherwise.

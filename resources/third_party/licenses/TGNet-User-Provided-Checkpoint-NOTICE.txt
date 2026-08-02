@@ -1,0 +1,23 @@
+TGNet user-provided checkpoint policy
+
+source: user-provided
+license: not-verified
+bundled_by_app: false
+
+TGNet checkpoint files are not bundled or automatically downloaded. They are
+not provided and not redistributed by TotalSegmentator Wrapper for Mac. A user who enables the
+TGNet-compatible path must obtain the specified files independently from the
+distribution page linked by the application and review the distributor's
+terms before use.
+
+The packaged application recognizes this compatibility set only after strict
+filename and SHA-256 validation:
+
+- tgnet_fps.h5
+  SHA-256: 024f585f20924c08eafced8fdc633015b0cc8bba04301d585b4cf7a0c02206b6
+- tgnet_bdl.h5
+  SHA-256: 5ec7780d7d645af522c6f2888093e5ca8e11c631d0e13798d208ba2a157554d1
+
+Acceptance by the compatibility validator does not verify or grant a license
+for either checkpoint. The independently implemented application code and the
+user-provided checkpoint files have separate provenance and licensing scopes.
