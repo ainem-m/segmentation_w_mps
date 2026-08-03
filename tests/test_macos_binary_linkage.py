@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,8 @@ from scripts.verify_macos_binary_linkage import (
     parse_otool_rpaths,
     verify_app_bundle_macos_linkage,
     verify_system_macos_linkage,
+    verify_unmodified_official_wheel_macos_compatibility,
+    verify_wheel_self_contained_macos_linkage,
     verify_wheel_system_macos_linkage,
 )
 
@@ -872,6 +875,323 @@ class MacOSBinaryLinkageTests(unittest.TestCase):
             self.assertIn("/opt/homebrew/lib/libjpeg.dylib", message)
             self.assertIn("package/fpsample.so", message)
             self.assertIn("LC_RPATH", message)
+
+    def test_self_contained_wheel_resolves_internal_rpath_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "fixture.whl"
+            write_wheel(
+                wheel,
+                {
+                    "package/native.so": MACHO_PREFIX + b"native",
+                    "package/lib/libhelper.dylib": MACHO_PREFIX + b"helper",
+                },
+            )
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                is_helper = path.name == "libhelper.dylib"
+                if operation == "-L":
+                    dependencies = ["/usr/lib/libSystem.B.dylib"]
+                    if is_helper:
+                        dependencies.insert(0, "@rpath/libhelper.dylib")
+                    else:
+                        dependencies.insert(0, "@rpath/libhelper.dylib")
+                    output = f"{path}:\n" + "".join(
+                        f"\t{dependency} (compatibility version 1.0.0)\n"
+                        for dependency in dependencies
+                    )
+                    return subprocess.CompletedProcess(command, 0, output, "")
+                if operation == "-D":
+                    output = f"{path}:\n"
+                    if is_helper:
+                        output += "@rpath/libhelper.dylib\n"
+                    return subprocess.CompletedProcess(command, 0, output, "")
+                load_commands = "Load command 0\n"
+                if not is_helper:
+                    load_commands += (
+                        "Load command 6\n"
+                        "          cmd LC_RPATH\n"
+                        "      cmdsize 40\n"
+                        "         path @loader_path/lib (offset 12)\n"
+                    )
+                return subprocess.CompletedProcess(command, 0, load_commands, "")
+
+            members = verify_wheel_self_contained_macos_linkage(
+                wheel,
+                runner=runner,
+            )
+
+            self.assertEqual(
+                members,
+                (
+                    f"{wheel}!/package/native.so",
+                    f"{wheel}!/package/lib/libhelper.dylib",
+                ),
+            )
+
+    def test_self_contained_wheel_rejects_missing_internal_rpath_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "fixture.whl"
+            write_wheel(
+                wheel,
+                {
+                    "package/native.so": MACHO_PREFIX + b"native",
+                    "package/lib/other.dylib": MACHO_PREFIX + b"other",
+                },
+            )
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                is_other = path.name == "other.dylib"
+                if operation == "-L":
+                    dependency = (
+                        "@rpath/other.dylib" if is_other else "@rpath/libmissing.dylib"
+                    )
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n\t{dependency} (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if operation == "-D":
+                    install_name = "@rpath/other.dylib\n" if is_other else ""
+                    return subprocess.CompletedProcess(
+                        command, 0, f"{path}:\n{install_name}", ""
+                    )
+                if is_other:
+                    return subprocess.CompletedProcess(command, 0, "Load command 0\n", "")
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    "Load command 6\n"
+                    "          cmd LC_RPATH\n"
+                    "      cmdsize 40\n"
+                    "         path @loader_path/lib (offset 12)\n",
+                    "",
+                )
+
+            with self.assertRaisesRegex(
+                MacOSBinaryLinkageError,
+                "could not resolve in-bundle Mach-O dependency",
+            ):
+                verify_wheel_self_contained_macos_linkage(wheel, runner=runner)
+
+    def test_self_contained_wheel_rejects_absolute_delocate_install_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "fixture.whl"
+            write_wheel(
+                wheel,
+                {
+                    "package/native.so": MACHO_PREFIX + b"native",
+                    "package/.dylibs/libhelper.dylib": MACHO_PREFIX + b"helper",
+                },
+            )
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                is_helper = path.name == "libhelper.dylib"
+                install_name = "/DLC/package/.dylibs/libhelper.dylib"
+                if operation == "-L":
+                    dependency = (
+                        install_name
+                        if is_helper
+                        else "@loader_path/.dylibs/libhelper.dylib"
+                    )
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n"
+                        f"\t{dependency} (compatibility version 1.0.0)\n"
+                        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if operation == "-D":
+                    value = install_name + "\n" if is_helper else ""
+                    return subprocess.CompletedProcess(command, 0, f"{path}:\n{value}", "")
+                return subprocess.CompletedProcess(command, 0, "Load command 0\n", "")
+
+            with self.assertRaisesRegex(
+                MacOSBinaryLinkageError,
+                "LC_ID_DYLIB must use an app-relative dyld token",
+            ):
+                verify_wheel_self_contained_macos_linkage(wheel, runner=runner)
+
+    def test_exact_unmodified_official_wheel_records_known_lc_id_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "imagecodecs-2026.6.26-cp312-abi3-macosx_11_0_arm64.whl"
+            write_wheel(
+                wheel,
+                {
+                    "imagecodecs/native.so": MACHO_PREFIX + b"native",
+                    "imagecodecs/.dylibs/libhelper.dylib": MACHO_PREFIX + b"helper",
+                    "imagecodecs-2026.6.26.dist-info/METADATA": (
+                        b"Metadata-Version: 2.4\nName: imagecodecs\nVersion: 2026.6.26\n\n"
+                    ),
+                },
+            )
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            install_name = "/DLC/imagecodecs/.dylibs/libhelper.dylib"
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                is_helper = path.name == "libhelper.dylib"
+                if operation == "-L":
+                    dependency = install_name if is_helper else "@loader_path/.dylibs/libhelper.dylib"
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n\t{dependency} (compatibility version 1.0.0)\n"
+                        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if operation == "-D":
+                    value = install_name + "\n" if is_helper else ""
+                    return subprocess.CompletedProcess(command, 0, f"{path}:\n{value}", "")
+                return subprocess.CompletedProcess(command, 0, "Load command 0\n", "")
+
+            policy = {
+                ("imagecodecs", "2026.6.26", digest): {
+                    "kind": "absolute-lc-id-dylib",
+                    "required_fragment": "/DLC/imagecodecs/.dylibs/",
+                    "message": "known upstream warning",
+                }
+            }
+            with (
+                patch(
+                    "scripts.verify_macos_binary_linkage.KNOWN_UPSTREAM_WHEEL_LINKAGE_WARNINGS",
+                    policy,
+                ),
+                patch(
+                    "scripts.verify_macos_deployment_target.verify_wheel_machos",
+                    return_value=(object(), object()),
+                ),
+            ):
+                report = verify_unmodified_official_wheel_macos_compatibility(
+                    wheel,
+                    distribution="imagecodecs",
+                    version="2026.6.26",
+                    expected_sha256=digest,
+                    runner=runner,
+                )
+
+            self.assertEqual(report.strict_linkage, "known-upstream-warning")
+            self.assertEqual(report.native_member_count, 2)
+            self.assertEqual(report.warnings[0]["kind"], "absolute-lc-id-dylib")
+
+    def test_unmodified_official_wheel_warning_requires_exact_hash_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "imagecodecs-2026.6.26-cp312-abi3-macosx_11_0_arm64.whl"
+            write_wheel(
+                wheel,
+                {
+                    "imagecodecs/.dylibs/libhelper.dylib": MACHO_PREFIX + b"helper",
+                    "imagecodecs-2026.6.26.dist-info/METADATA": (
+                        b"Metadata-Version: 2.4\nName: imagecodecs\nVersion: 2026.6.26\n\n"
+                    ),
+                },
+            )
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                if command[-2] == "-L":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n"
+                        "\t/DLC/imagecodecs/.dylibs/libhelper.dylib (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if command[-2] == "-D":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n/DLC/imagecodecs/.dylibs/libhelper.dylib\n",
+                        "",
+                    )
+                return subprocess.CompletedProcess(command, 0, "Load command 0\n", "")
+
+            with (
+                patch(
+                    "scripts.verify_macos_deployment_target.verify_wheel_machos",
+                    return_value=(object(),),
+                ),
+                self.assertRaisesRegex(
+                    MacOSBinaryLinkageError,
+                    "LC_ID_DYLIB must use an app-relative dyld token",
+                ),
+            ):
+                verify_unmodified_official_wheel_macos_compatibility(
+                    wheel,
+                    distribution="imagecodecs",
+                    version="2026.6.26",
+                    expected_sha256=digest,
+                    runner=runner,
+                )
+
+    def test_self_contained_wheel_rejects_external_rpath_even_if_unused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "fixture.whl"
+            write_wheel(wheel, {"package/native.so": MACHO_PREFIX + b"native"})
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                if operation == "-L":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n"
+                        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if operation == "-D":
+                    return subprocess.CompletedProcess(command, 0, f"{path}:\n", "")
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    "Load command 6\n"
+                    "          cmd LC_RPATH\n"
+                    "      cmdsize 40\n"
+                    "         path /Users/builder/stale/lib (offset 12)\n",
+                    "",
+                )
+
+            with self.assertRaisesRegex(
+                MacOSBinaryLinkageError,
+                "LC_RPATH is not under a sealed macOS system root",
+            ):
+                verify_wheel_self_contained_macos_linkage(wheel, runner=runner)
+
+    def test_self_contained_wheel_rejects_executable_path_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = Path(tmp) / "fixture.whl"
+            write_wheel(wheel, {"package/native.so": MACHO_PREFIX + b"native"})
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                path = Path(command[-1])
+                operation = command[-2]
+                if operation == "-L":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{path}:\n"
+                        "\t@executable_path/libhelper.dylib (compatibility version 1.0.0)\n",
+                        "",
+                    )
+                if operation == "-D":
+                    return subprocess.CompletedProcess(command, 0, f"{path}:\n", "")
+                return subprocess.CompletedProcess(command, 0, "Load command 0\n", "")
+
+            with self.assertRaisesRegex(
+                MacOSBinaryLinkageError,
+                "must not use @executable_path",
+            ):
+                verify_wheel_self_contained_macos_linkage(wheel, runner=runner)
 
     def test_wheel_rejects_embedded_dyld_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

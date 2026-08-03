@@ -27,8 +27,8 @@ TotalSegmentator Wrapper for Mac `0.1.2` の外部紹介・返事待ち中に使
 | 対応環境（0.1.2当時） | Apple Silicon Mac, macOS 13以降を想定。現行0.4.1は macOS 14以降。 |
 | 同梱Sample | Sample 1 CT input, precomputed 3D HTML preview |
 | 初回Setup | App Support配下に専用runtimeを作成 |
-| 初回Setup所要時間 | Python依存は同梱wheelから導入。モデル取得時間は環境・通信状況により数分以上 |
-| 通信 | Python依存はアプリに同梱。セットアップ中にネットワークを使用するのはモデルweightの取得だけ |
+| 初回Setup所要時間 | Python依存とモデルの取得時間は環境・通信状況により数分以上 |
+| 通信 | セットアップ中にPythonの完成済みbinary wheelとモデルweightを取得。利用者側でsource buildは行わない |
 | 送信しないもの | DICOM, CT, 処理結果, ローカルpath, ログ, ユーザー識別子 |
 | Sample 1処理時間 | model取得済み/MPS利用時も入力の大きさやMacの状態により数分以上かかる場合あり |
 | 注意 | 研究・教育目的の非臨床プレビューです。医療機器ではなく、診断、治療方針の決定、治療計画、またはその他の医療上の判断には使用できません。 |
@@ -38,7 +38,7 @@ TotalSegmentator Wrapper for Mac `0.1.2` の外部紹介・返事待ち中に使
 ```text
 TotalSegmentator Wrapper for Macは、Apple Silicon Mac上でCBCT/CTの非臨床3D previewを作るalpha版です。
 DMGはDeveloper ID署名・notarized済みです。DICOM/CT/処理結果は送信しません。
-初回SetupではPython依存を同梱wheelからオフライン導入し、初回実行に必要なmodel weightだけを取得します。
+初回SetupではPythonの完成済みbinary wheelと、初回実行に必要なmodel weightを取得します。
 まずは同梱Sample 1の3D previewと3Dプレビュー作成を試してください。
 ```
 

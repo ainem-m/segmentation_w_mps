@@ -257,7 +257,7 @@ TotalSegmentator Wrapper for Mac ${APP_VERSION}
 
 権限と通信:
 - 管理者権限、Homebrew、system Pythonの変更は不要です。
-- Python依存はアプリに同梱されており、ネットワークを使わずに導入します。セットアップ中にネットワークを使用するのはモデルweightの取得だけです。
+- セットアップ中にPythonの完成済みbinary wheelとモデルweightを取得します。利用者のMacでsource buildは行いません。
 - 初回実行に必要なモデルweightはSetup時に準備します。
 - ToothSeg高精細化はTotalSegmentator結果で歯を検出した場合だけ明示実行できます。初回選択時に約920 MBの追加モデルを取得し、取得完了後も自動では推論を開始しません。
 - DICOM、CT、処理結果、3Dプレビュー出力は、セットアップ中もプレビュー作成中も送信しません。
@@ -375,7 +375,7 @@ ${OPEN_WARNING_TEST}
 
 プライバシーと用途:
 - Setupは ~/Library/Application Support/TotalSegmentatorWrapperMac/ 配下へ書き込みます。
-- Python依存はアプリに同梱されており、ネットワークを使わずに導入します。セットアップ中にネットワークを使用するのはモデルweightの取得だけです。
+- セットアップ中にPythonの完成済みbinary wheelとモデルweightを取得します。利用者のMacでsource buildは行いません。
 - 初回実行に必要なモデルweightはSetup時に準備します。
 - DICOM、CT、処理結果、3Dプレビュー出力は、セットアップ中もプレビュー作成中も送信しません。
 - 利用状況データの送信も、専用環境内で無効化します。

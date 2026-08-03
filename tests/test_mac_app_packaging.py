@@ -58,8 +58,8 @@ PYTHON_RUNTIME_FINGERPRINT_SCRIPT = ROOT / "scripts" / "python_runtime_fingerpri
 RELEASE_INPUT_READINESS_SCRIPT = ROOT / "scripts" / "verify_release_input_readiness.py"
 RELEASE_BUILD_TOOLCHAIN_SCRIPT = ROOT / "scripts" / "release_build_toolchain.py"
 RELEASE_COMPONENT_BUILD_RUNNER = ROOT / "scripts" / "run_release_component_build.sh"
-OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT = (
-    ROOT / "scripts" / "build_offline_dependency_wheelhouse.py"
+OPEN3D_WHEEL_REWRITE_SCRIPT = (
+    ROOT / "scripts" / "repair_macos_release_dependency_wheels.py"
 )
 TOTALSEGMENTATOR_TASK_INVENTORY = ROOT / "resources" / "third_party" / "totalsegmentator_task_inventory.json"
 DICOM_RUNTIME_LICENSES = (
@@ -681,20 +681,17 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"${ACVL_UTILS_WHEEL_PATH}"', app_text)
         self.assertNotIn("--only-binary fpsample", app_text)
 
-    def test_release_app_requires_and_bundles_verified_offline_dependency_wheelhouse(self) -> None:
+    def test_release_app_bundles_only_verified_rewritten_open3d_wheel(self) -> None:
         app_text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-        self.assertIn(str(OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT.relative_to(ROOT)), app_text)
+        self.assertIn(str(OPEN3D_WHEEL_REWRITE_SCRIPT.relative_to(ROOT)), app_text)
         self.assertIn(
-            "TOTALSEGMENTATOR_WRAPPER_MAC_OFFLINE_DEPENDENCY_WHEELHOUSE",
+            "TOTALSEGMENTATOR_WRAPPER_MAC_OPEN3D_WHEEL_REWRITE",
             app_text,
         )
         for required in (
             "--verify-existing",
-            '--constraints "${CONSTRAINTS_PATH}"',
-            '--requirements-lock "${REQUIREMENTS_LOCK_PATH}"',
-            '--lock-metadata "${DEPENDENCY_LOCK_METADATA_PATH}"',
-            '--output-directory "${OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT}"',
+            '--output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}"',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, app_text)
@@ -727,8 +724,7 @@ class MacAppPackagingTests(unittest.TestCase):
         )
         release_inventory = app_text[release_inventory_start:release_inventory_end]
         for required in (
-            "--no-index",
-            '--find-links "${OFFLINE_DEPENDENCY_WHEEL_DIRECTORY}"',
+            '--find-links "${OPEN3D_WHEEL_DIRECTORY}"',
             "--require-hashes",
             "--no-deps",
             "--only-binary :all:",
@@ -737,7 +733,11 @@ class MacAppPackagingTests(unittest.TestCase):
                 self.assertIn(required, release_inventory)
         self.assertNotIn('--find-links "${DIST_DIR}"', release_inventory)
 
-        self.assertIn("verify_and_copy_offline_dependency_wheels", app_text)
+        locked_install = release_inventory[
+            release_inventory.index('--find-links "${OPEN3D_WHEEL_DIRECTORY}"') :
+        ]
+        self.assertNotIn("--no-index", locked_install.split("-r ", 1)[0])
+        self.assertIn("verify_and_copy_open3d_release_wheel", app_text)
         self.assertIn(
             'for component_wheel in "${FPSAMPLE_WHEEL_PATH}" '
             '"${ACVL_UTILS_WHEEL_PATH}" "${WHEEL_PATH}"; do',
@@ -759,10 +759,39 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("release_build_toolchain.py", app_text)
         self.assertIn("RELEASE_BUILD_TOOLCHAIN", app_text)
         self.assertIn("run_release_component_build.sh", app_text)
+        self.assertIn(
+            "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_INPUTS_REQUIRED", app_text
+        )
+        self.assertIn("TOTALSEGMENTATOR_WRAPPER_MAC_REQUIREMENTS_LOCK", app_text)
+        self.assertIn(
+            "TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_LOCK_METADATA", app_text
+        )
+        self.assertIn(
+            'if [[ "${RELEASE_INPUTS_REQUIRED}" == "1" ]]; then', app_text
+        )
+        self.assertLess(
+            app_text.index('RELEASE_INPUT_READINESS_JSON="$('),
+            app_text.index('RELEASE_BUILD_TOOLCHAIN_PREPARE_JSON="$('),
+            "dependency readiness must not require preparing the signed-build toolchain",
+        )
+        for required in (
+            '--bootstrap-declaration "${RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH}"',
+            '--source-identity "${RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH}"',
+            '--pre-sign-wheel-receipt "${RELEASE_PRE_SIGN_WHEEL_RECEIPT_PATH}"',
+            '--pre-sign-wheel-directory "${RELEASE_PRE_SIGN_WHEEL_DIRECTORY}"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, app_text)
         for required in ("--offline", "--no-index", "--require-hashes", "--no-deps"):
             with self.subTest(required=required):
                 self.assertIn(required, toolchain_text)
         self.assertIn("env -i", runner_text)
+        self.assertIn(
+            "TOTALSEGMENTATOR_WRAPPER_MAC_FPSAMPLE_BUILD_DIR", runner_text
+        )
+        self.assertIn(
+            "TOTALSEGMENTATOR_WRAPPER_MAC_ACVL_UTILS_BUILD_DIR", runner_text
+        )
         self.assertIn("RELEASE_COMPONENT_RUNNER=1", runner_text)
         self.assertIn("SEALED_PATH", runner_text)
         self.assertIn("/usr/bin:/bin:/usr/sbin:/sbin", runner_text)
@@ -773,6 +802,14 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn('"release_build_toolchain"', app_text)
         self.assertIn('"fpsample_pre_sign_wheel_sha256"', app_text)
         self.assertIn("require_release_project_file_unchanged", app_text)
+        self.assertIn(
+            '/usr/bin/xcrun install_name_tool -id "@rpath/libpython3.12.dylib"',
+            app_text,
+        )
+        self.assertNotIn(
+            '"${MACHO_LINKAGE_VERIFY_SCRIPT}" --path "${bundled_libpython}"',
+            app_text,
+        )
         self.assertIn("--project-file", app_text)
         self.assertIn('"project_file_sha256"', app_text)
         self.assertIn('"constraints/pyproject.toml"', app_text)
@@ -784,6 +821,23 @@ class MacAppPackagingTests(unittest.TestCase):
                 self.assertIn("RELEASE_BUILD_TOOLCHAIN_REQUIRED", text)
                 self.assertIn("RELEASE_COMPONENT_RUNNER", text)
                 self.assertIn("-m build --wheel --no-isolation", text)
+
+    def test_release_input_mode_rejects_invalid_value_before_build(self) -> None:
+        environment = dict(os.environ)
+        environment["TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_INPUTS_REQUIRED"] = "yes"
+        completed = subprocess.run(
+            ["/bin/bash", str(BUILD_SCRIPT)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn(
+            "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_INPUTS_REQUIRED must be 0 or 1",
+            completed.stderr,
+        )
 
     def test_release_component_scripts_reject_direct_unsealed_invocation(self) -> None:
         """A release flag alone must not bypass receipt/PATH verification."""
@@ -892,6 +946,12 @@ class MacAppPackagingTests(unittest.TestCase):
             environment = dict(os.environ)
             environment.update(hostile)
             environment["DEVELOPER_DIR"] = str(developer_dir)
+            environment["TOTALSEGMENTATOR_WRAPPER_MAC_FPSAMPLE_BUILD_DIR"] = str(
+                root / "fpsample-build"
+            )
+            environment["TOTALSEGMENTATOR_WRAPPER_MAC_ACVL_UTILS_BUILD_DIR"] = str(
+                root / "acvl-utils-build"
+            )
             completed = subprocess.run(
                 [
                     "/bin/bash",
@@ -941,6 +1001,16 @@ class MacAppPackagingTests(unittest.TestCase):
                     )
             component_values = set(component_log.read_text(encoding="utf-8").splitlines())
             self.assertIn(expected_developer_dir, component_values)
+            self.assertIn(
+                "TOTALSEGMENTATOR_WRAPPER_MAC_FPSAMPLE_BUILD_DIR="
+                f"{root / 'fpsample-build'}",
+                component_values,
+            )
+            self.assertIn(
+                "TOTALSEGMENTATOR_WRAPPER_MAC_ACVL_UTILS_BUILD_DIR="
+                f"{root / 'acvl-utils-build'}",
+                component_values,
+            )
             self.assertIn("LC_ALL=C", component_values)
             self.assertIn("PIP_NO_INDEX=1", component_values)
             self.assertIn("UV_OFFLINE=1", component_values)
@@ -1923,6 +1993,7 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("verify_app_machos", text)
         self.assertIn("verify_wheel_machos", text)
         self.assertIn("verify_app_bundle_macos_linkage", text)
+        self.assertIn("verify_wheel_self_contained_macos_linkage", text)
         self.assertIn("verify_wheel_system_macos_linkage", text)
 
     def test_build_verifies_complete_app_linkage_before_signing(self) -> None:
@@ -1930,7 +2001,7 @@ class MacAppPackagingTests(unittest.TestCase):
         linkage_check = text.index(
             '"${MACHO_LINKAGE_VERIFY_SCRIPT}" --app "${APP_DIR}"'
         )
-        signing = text.index('if [[ "${SKIP_CODESIGN:-0}" != "1" ]]')
+        signing = text.index('if [[ "${SKIP_CODESIGN_VALUE}" != "1" ]]')
         self.assertLess(linkage_check, signing)
 
     def test_bundled_sample1_metadata_does_not_expose_developer_local_paths(self) -> None:

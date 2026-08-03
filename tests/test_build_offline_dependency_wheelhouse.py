@@ -17,6 +17,7 @@ from scripts.build_offline_dependency_wheelhouse import (
     TARGET_PLATFORM,
     TargetHost,
     build_offline_dependency_wheelhouse,
+    inspect_wheel,
     parse_hashed_requirements_lock,
     verify_existing_offline_dependency_wheelhouse,
 )
@@ -214,6 +215,21 @@ class OfflineDependencyWheelhouseTests(unittest.TestCase):
                 (second["output"] / "manifest.json").read_bytes(),  # type: ignore[index,operator]
             )
 
+    def test_wheel_inspection_ignores_vendored_dist_info_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            wheel = Path(temporary) / "setuptools-81.0.0-py3-none-any.whl"
+            self._write_wheel(wheel, name="setuptools", version="81.0.0")
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr(
+                    "setuptools/_vendor/example-1.0.dist-info/METADATA",
+                    "Name: example\nVersion: 1.0\n",
+                )
+
+            identity = inspect_wheel(wheel)
+
+            self.assertEqual(identity.distribution, "setuptools")
+            self.assertEqual(identity.version, "81.0.0")
+
     def test_download_command_is_isolated_hashed_binary_and_target_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = self._fixture(Path(temporary))
@@ -271,16 +287,7 @@ class OfflineDependencyWheelhouseTests(unittest.TestCase):
             shutil.copyfile(fixture["sources"] / "demo-1.0.0-py3-none-any.whl", local / "demo-1.0.0-py3-none-any.whl")  # type: ignore[index,operator]
 
             def local_only_runner(command: list[str], *, cwd: Path, env: dict[str, str]):
-                self.assertIn("--find-links", command)
-                self.assertEqual(
-                    command[command.index("--find-links") + 1], str(local)
-                )
-                destination = Path(command[command.index("--dest") + 1])
-                shutil.copyfile(
-                    local / "demo-1.0.0-py3-none-any.whl",
-                    destination / "demo-1.0.0-py3-none-any.whl",
-                )
-                return subprocess.CompletedProcess(command, 0, "local wheel", "")
+                self.fail("pip must not run when approved local wheels cover the lock")
 
             self._run(
                 fixture,
@@ -291,6 +298,78 @@ class OfflineDependencyWheelhouseTests(unittest.TestCase):
             manifest = json.loads((fixture["output"] / "manifest.json").read_text(encoding="utf-8"))  # type: ignore[index,operator]
             demo = next(item for item in manifest["wheels"] if item["distribution"] == "demo")
             self.assertEqual(demo["source"], "approved-locally-built-wheel")
+
+    def test_network_download_lock_excludes_approved_local_distribution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = self._fixture(root)
+            sources = fixture["sources"]
+            constraints = fixture["constraints"]
+            lock = fixture["lock"]
+            metadata = fixture["metadata"]
+            assert isinstance(sources, Path)
+            assert isinstance(constraints, Path)
+            assert isinstance(lock, Path)
+            assert isinstance(metadata, Path)
+            network_wheel = sources / "network-2.0.0-py3-none-any.whl"
+            network_sha = self._write_wheel(
+                network_wheel, name="network", version="2.0.0"
+            )[0]
+            demo_sha = hashlib.sha256(
+                (sources / "demo-1.0.0-py3-none-any.whl").read_bytes()
+            ).hexdigest()
+            constraints.write_text(
+                "demo==1.0.0\nnetwork==2.0.0\n", encoding="utf-8"
+            )
+            lock.write_text(
+                "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
+                "11111111-1111-4111-8111-111111111111\n"
+                f"demo==1.0.0 --hash=sha256:{demo_sha}\n"
+                f"network==2.0.0 --hash=sha256:{network_sha}\n",
+                encoding="utf-8",
+            )
+            metadata_payload = json.loads(metadata.read_text(encoding="utf-8"))
+            metadata_payload["constraints_sha256"] = hashlib.sha256(
+                constraints.read_bytes()
+            ).hexdigest()
+            metadata_payload["requirements_lock_sha256"] = hashlib.sha256(
+                lock.read_bytes()
+            ).hexdigest()
+            metadata_payload["install_distribution_names"] = ["demo", "network"]
+            metadata.write_text(json.dumps(metadata_payload), encoding="utf-8")
+            local = root / "approved-local"
+            local.mkdir()
+            shutil.copyfile(
+                sources / "demo-1.0.0-py3-none-any.whl",
+                local / "demo-1.0.0-py3-none-any.whl",
+            )
+
+            def mixed_runner(command: list[str], *, cwd: Path, env: dict[str, str]):
+                self.assertNotIn("--find-links", command)
+                download_lock = Path(command[command.index("-r") + 1])
+                content = download_lock.read_text(encoding="utf-8")
+                self.assertNotIn("demo==", content)
+                self.assertIn("network==2.0.0", content)
+                destination = Path(command[command.index("--dest") + 1])
+                shutil.copyfile(network_wheel, destination / network_wheel.name)
+                return subprocess.CompletedProcess(command, 0, "downloaded", "")
+
+            manifest = self._run(
+                fixture,
+                approved_local_wheel_directory=local,
+                download_runner=mixed_runner,
+            )
+            sources_by_name = {
+                entry["distribution"]: entry["source"]
+                for entry in manifest["wheels"]  # type: ignore[index]
+            }
+            self.assertEqual(
+                sources_by_name,
+                {
+                    "demo": "approved-locally-built-wheel",
+                    "network": "downloaded-hashed-wheel",
+                },
+            )
 
     def test_cp311_abi3_wheel_is_accepted_for_cpython312(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

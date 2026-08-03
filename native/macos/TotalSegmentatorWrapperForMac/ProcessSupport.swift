@@ -559,7 +559,7 @@ struct SetupCoordinator {
             return bootstrapRC
         }
 
-        onProgress(.installWheel, "同梱アプリ本体を導入しています。")
+        onProgress(.installWheel, "依存パッケージを取得中です。数分かかることがあります。")
         var setupEnvironment = environment
         setupEnvironment["TOTALSEGMENTATOR_WRAPPER_MAC_SETUP_SUPPRESS_STDOUT_JSON"] = "1"
         let setupRC = runner.run(

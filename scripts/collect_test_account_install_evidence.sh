@@ -799,7 +799,7 @@ dependency_wheelhouse_manifest = bundled_regular_file(
 if release_requires_hashed_lock:
     check(
         "wheel_install_hashed_lock",
-        state.get("wheel_install_mode") == "offline_require_hashes_wheelhouse",
+        state.get("wheel_install_mode") == "network_require_hashes_lock",
         state.get("wheel_install_mode"),
     )
     check(
@@ -879,7 +879,7 @@ else:
     # but its evidence cannot satisfy the release importer contract below.
     check(
         "development_no_lock_wheel_install",
-        state.get("wheel_install_mode") == "offline_local_no_deps",
+        state.get("wheel_install_mode") == "network_constraints_binary_only",
         state.get("wheel_install_mode"),
     )
 native_input_scope = "build-input-before-copy-and-code-sign-v1"

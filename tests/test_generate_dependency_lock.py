@@ -10,12 +10,16 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts import generate_macos_arm64_py312_lock as lock_generator
 from scripts.generate_macos_arm64_py312_lock import (
+    ApprovedRepairedWheelInput,
     LockGenerationError,
     ResolverHost,
     _clean_pip_environment,
     generate_canonical_dependency_lock,
+    load_approved_repaired_wheels,
 )
+from scripts.repair_macos_release_dependency_wheels import WheelSpec
 from scripts.verify_release_input_readiness import (
     CANONICAL_TARGET_COMPATIBILITY,
     verify_canonical_dependency_lock,
@@ -26,6 +30,78 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DependencyLockGeneratorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        repaired = {
+            "open3d": ApprovedRepairedWheelInput(
+                distribution="open3d",
+                version="0.19.0",
+                path=Path("/test/open3d.whl"),
+                sha256=(
+                    "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d"
+                ),
+            ),
+        }
+        loader = patch(
+            "scripts.generate_macos_arm64_py312_lock.load_approved_repaired_wheels",
+            return_value=repaired,
+        )
+        loader.start()
+        self.addCleanup(loader.stop)
+
+    def test_approved_repair_manifest_binds_exact_local_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repair"
+            wheels = root / "wheels"
+            wheels.mkdir(parents=True)
+            open3d = wheels / "open3d.whl"
+            open3d.write_bytes(b"open3d-repaired")
+            open3d_sha = hashlib.sha256(open3d.read_bytes()).hexdigest()
+            specs = {
+                "open3d": (
+                    WheelSpec("open3d", "open3d.whl", "b" * 64, open3d_sha, "open3d.dist-info"),
+                    "0.19.0",
+                    3,
+                ),
+            }
+            manifest = {
+                "schema": lock_generator.REPAIR_SCHEMA,
+                "policy": lock_generator.REPAIR_POLICY,
+                "target": lock_generator.APPROVED_REPAIR_TARGET,
+                "wheel": {
+                    "distribution": "open3d",
+                    "input": {
+                        "filename": specs["open3d"][0].filename,
+                        "sha256": specs["open3d"][0].sha256,
+                    },
+                    "operations": lock_generator.APPROVED_REPAIR_OPERATIONS[
+                        "open3d"
+                    ],
+                    "output": {
+                        "filename": specs["open3d"][0].filename,
+                        "macho_count": specs["open3d"][2],
+                        "sha256": specs["open3d"][0].repaired_sha256,
+                        "size_bytes": open3d.stat().st_size,
+                    },
+                },
+            }
+            (root / "repair-manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            with patch.dict(
+                lock_generator.APPROVED_REPAIRED_WHEEL_SPECS,
+                specs,
+                clear=True,
+            ):
+                approved = load_approved_repaired_wheels(root)
+                self.assertEqual(approved["open3d"].sha256, open3d_sha)
+                open3d.write_bytes(b"tampered")
+                with self.assertRaisesRegex(LockGenerationError, "size mismatch"):
+                    load_approved_repaired_wheels(root)
+
+    def test_approved_repair_directory_is_required(self) -> None:
+        with self.assertRaisesRegex(LockGenerationError, "required"):
+            load_approved_repaired_wheels(None)
+
     def _fixture(self, root: Path) -> tuple[Path, Path, Path, Path, Path]:
         constraints_dir = root / "constraints"
         constraints_dir.mkdir()
@@ -43,7 +119,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             "def validate_safe_command(command):\n"
             "    return command\n\n"
             "def build_locked_dependencies_install_command(venv_python, *, requirements_lock, wheel_directory):\n"
-            "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '-r', str(requirements_lock)]\n"
+            "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '--only-binary', ':all:', '--find-links', str(wheel_directory), '-r', str(requirements_lock)]\n"
             "    validate_safe_command(command)\n"
             "    return command\n\n"
             "def _execute_step(name, command):\n"
@@ -198,6 +274,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
         self.assertIn("--generate-hashes", command)
         self.assertIn("--rebuild", command)
         self.assertIn("--resolver=backtracking", command)
+        self.assertIn("--allow-unsafe", command)
         self.assertIn("--no-config", command)
         self.assertIn("--index-url", command)
         self.assertEqual(command[command.index("--index-url") + 1], "https://pypi.org/simple")
@@ -253,6 +330,11 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             "demo==1.5.0 --hash=sha256:" + "a" * 64 + "\\\n"
             "    --hash=sha256:" + "b" * 64 + "\n"
             "dependency==2.0.0 --hash=sha256:" + "c" * 64 + "\n"
+            "imagecodecs==2026.6.26 --hash=sha256:"
+            "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6\n"
+            "open3d==0.19.0 --hash=sha256:"
+            "9e4a8d29443ba4c83010d199d56c96bf553dd970d3351692ab271759cbe2d7ac\n"
+            "setuptools==81.0.0 --hash=sha256:" + "d" * 64 + "\n"
             + direct_by_name["acvl-utils"]
             + " --hash=sha256:"
             + hashlib.sha256(
@@ -274,6 +356,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             "PIP_TARGET": "/private/hostile-target",
             "PIP_INDEX_URL": "https://hostile.invalid/simple",
             "PIP_CONFIG_FILE": "/private/hostile-pip.conf",
+            "PIP_TOOLS_CACHE_DIR": "/private/hostile-pip-tools-cache",
             "PYTHONPATH": "/private/hostile-pythonpath",
             "PYTHONHOME": "/private/hostile-pythonhome",
             "PYTHONUSERBASE": "/private/hostile-userbase",
@@ -324,7 +407,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             root = Path(tmp)
             constraints, lock, metadata, project, setup_manager = self._fixture(root)
             wheelhouse = self._resolution_wheel_directory(root)
-            pre_sign_receipt = self._pre_sign_wheel_receipt(root, wheelhouse)
             result = generate_canonical_dependency_lock(
                 constraints=constraints,
                 requirements_lock=lock,
@@ -332,7 +414,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 project_file=project,
                 setup_manager_source=setup_manager,
                 bundled_override_wheel_directory=wheelhouse,
-                pre_sign_wheel_receipt=pre_sign_receipt,
                 host=ResolverHost(
                     system="Darwin",
                     machine="arm64",
@@ -397,32 +478,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
 
             self.assertEqual(calls, [])
 
-    def test_requires_pre_sign_wheel_receipt_before_canonical_resolution(self) -> None:
-        """The final lock cannot be used to predict the input wheel hashes."""
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            constraints, lock, metadata, project, setup_manager = self._fixture(root)
-            wheelhouse = self._resolution_wheel_directory(root)
-            calls: list[list[str]] = []
-
-            with self.assertRaisesRegex(LockGenerationError, "pre-sign wheel receipt"):
-                generate_canonical_dependency_lock(
-                    constraints=constraints,
-                    requirements_lock=lock,
-                    lock_metadata=metadata,
-                    project_file=project,
-                    setup_manager_source=setup_manager,
-                    bundled_override_wheel_directory=wheelhouse,
-                    host=self._macos14_host(),
-                    pip_tools_version="7.5.0",
-                    pip_version="25.1.1",
-                    runner=lambda command, **_: calls.append(command),
-                    directory_swap=self._fake_atomic_directory_swap,
-                )
-
-            self.assertEqual(calls, [])
-
     def test_explicit_local_override_constraints_bind_the_resolved_wheels(self) -> None:
         """Equal PyPI candidates must not be able to replace local overrides.
 
@@ -465,6 +520,10 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 output.write_text(
                     "demo==1.5.0 --hash=sha256:" + "a" * 64 + "\n"
                     "dependency==2.0.0 --hash=sha256:" + "b" * 64 + "\n"
+                    "imagecodecs==2026.6.26 --hash=sha256:"
+                    "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6\n"
+                    "open3d==0.19.0 --hash=sha256:"
+                    "9e4a8d29443ba4c83010d199d56c96bf553dd970d3351692ab271759cbe2d7ac\n"
                     + direct_by_name["acvl-utils"]
                     + " --hash=sha256:"
                     + hashlib.sha256(
@@ -492,7 +551,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 project_file=project,
                 setup_manager_source=setup_manager,
                 bundled_override_wheel_directory=wheelhouse,
-                pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                 host=self._macos14_host(),
                 pip_tools_version="7.5.0",
                 pip_version="25.1.1",
@@ -520,8 +578,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             (wheelhouse / "unrelated-9.9.9-py3-none-any.whl").write_bytes(
                 b"not a resolver input"
             )
-            pre_sign_receipt = self._pre_sign_wheel_receipt(root, wheelhouse)
-
             result = generate_canonical_dependency_lock(
                 constraints=constraints,
                 requirements_lock=lock,
@@ -529,7 +585,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 project_file=project,
                 setup_manager_source=setup_manager,
                 bundled_override_wheel_directory=wheelhouse,
-                pre_sign_wheel_receipt=pre_sign_receipt,
                 host=self._macos14_host(),
                 pip_tools_version="7.5.0",
                 pip_version="25.1.1",
@@ -542,14 +597,19 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             self.assertEqual(payload["requirements_lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest())
             self.assertEqual(
                 payload["resolved_distribution_names"],
-                ["acvl-utils", "demo", "dependency", "fpsample"],
+                [
+                    "acvl-utils",
+                    "demo",
+                    "dependency",
+                    "fpsample",
+                    "imagecodecs",
+                    "open3d",
+                    "setuptools",
+                ],
             )
             self.assertEqual(
-                payload["install_distribution_names"], ["demo", "dependency"]
-            )
-            self.assertEqual(
-                payload["bootstrap"]["pre_sign_wheel_receipt_sha256"],
-                hashlib.sha256(pre_sign_receipt.read_bytes()).hexdigest(),
+                payload["install_distribution_names"],
+                ["demo", "dependency", "imagecodecs", "open3d", "setuptools"],
             )
             self.assertEqual(set(payload["excluded_bundled_overrides"]), {
                 "acvl-utils",
@@ -558,6 +618,21 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             self.assertNotIn("acvl-utils==", lock.read_text(encoding="utf-8"))
             self.assertNotIn("fpsample==", lock.read_text(encoding="utf-8"))
             self.assertIn("dependency==2.0.0", lock.read_text(encoding="utf-8"))
+            self.assertIn("setuptools==81.0.0", lock.read_text(encoding="utf-8"))
+            self.assertIn(
+                "imagecodecs==2026.6.26 --hash=sha256:"
+                "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6",
+                lock.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "open3d==0.19.0 --hash=sha256:"
+                "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d",
+                lock.read_text(encoding="utf-8"),
+            )
+            self.assertNotIn(
+                "9e4a8d29443ba4c83010d199d56c96bf553dd970d3351692ab271759cbe2d7ac",
+                lock.read_text(encoding="utf-8"),
+            )
             self.assertEqual(payload["resolver"], {
                 "name": "pip-compile",
                 "version": "7.5.0",
@@ -582,7 +657,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 lock_metadata=metadata,
                 project_file=project,
                 setup_manager_source=setup_manager,
-                pre_sign_wheel_receipt=pre_sign_receipt,
             )
             self.assertEqual(list(root.glob(".constraints.lock-*")), [])
 
@@ -618,7 +692,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
-                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -681,7 +754,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
-                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -723,7 +795,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
-                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -752,7 +823,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
-                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -876,7 +946,6 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
-                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",

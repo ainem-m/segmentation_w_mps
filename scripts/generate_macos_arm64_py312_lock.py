@@ -34,10 +34,11 @@ from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 try:
-    from scripts.release_build_toolchain import (
-        ReleaseBuildToolchainError,
-        load_release_pre_sign_wheel_receipt,
-        verify_release_pre_sign_wheel_receipt,
+    from scripts.repair_macos_release_dependency_wheels import (
+        OPEN3D_SPEC,
+        REPAIR_POLICY,
+        REPAIR_SCHEMA,
+        WheelSpec as RepairedWheelSpec,
     )
     from scripts.verify_release_input_readiness import (
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
@@ -60,10 +61,11 @@ try:
         verify_hashed_requirement_entries,
     )
 except ModuleNotFoundError:  # Direct execution from scripts/.
-    from release_build_toolchain import (  # type: ignore[no-redef]
-        ReleaseBuildToolchainError,
-        load_release_pre_sign_wheel_receipt,
-        verify_release_pre_sign_wheel_receipt,
+    from repair_macos_release_dependency_wheels import (  # type: ignore[no-redef]
+        OPEN3D_SPEC,
+        REPAIR_POLICY,
+        REPAIR_SCHEMA,
+        WheelSpec as RepairedWheelSpec,
     )
     from verify_release_input_readiness import (  # type: ignore[no-redef]
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
@@ -132,6 +134,39 @@ class BundledOverrideResolutionInput:
     wheel_metadata_sha256: str
 
 
+@dataclass(frozen=True)
+class ApprovedRepairedWheelInput:
+    distribution: str
+    version: str
+    path: Path
+    sha256: str
+
+
+APPROVED_REPAIRED_WHEEL_SPECS: Mapping[str, tuple[RepairedWheelSpec, str, int]] = {
+    "open3d": (OPEN3D_SPEC, "0.19.0", 3),
+}
+APPROVED_REPAIR_TARGET = {
+    "architecture": "arm64",
+    "maximum_macos": "14.0",
+    "python": "3.12",
+}
+APPROVED_REPAIR_OPERATIONS: Mapping[str, Mapping[str, object]] = {
+    "open3d": {
+        "ad_hoc_signatures": 3,
+        "codesign_identity": "-",
+        "codesign_timestamp": None,
+        "dependency_rewrites": 0,
+        "lc_id_rewrites": 1,
+        "metadata_edits": ["open3d/_build_config.py"],
+        "removed_members": [
+            "open3d/cpu/open3d_tf_ops.dylib",
+            "open3d/cpu/open3d_torch_ops.dylib",
+        ],
+        "rpaths_deleted": 2,
+    },
+}
+
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 DirectorySwap = Callable[[Path, Path], None]
 
@@ -185,6 +220,127 @@ def _require_clean_directory(path: Path, label: str) -> None:
 
 def _normalize_distribution_name(value: str) -> str:
     return value.lower().replace("_", "-").replace(".", "-")
+
+
+def load_approved_repaired_wheels(
+    repair_directory: Path | None,
+) -> dict[str, ApprovedRepairedWheelInput]:
+    """Validate the exact deterministic Open3D rewrite and its manifest."""
+
+    if repair_directory is None:
+        raise LockGenerationError(
+            "the exact approved repaired-wheel directory is required"
+        )
+    repair_directory = _absolute(repair_directory)
+    _require_clean_directory(repair_directory, "approved repaired-wheel directory")
+    manifest_path = repair_directory / "repair-manifest.json"
+    wheel_directory = repair_directory / "wheels"
+    _require_regular_non_symlink(manifest_path, "approved wheel repair manifest")
+    _require_clean_directory(wheel_directory, "approved repaired-wheel payload directory")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise LockGenerationError(f"approved wheel repair manifest is invalid: {exc}") from exc
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "schema",
+        "policy",
+        "target",
+        "wheel",
+    }:
+        raise LockGenerationError("approved wheel repair manifest field set mismatch")
+    if manifest.get("schema") != REPAIR_SCHEMA or manifest.get("policy") != REPAIR_POLICY:
+        raise LockGenerationError("approved wheel repair manifest identity mismatch")
+    if manifest.get("target") != APPROVED_REPAIR_TARGET:
+        raise LockGenerationError("approved wheel repair target mismatch")
+    wheel_entry = manifest.get("wheel")
+    if not isinstance(wheel_entry, dict):
+        raise LockGenerationError("approved wheel repair manifest inventory mismatch")
+
+    result: dict[str, ApprovedRepairedWheelInput] = {}
+    for entry in (wheel_entry,):
+        if not isinstance(entry, dict) or set(entry) != {
+            "distribution",
+            "input",
+            "operations",
+            "output",
+        }:
+            raise LockGenerationError("approved wheel repair entry field set mismatch")
+        distribution = entry.get("distribution")
+        if not isinstance(distribution, str) or distribution in result:
+            raise LockGenerationError(
+                "approved wheel repair distribution is invalid or duplicated"
+            )
+        expected = APPROVED_REPAIRED_WHEEL_SPECS.get(distribution)
+        if expected is None:
+            raise LockGenerationError(
+                f"approved wheel repair contains an unexpected distribution: {distribution}"
+            )
+        spec, version, macho_count = expected
+        input_entry = entry.get("input")
+        output_entry = entry.get("output")
+        if not isinstance(input_entry, dict) or set(input_entry) != {"filename", "sha256"}:
+            raise LockGenerationError(
+                f"approved wheel repair input is invalid: {distribution}"
+            )
+        if input_entry != {"filename": spec.filename, "sha256": spec.sha256}:
+            raise LockGenerationError(
+                f"approved wheel repair input identity mismatch: {distribution}"
+            )
+        if entry.get("operations") != APPROVED_REPAIR_OPERATIONS[distribution]:
+            raise LockGenerationError(
+                f"approved wheel repair operations mismatch: {distribution}"
+            )
+        if not isinstance(output_entry, dict) or set(output_entry) != {
+            "filename",
+            "macho_count",
+            "sha256",
+            "size_bytes",
+        }:
+            raise LockGenerationError(
+                f"approved wheel repair output is invalid: {distribution}"
+            )
+        if (
+            output_entry.get("filename") != spec.filename
+            or output_entry.get("macho_count") != macho_count
+            or output_entry.get("sha256") != spec.repaired_sha256
+            or type(output_entry.get("size_bytes")) is not int
+            or int(output_entry["size_bytes"]) <= 0
+        ):
+            raise LockGenerationError(
+                f"approved wheel repair output identity mismatch: {distribution}"
+            )
+        wheel = wheel_directory / spec.filename
+        _require_regular_non_symlink(wheel, f"approved repaired wheel for {distribution}")
+        if wheel.stat().st_size != output_entry["size_bytes"]:
+            raise LockGenerationError(
+                f"approved repaired wheel size mismatch: {distribution}"
+            )
+        if _sha256_file(wheel) != spec.repaired_sha256:
+            raise LockGenerationError(
+                f"approved repaired wheel SHA-256 mismatch: {distribution}"
+            )
+        result[distribution] = ApprovedRepairedWheelInput(
+            distribution=distribution,
+            version=version,
+            path=wheel,
+            sha256=spec.repaired_sha256,
+        )
+
+    if set(result) != set(APPROVED_REPAIRED_WHEEL_SPECS):
+        raise LockGenerationError("approved wheel repair distribution set mismatch")
+    try:
+        wheel_children = list(wheel_directory.iterdir())
+    except OSError as exc:
+        raise LockGenerationError(
+            f"approved repaired-wheel payload directory is unreadable: {exc}"
+        ) from exc
+    if {child.name for child in wheel_children} != {
+        item.path.name for item in result.values()
+    }:
+        raise LockGenerationError(
+            "approved repaired-wheel payload directory contains unexpected entries"
+        )
+    return result
 
 
 def _wheel_header_values(payload: str, field: str) -> list[str]:
@@ -272,13 +428,8 @@ def _validate_bundled_override_resolution_wheel(
 
 def resolve_bundled_override_resolution_wheels(
     wheel_directory: Path | None,
-    pre_sign_wheel_receipt: Path | None,
-) -> tuple[dict[str, BundledOverrideResolutionInput], dict[str, object], str]:
-    """Require receipt-bound local wheels for the canonical resolver phase.
-
-    The wheel hashes originate after the explicit bootstrap component builds;
-    canonical lock metadata must never be asked to predict them first.
-    """
+) -> dict[str, BundledOverrideResolutionInput]:
+    """Require exact local override wheels for the canonical resolver phase."""
 
     if wheel_directory is None:
         raise LockGenerationError(
@@ -288,46 +439,13 @@ def resolve_bundled_override_resolution_wheels(
     _require_clean_directory(
         wheel_directory, "bundled override resolution wheel directory"
     )
-    # Validate the two concrete local artifacts before looking at their
-    # receipt.  This keeps a missing/unsafe/wrong wheel a direct, actionable
-    # error rather than masking it behind a later handoff artifact, while the
-    # receipt remains mandatory before any resolver can be invoked.
-    resolution_inputs = {
+    return {
         name: _validate_bundled_override_resolution_wheel(
             name,
             wheel_directory / str(spec["filename"]),
         )
         for name, spec in sorted(BUNDLED_OVERRIDE_SPECS.items())
     }
-    if pre_sign_wheel_receipt is None:
-        raise LockGenerationError(
-            "a sealed pre-sign wheel receipt is required before canonical dependency resolution"
-        )
-    try:
-        receipt, receipt_sha256 = load_release_pre_sign_wheel_receipt(
-            pre_sign_wheel_receipt
-        )
-        verified_receipt = verify_release_pre_sign_wheel_receipt(
-            pre_sign_wheel_receipt_path=pre_sign_wheel_receipt,
-            wheel_directory=wheel_directory,
-        )
-    except ReleaseBuildToolchainError as exc:
-        raise LockGenerationError(f"pre-sign wheel receipt is invalid: {exc}") from exc
-    if receipt != {key: value for key, value in verified_receipt.items() if key != "pre_sign_wheel_receipt_sha256"}:
-        raise LockGenerationError("pre-sign wheel receipt verification is inconsistent")
-    wheels = receipt.get("wheels")
-    assert isinstance(wheels, dict)
-    for name, item in resolution_inputs.items():
-        expected = wheels.get(name)
-        if not isinstance(expected, dict) or (
-            item.sha256 != expected.get("sha256")
-            or item.metadata_sha256 != expected.get("metadata_sha256")
-            or item.wheel_metadata_sha256 != expected.get("wheel_metadata_sha256")
-        ):
-            raise LockGenerationError(
-                f"pre-sign wheel receipt does not bind the local resolver wheel: {name}"
-            )
-    return resolution_inputs, receipt, receipt_sha256
 
 
 def _stage_bundled_override_resolution_wheels(
@@ -514,6 +632,11 @@ def build_pip_compile_command(
         "piptools",
         "compile",
         "--generate-hashes",
+        # setuptools is a runtime dependency of resolved product wheels (for
+        # example Dash and PyTorch), even though pip-tools classifies it as an
+        # "unsafe" packaging tool by default.  The end-user venv is clean, so
+        # omitting it produces a lock that installs but fails ``pip check``.
+        "--allow-unsafe",
         "--rebuild",
         "--resolver=backtracking",
         "--no-config",
@@ -544,10 +667,14 @@ def build_pip_compile_command(
     return command
 
 
-def _clean_pip_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+def _clean_pip_environment(
+    environment: Mapping[str, str] | None = None,
+    *,
+    pip_tools_cache_dir: Path | None = None,
+) -> dict[str, str]:
     result = dict(os.environ if environment is None else environment)
     for key in tuple(result):
-        if key.upper().startswith("PIP_"):
+        if key.upper().startswith(("PIP_", "PIP_TOOLS_")):
             result.pop(key, None)
     for key in (
         "PYTHONPATH",
@@ -567,6 +694,8 @@ def _clean_pip_environment(environment: Mapping[str, str] | None = None) -> dict
             "PYTHONNOUSERSITE": "1",
         }
     )
+    if pip_tools_cache_dir is not None:
+        result["PIP_TOOLS_CACHE_DIR"] = str(pip_tools_cache_dir)
     return result
 
 
@@ -783,6 +912,69 @@ def _strip_bundled_override_requirement_blocks(
     return sorted(full_names), sorted(install_names)
 
 
+def _replace_approved_repaired_wheel_hashes(
+    *,
+    install_lock: Path,
+    approved_repaired_wheels: Mapping[str, ApprovedRepairedWheelInput],
+) -> None:
+    """Replace every public fallback hash for the two repaired wheel pins.
+
+    ``pip-compile`` emits hashes for every artifact published for a version,
+    including the two reviewed-but-unusable upstream macOS wheels.  The
+    release lock must permit only the deterministic local repaired bytes.
+    """
+
+    if set(approved_repaired_wheels) != set(APPROVED_REPAIRED_WHEEL_SPECS):
+        raise LockGenerationError("approved repaired-wheel set is incomplete")
+    rewritten: list[str] = []
+    observed: set[str] = set()
+    for line in _logical_requirement_lines(install_lock):
+        name, version = _requirement_name_and_version(line)
+        approved = approved_repaired_wheels.get(name)
+        if approved is None:
+            rewritten.append(line)
+            continue
+        if name in observed:
+            raise LockGenerationError(
+                f"generated install lock duplicates repaired distribution: {name}"
+            )
+        observed.add(name)
+        spec, expected_version, _macho_count = APPROVED_REPAIRED_WHEEL_SPECS[name]
+        if version != expected_version or approved.version != expected_version:
+            raise LockGenerationError(
+                f"generated install lock repaired distribution version mismatch: {name}"
+            )
+        hashes = set(_LOCK_HASH.findall(line + " "))
+        if spec.sha256 not in hashes:
+            raise LockGenerationError(
+                "generated install lock does not contain the exact reviewed upstream "
+                f"wheel hash for {name}"
+            )
+        requirement = line.split(" --hash=", 1)[0].strip()
+        rewritten.append(f"{requirement} --hash=sha256:{approved.sha256}")
+    if observed != set(APPROVED_REPAIRED_WHEEL_SPECS):
+        raise LockGenerationError(
+            "generated install lock omits an approved repaired distribution: "
+            + ", ".join(sorted(set(APPROVED_REPAIRED_WHEEL_SPECS) - observed))
+        )
+    install_lock.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    try:
+        verify_hashed_requirement_entries(install_lock)
+    except ReleaseInputReadinessError as exc:
+        raise LockGenerationError(
+            f"repaired-wheel hash replacement produced an invalid lock: {exc}"
+        ) from exc
+    for line in _logical_requirement_lines(install_lock):
+        name = _requirement_name(line)
+        approved = approved_repaired_wheels.get(name)
+        if approved is not None and set(_LOCK_HASH.findall(line + " ")) != {
+            approved.sha256
+        }:
+            raise LockGenerationError(
+                f"generated install lock retains a fallback hash for {name}"
+            )
+
+
 def _distribution_names_from_constraints(path: Path) -> list[str]:
     try:
         names = [_requirement_name(line) for line in _logical_requirement_lines(path)]
@@ -827,22 +1019,12 @@ def _metadata_for(
     resolved_distribution_names: list[str],
     install_distribution_names: list[str],
     resolution_inputs: Mapping[str, BundledOverrideResolutionInput],
-    pre_sign_wheel_receipt: Mapping[str, object],
-    pre_sign_wheel_receipt_sha256: str,
     generation_id: str,
     host: ResolverHost,
     pip_version: str,
 ) -> dict[str, Any]:
     return {
         "schema": LOCK_SCHEMA,
-        "bootstrap": {
-            "schema": "totalsegmentator_wrapper_mac.dependency_lock_bootstrap_binding.v1",
-            "source_identity_sha256": pre_sign_wheel_receipt[
-                "source_identity_sha256"
-            ],
-            "sealed_toolchain": pre_sign_wheel_receipt["sealed_toolchain"],
-            "pre_sign_wheel_receipt_sha256": pre_sign_wheel_receipt_sha256,
-        },
         "generation_id": generation_id,
         "constraints_sha256": _sha256_file(constraints),
         "project_file": project_file.name,
@@ -1072,7 +1254,7 @@ def generate_canonical_dependency_lock(
     project_file: Path = DEFAULT_PROJECT_FILE,
     setup_manager_source: Path = DEFAULT_SETUP_MANAGER_SOURCE,
     bundled_override_wheel_directory: Path | None = None,
-    pre_sign_wheel_receipt: Path | None = None,
+    approved_repair_directory: Path | None = None,
     host: ResolverHost | None = None,
     pip_tools_version: str | None = None,
     pip_version: str | None = None,
@@ -1124,12 +1306,11 @@ def generate_canonical_dependency_lock(
         project_file=project_file,
         setup_manager_source=setup_manager_source,
     )
-    (
-        resolution_inputs,
-        verified_pre_sign_wheel_receipt,
-        pre_sign_wheel_receipt_sha256,
-    ) = resolve_bundled_override_resolution_wheels(
-        bundled_override_wheel_directory, pre_sign_wheel_receipt
+    resolution_inputs = resolve_bundled_override_resolution_wheels(
+        bundled_override_wheel_directory
+    )
+    approved_repaired_wheels = load_approved_repaired_wheels(
+        approved_repair_directory
     )
     source_constraints_sha256 = _sha256_file(constraints)
     source_project_file_sha256 = _sha256_file(project_file)
@@ -1138,6 +1319,8 @@ def generate_canonical_dependency_lock(
         prefix=".dependency-lock-compile-", dir=constraints_dir.parent
     ) as temporary:
         temporary_dir = Path(temporary)
+        pip_tools_cache_dir = temporary_dir / "pip-tools-cache"
+        pip_tools_cache_dir.mkdir()
         generated_lock = temporary_dir / requirements_lock.name
         complete_resolved_lock = temporary_dir / "complete-resolved.requirements.lock"
         staged_resolution_wheels = _stage_bundled_override_resolution_wheels(
@@ -1164,7 +1347,7 @@ def generate_canonical_dependency_lock(
         completed = runner(
             command,
             cwd=project_file.parent,
-            env=_clean_pip_environment(),
+            env=_clean_pip_environment(pip_tools_cache_dir=pip_tools_cache_dir),
             capture_output=True,
             text=True,
             check=False,
@@ -1191,6 +1374,10 @@ def generate_canonical_dependency_lock(
                 install_lock=generated_lock,
             )
         )
+        _replace_approved_repaired_wheel_hashes(
+            install_lock=generated_lock,
+            approved_repaired_wheels=approved_repaired_wheels,
+        )
         generation_id = str(uuid4())
         _prepend_generation_marker(generated_lock, generation_id)
         generated_metadata = temporary_dir / lock_metadata.name
@@ -1201,8 +1388,6 @@ def generate_canonical_dependency_lock(
             resolved_distribution_names=resolved_distribution_names,
             install_distribution_names=install_distribution_names,
             resolution_inputs=resolution_inputs,
-            pre_sign_wheel_receipt=verified_pre_sign_wheel_receipt,
-            pre_sign_wheel_receipt_sha256=pre_sign_wheel_receipt_sha256,
             generation_id=generation_id,
             host=resolver_host,
             pip_version=actual_pip_version,
@@ -1215,7 +1400,6 @@ def generate_canonical_dependency_lock(
                 lock_metadata=generated_metadata,
                 project_file=project_file,
                 setup_manager_source=setup_manager_source,
-                pre_sign_wheel_receipt=pre_sign_wheel_receipt,
             )
         except ReleaseInputReadinessError as exc:
             raise LockGenerationError(
@@ -1258,12 +1442,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--pre-sign-wheel-receipt",
+        "--approved-repair-directory",
         type=Path,
         required=True,
         help=(
-            "sealed receipt emitted after the fpsample and acvl-utils bootstrap "
-            "builds; binds their pre-sign wheel bytes before lock generation"
+            "directory containing repair-manifest.json and the exact "
+            "deterministically rewritten Open3D wheel"
         ),
     )
     return parser
@@ -1279,7 +1463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_file=args.project_file,
             setup_manager_source=args.setup_manager_source,
             bundled_override_wheel_directory=args.bundled_override_wheel_directory,
-            pre_sign_wheel_receipt=args.pre_sign_wheel_receipt,
+            approved_repair_directory=args.approved_repair_directory,
         )
     except LockGenerationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

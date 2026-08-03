@@ -1128,19 +1128,19 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertIn("dependency_set_id_changed", PROCESS)
         self.assertIn("installed_bundled_dependency_missing_or_invalid", PROCESS)
 
-    def test_setup_pip_bootstrap_is_forced_offline(self):
+    def test_setup_pip_bootstrap_is_isolated_without_blocking_index_access(self):
         launch_environment = body(COMMANDS, "static func launchEnvironment")
         bootstrap = body(COMMANDS, "static func bootstrapInstallCommand")
 
-        self.assertIn('env["PIP_NO_INDEX"] = "1"', launch_environment)
-        self.assertIn('"--no-index"', bootstrap)
+        self.assertNotIn('env["PIP_NO_INDEX"] = "1"', launch_environment)
+        self.assertNotIn('"--no-index"', bootstrap)
         self.assertIn('"--no-deps"', bootstrap)
         self.assertIn(
-            'onProgress(.installWheel, "同梱アプリ本体を導入しています。")',
+            'onProgress(.installWheel, "依存パッケージを取得中です。数分かかることがあります。")',
             PROCESS,
         )
 
-    def test_public_setup_copy_says_only_model_weights_use_network(self):
+    def test_public_setup_copy_says_dependencies_and_models_use_network(self):
         surfaces = {
             relative: (ROOT / relative).read_text(encoding="utf-8")
             for relative in (
@@ -1151,13 +1151,9 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         }
         for relative, surface in surfaces.items():
             with self.subTest(relative=relative):
-                self.assertIn("Python依存はアプリに同梱", surface)
-                self.assertIn(
-                    "セットアップ中にネットワークを使用するのはモデルweightの取得だけ",
-                    surface,
-                )
-                self.assertNotIn("Pythonパッケージとモデルweight取得", surface)
-                self.assertNotIn("Python依存とモデルweightを取得", surface)
+                self.assertIn("binary wheel", surface)
+                self.assertTrue("モデルweight" in surface or "モデル" in surface)
+                self.assertNotIn("ネットワークを使わずに導入", surface)
 
     def test_wheel_resync_uses_the_same_cross_process_setup_lock(self):
         resync = body(PROCESS, "static func resyncWheel")

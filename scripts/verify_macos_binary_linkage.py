@@ -3,14 +3,18 @@
 
 This is intentionally narrower than a general Mach-O parser.  It consumes the
 ``otool`` view used by the macOS release build and fails closed.  Standalone
-binaries and wheels may link only libraries supplied by macOS itself.  A
-complete app bundle may additionally use tokenized install names which resolve
-to existing Mach-O files inside that same app's ``Contents`` directory.
+binaries and project-bundled or project-rewritten wheels are subject to strict
+linkage checks.  A complete app bundle may additionally use tokenized install
+names which resolve to existing Mach-O files inside that same app's
+``Contents`` directory.  Hash-pinned, unmodified upstream wheels have a
+separate compatibility boundary with exact, documented warning exceptions.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import stat
@@ -18,6 +22,8 @@ import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Callable, Sequence
@@ -50,10 +56,50 @@ MAX_WHEEL_NATIVE_MEMBER_BYTES = 1024 * 1024 * 1024
 MAX_WHEEL_TOTAL_NATIVE_BYTES = 4 * 1024 * 1024 * 1024
 SWIFT_SYSTEM_RPATH = Path("/usr/lib/swift")
 SWIFT_SYSTEM_DYLIB = re.compile(r"^libswift[A-Za-z0-9_.+-]*\.dylib$")
+KNOWN_UPSTREAM_WHEEL_LINKAGE_WARNINGS = {
+    (
+        "imagecodecs",
+        "2026.6.26",
+        "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6",
+    ): {
+        "kind": "absolute-lc-id-dylib",
+        "required_fragment": "/DLC/imagecodecs/.dylibs/",
+        "message": (
+            "The unmodified official imagecodecs wheel uses absolute LC_ID_DYLIB "
+            "values under /DLC/imagecodecs/.dylibs/. Runtime import is required; "
+            "the warning does not relax strict checks for bundled or rewritten wheels."
+        ),
+    }
+}
 
 
 class MacOSBinaryLinkageError(RuntimeError):
     """The binary has a dependency that must not enter the release bundle."""
+
+
+@dataclass(frozen=True)
+class UpstreamWheelCompatibility:
+    """Compatibility result for one hash-pinned, unmodified official wheel."""
+
+    distribution: str
+    version: str
+    sha256: str
+    native_member_count: int
+    strict_linkage: str
+    warnings: tuple[dict[str, str], ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "distribution": self.distribution,
+            "version": self.version,
+            "sha256": self.sha256,
+            "binary_only": True,
+            "architecture": "arm64",
+            "maximum_macos": "14.0",
+            "native_member_count": self.native_member_count,
+            "strict_linkage": self.strict_linkage,
+            "warnings": list(self.warnings),
+        }
 
 
 @dataclass(frozen=True)
@@ -485,7 +531,11 @@ def _resolve_bundle_rpaths(
     return tuple(resolved)
 
 
-def _validate_bundle_install_name(value: str | None, *, binary: Path) -> None:
+def _validate_bundle_install_name(
+    value: str | None,
+    *,
+    binary: Path,
+) -> None:
     if value is None:
         return
     for token in ("@loader_path", "@executable_path", "@rpath"):
@@ -1053,6 +1103,257 @@ def verify_wheel_system_macos_linkage(
         return tuple(labels)
 
 
+def verify_wheel_self_contained_macos_linkage(
+    wheel: Path,
+    *,
+    runner: Runner = subprocess.run,
+) -> tuple[str, ...]:
+    """Verify that every Mach-O dependency in a wheel resolves internally or to macOS.
+
+    Unlike ``verify_wheel_system_macos_linkage``, this permits relocatable
+    ``@loader_path`` and ``@rpath`` references only when their targets are
+    regular Mach-O members of the same wheel.  Every native member is checked
+    as a possible load root so an otherwise unreferenced payload cannot hide an
+    external dependency.
+    """
+
+    if not wheel.is_file() or wheel.is_symlink():
+        raise MacOSBinaryLinkageError(
+            f"wheel must be a regular non-symlink file: {wheel}"
+        )
+    try:
+        wheel_metadata = wheel.lstat()
+    except OSError as exc:
+        raise MacOSBinaryLinkageError(f"could not inspect wheel: {exc}") from exc
+    if not stat.S_ISREG(wheel_metadata.st_mode):
+        raise MacOSBinaryLinkageError(f"wheel must be a regular file: {wheel}")
+
+    try:
+        archive_context = zipfile.ZipFile(wheel)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise MacOSBinaryLinkageError(f"invalid wheel ZIP: {wheel}: {exc}") from exc
+    with archive_context as archive:
+        infos = archive.infolist()
+        seen: set[PurePosixPath] = set()
+        native_infos: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
+        total_native_bytes = 0
+        for info in infos:
+            relative = _safe_wheel_member_path(info.filename)
+            if relative in seen:
+                raise MacOSBinaryLinkageError(
+                    f"wheel contains a duplicate member path: {info.filename}"
+                )
+            seen.add(relative)
+            if _zip_member_is_symlink(info):
+                raise MacOSBinaryLinkageError(
+                    f"wheel must not contain symlink members: {info.filename}"
+                )
+            if info.is_dir():
+                continue
+            try:
+                with archive.open(info) as source:
+                    prefix = source.read(4)
+            except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                raise MacOSBinaryLinkageError(
+                    f"could not inspect wheel member {info.filename}: {exc}"
+                ) from exc
+            if prefix not in MACHO_MAGICS:
+                continue
+            if info.file_size > MAX_WHEEL_NATIVE_MEMBER_BYTES:
+                raise MacOSBinaryLinkageError(
+                    f"wheel native member exceeds size limit: {info.filename}"
+                )
+            total_native_bytes += info.file_size
+            if total_native_bytes > MAX_WHEEL_TOTAL_NATIVE_BYTES:
+                raise MacOSBinaryLinkageError(
+                    f"wheel native members exceed total size limit: {wheel}"
+                )
+            native_infos.append((info, relative))
+
+        labels: list[str] = []
+        failures: list[str] = []
+        with _owned_temporary_directory(
+            "totalsegmentator-wrapper-wheel-contained-linkage."
+        ) as temporary:
+            staging = Path(temporary).resolve(strict=True)
+            extracted: dict[Path, str] = {}
+            for info, relative in native_infos:
+                label = f"{wheel}!/{info.filename}"
+                destination = staging.joinpath(*relative.parts)
+                try:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    _extract_wheel_member(archive, info, destination)
+                except (MacOSBinaryLinkageError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                    failures.append(f"{label}: {exc}")
+                    continue
+                extracted[destination.resolve(strict=True)] = label
+                labels.append(label)
+
+            metadata: dict[Path, _BundleBinaryMetadata] = {}
+            for binary, label in extracted.items():
+                try:
+                    info = _bundle_binary_metadata(binary, runner=runner)
+                    executable_token_values = (
+                        *info.dependencies,
+                        *info.rpath_values,
+                    )
+                    if any(
+                        value == "@executable_path"
+                        or value.startswith("@executable_path/")
+                        for value in executable_token_values
+                    ):
+                        raise MacOSBinaryLinkageError(
+                            "wheel Mach-O must not use @executable_path outside a "
+                            f"known interpreter context: {binary}"
+                        )
+                    metadata[binary] = info
+                except (MacOSBinaryLinkageError, OSError, RuntimeError) as exc:
+                    failures.append(f"{label}: {exc}")
+
+            if not failures:
+                for binary, label in extracted.items():
+                    try:
+                        verifier = _EntrypointDependencyVerifier(
+                            root_executable=binary,
+                            contents=staging,
+                            metadata=metadata,
+                        )
+                        verifier.verify()
+                    except (
+                        MacOSBinaryLinkageError,
+                        OSError,
+                        RuntimeError,
+                        RecursionError,
+                    ) as exc:
+                        failures.append(f"{label}: {exc}")
+        if failures:
+            raise MacOSBinaryLinkageError(
+                "self-contained wheel linkage verification failed:\n"
+                + "\n".join(failures)
+            )
+        return tuple(labels)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _wheel_name_and_version(wheel: Path) -> tuple[str, str]:
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            metadata_members = [
+                info
+                for info in archive.infolist()
+                if info.filename.count("/") == 1
+                and info.filename.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_members) != 1:
+                raise MacOSBinaryLinkageError(
+                    "official wheel must contain exactly one top-level dist-info/METADATA"
+                )
+            message = BytesParser(policy=email_policy).parsebytes(
+                archive.read(metadata_members[0])
+            )
+    except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
+        raise MacOSBinaryLinkageError(f"invalid official wheel metadata: {exc}") from exc
+    name = message.get("Name")
+    version = message.get("Version")
+    if not name or not version:
+        raise MacOSBinaryLinkageError("official wheel metadata has no Name or Version")
+    return name, version
+
+
+def _only_known_upstream_linkage_warning(
+    error: MacOSBinaryLinkageError,
+    *,
+    policy: dict[str, str],
+) -> bool:
+    lines = [line for line in str(error).splitlines()[1:] if line.strip()]
+    return bool(lines) and all(
+        "LC_ID_DYLIB must use an app-relative dyld token" in line
+        and policy["required_fragment"] in line
+        for line in lines
+    )
+
+
+def verify_unmodified_official_wheel_macos_compatibility(
+    wheel: Path,
+    *,
+    distribution: str,
+    version: str,
+    expected_sha256: str,
+    runner: Runner = subprocess.run,
+) -> UpstreamWheelCompatibility:
+    """Verify the release boundary for a hash-pinned upstream binary wheel.
+
+    The strict self-contained gate remains mandatory for app-bundled and
+    project-rewritten native artifacts.  An unmodified official wheel is
+    instead bound to exact bytes and checked for arm64/macOS 14 compatibility.
+    Only an exact, documented upstream warning may be downgraded; every other
+    linkage finding remains fatal.  Dependency resolution and imports are
+    verified after installation by run_setup and pip check.
+    """
+
+    if not wheel.is_file() or wheel.is_symlink():
+        raise MacOSBinaryLinkageError(
+            f"official wheel must be a regular non-symlink file: {wheel}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise MacOSBinaryLinkageError("expected official wheel SHA-256 is invalid")
+    actual_sha256 = _sha256_file(wheel)
+    if actual_sha256 != expected_sha256:
+        raise MacOSBinaryLinkageError(
+            f"official wheel SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
+        )
+    actual_distribution, actual_version = _wheel_name_and_version(wheel)
+    normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+    if normalize(actual_distribution) != normalize(distribution) or actual_version != version:
+        raise MacOSBinaryLinkageError(
+            "official wheel metadata identity does not match the release policy: "
+            f"{actual_distribution}=={actual_version}"
+        )
+
+    try:
+        from scripts.verify_macos_deployment_target import verify_wheel_machos
+    except ImportError:  # pragma: no cover - direct script execution
+        from verify_macos_deployment_target import verify_wheel_machos  # type: ignore[no-redef]
+
+    deployed = verify_wheel_machos(
+        wheel,
+        maximum_macos="14.0",
+        require_arm64=True,
+    )
+    warnings: tuple[dict[str, str], ...] = ()
+    strict_linkage = "pass"
+    try:
+        verify_wheel_self_contained_macos_linkage(wheel, runner=runner)
+    except MacOSBinaryLinkageError as exc:
+        policy = KNOWN_UPSTREAM_WHEEL_LINKAGE_WARNINGS.get(
+            (normalize(distribution), version, actual_sha256)
+        )
+        if policy is None or not _only_known_upstream_linkage_warning(exc, policy=policy):
+            raise
+        strict_linkage = "known-upstream-warning"
+        warnings = (
+            {
+                "kind": policy["kind"],
+                "message": policy["message"],
+            },
+        )
+    return UpstreamWheelCompatibility(
+        distribution=actual_distribution,
+        version=actual_version,
+        sha256=actual_sha256,
+        native_member_count=len(deployed),
+        strict_linkage=strict_linkage,
+        warnings=warnings,
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reject non-system dylib dependencies and LC_RPATH in macOS binaries."
@@ -1060,12 +1361,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--path", type=Path, action="append", default=[])
     parser.add_argument("--wheel", type=Path, action="append", default=[])
     parser.add_argument("--app", type=Path, action="append", default=[])
+    parser.add_argument("--official-wheel", type=Path)
+    parser.add_argument("--official-wheel-distribution")
+    parser.add_argument("--official-wheel-version")
+    parser.add_argument("--official-wheel-sha256")
+    parser.add_argument("--report-json", type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    if not args.path and not args.wheel and not args.app:
+    if not args.path and not args.wheel and not args.app and args.official_wheel is None:
         raise MacOSBinaryLinkageError(
             "at least one of --path, --wheel, or --app is required"
         )
@@ -1084,6 +1390,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         members = verify_app_bundle_macos_linkage(candidate)
         print(
             f"PASS {candidate}: {len(members)} in-bundle Mach-O file(s) have safe resolved dependencies"
+        )
+    official_values = (
+        args.official_wheel_distribution,
+        args.official_wheel_version,
+        args.official_wheel_sha256,
+    )
+    if args.official_wheel is not None:
+        if not all(official_values):
+            raise MacOSBinaryLinkageError(
+                "official wheel verification requires distribution, version, and SHA-256"
+            )
+        report = verify_unmodified_official_wheel_macos_compatibility(
+            args.official_wheel.expanduser(),
+            distribution=args.official_wheel_distribution,
+            version=args.official_wheel_version,
+            expected_sha256=args.official_wheel_sha256,
+        )
+        payload = report.as_dict()
+        if args.report_json is not None:
+            destination = args.report_json.expanduser()
+            if destination.exists() or destination.is_symlink():
+                raise MacOSBinaryLinkageError(
+                    f"report destination already exists: {destination}"
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        print(json.dumps(payload, sort_keys=True))
+    elif any(official_values) or args.report_json is not None:
+        raise MacOSBinaryLinkageError(
+            "official wheel metadata and report options require --official-wheel"
         )
     return 0
 

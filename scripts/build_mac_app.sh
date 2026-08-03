@@ -37,10 +37,11 @@ DICOM_NORMALIZER_ARTIFACT_VERIFY_SCRIPT="${ROOT}/scripts/verify_dicom_normalizer
 RELEASE_INPUT_READINESS_SCRIPT="${ROOT}/scripts/verify_release_input_readiness.py"
 RELEASE_BUILD_TOOLCHAIN_SCRIPT="${ROOT}/scripts/release_build_toolchain.py"
 RELEASE_COMPONENT_BUILD_RUNNER="${ROOT}/scripts/run_release_component_build.sh"
-OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT="${ROOT}/scripts/build_offline_dependency_wheelhouse.py"
-OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT="${TOTALSEGMENTATOR_WRAPPER_MAC_OFFLINE_DEPENDENCY_WHEELHOUSE:-${ROOT}/build/offline-dependency-wheelhouse}"
-OFFLINE_DEPENDENCY_WHEEL_DIRECTORY="${OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT}/wheels"
-OFFLINE_DEPENDENCY_WHEELHOUSE_MANIFEST_PATH="${OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT}/manifest.json"
+OPEN3D_WHEEL_REWRITE_SCRIPT="${ROOT}/scripts/repair_macos_release_dependency_wheels.py"
+OPEN3D_WHEEL_REWRITE_ROOT="${TOTALSEGMENTATOR_WRAPPER_MAC_OPEN3D_WHEEL_REWRITE:-${ROOT}/build/release-open3d-wheel-rewrite-0.4.1-v2}"
+OPEN3D_WHEEL_DIRECTORY="${OPEN3D_WHEEL_REWRITE_ROOT}/wheels"
+OPEN3D_WHEEL_REWRITE_MANIFEST_PATH="${OPEN3D_WHEEL_REWRITE_ROOT}/repair-manifest.json"
+OPEN3D_WHEEL_FILENAME="open3d-0.19.0-cp312-cp312-macosx_10_15_universal2.whl"
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 PYTHON_RUNTIME_FINGERPRINT=""
 PYTHON_RUNTIME_FINGERPRINT_SCOPE=""
@@ -63,6 +64,11 @@ RELEASE_BUILD_TOOLCHAIN_METADATA_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BU
 RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE:-${ROOT}/build/release-build-toolchain/wheels}"
 RELEASE_BUILD_TOOLCHAIN_WORK_DIRECTORY="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_WORK_DIRECTORY:-${ROOT}/build/release-build-toolchain/work}"
 RELEASE_BUILD_TOOLCHAIN_RECEIPT_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_RECEIPT:-${ROOT}/build/release-build-toolchain/release-build-toolchain-receipt.json}"
+RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION:-}"
+RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY:-}"
+RELEASE_PRE_SIGN_WHEEL_RECEIPT_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_PRE_SIGN_WHEEL_RECEIPT:-}"
+RELEASE_PRE_SIGN_WHEEL_DIRECTORY="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_PRE_SIGN_WHEEL_DIRECTORY:-}"
+RELEASE_INPUTS_REQUIRED="${TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_INPUTS_REQUIRED:-0}"
 RELEASE_BUILD_TOOLCHAIN_PREPARED_PYTHON=""
 RELEASE_BUILD_TOOLCHAIN_LOCK_SHA256=""
 RELEASE_BUILD_TOOLCHAIN_METADATA_SHA256=""
@@ -105,6 +111,7 @@ NORMALIZER_PATH="${NORMALIZER_ARTIFACT_DIR}/totalsegmentator-wrapper-dicom-norma
 NORMALIZER_BUILD_RECEIPT_PATH="${NORMALIZER_ARTIFACT_DIR}/dicom-normalizer-build-provenance.json"
 GDCM_BUILD_RECEIPT_PATH="${NORMALIZER_ARTIFACT_DIR}/gdcm-build-provenance.json"
 SIGNING_MODE="${TOTALSEGMENTATOR_WRAPPER_MAC_SIGNING_MODE:-ad-hoc}"
+SKIP_CODESIGN_VALUE="${SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${TOTALSEGMENTATOR_WRAPPER_MAC_CODESIGN_IDENTITY:-}"
 BUNDLE_IDENTIFIER="${TOTALSEGMENTATOR_WRAPPER_MAC_BUNDLE_IDENTIFIER:-${CANONICAL_BUNDLE_IDENTIFIER}}"
 NOTARY_PROFILE="${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_PROFILE:-}"
@@ -122,8 +129,8 @@ TGNET_NOTICE_PATH="${ROOT}/resources/third_party/licenses/TGNet-User-Provided-Ch
 FPSAMPLE_NOTICE_PATH="${ROOT}/resources/third_party/licenses/fpsample-1.0.2-MIT-and-nanoflann-BSD.txt"
 SETUP_WEIGHTS_MANIFEST_PATH="${ROOT}/src/totalsegmentator_wrapper_mac/totalseg_setup_weights_manifest.json"
 CONSTRAINTS_PATH="${ROOT}/constraints/macos-arm64-py312.txt"
-REQUIREMENTS_LOCK_PATH="${ROOT}/constraints/macos-arm64-py312.requirements.lock"
-DEPENDENCY_LOCK_METADATA_PATH="${ROOT}/constraints/macos-arm64-py312.lock.json"
+REQUIREMENTS_LOCK_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_REQUIREMENTS_LOCK:-${ROOT}/constraints/macos-arm64-py312.requirements.lock}"
+DEPENDENCY_LOCK_METADATA_PATH="${TOTALSEGMENTATOR_WRAPPER_MAC_DEPENDENCY_LOCK_METADATA:-${ROOT}/constraints/macos-arm64-py312.lock.json}"
 DCM2NIIX_LICENSE_PATH="${ROOT}/resources/third_party/licenses/dcm2niix-license.txt"
 DICOM_RUNTIME_LICENSE_NAMES=(
   "GDCM-BSD-3-Clause.txt"
@@ -142,6 +149,22 @@ LICENSE_SITE_PACKAGES="${TOTALSEGMENTATOR_WRAPPER_MAC_LICENSE_SITE_PATH:-}"
 ALLOW_DEVELOPMENT_LICENSE_INVENTORY="${TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_DEVELOPMENT_LICENSE_INVENTORY:-0}"
 LICENSE_INVENTORY_MODE=""
 LICENSE_INVENTORY_RELEASE_ELIGIBLE_JSON="false"
+
+if [[ "${RELEASE_INPUTS_REQUIRED}" != "0" && "${RELEASE_INPUTS_REQUIRED}" != "1" ]]; then
+  echo "TOTALSEGMENTATOR_WRAPPER_MAC_RELEASE_INPUTS_REQUIRED must be 0 or 1." >&2
+  exit 2
+fi
+if [[ "${SKIP_CODESIGN_VALUE}" != "0" && "${SKIP_CODESIGN_VALUE}" != "1" ]]; then
+  echo "SKIP_CODESIGN must be 0 or 1." >&2
+  exit 2
+fi
+if [[ "${SIGNING_MODE}" == "developer-id" && "${SKIP_CODESIGN_VALUE}" == "1" ]]; then
+  echo "Developer ID builds cannot set SKIP_CODESIGN=1." >&2
+  exit 2
+fi
+if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARIZED:-0}" == "1" ]]; then
+  RELEASE_INPUTS_REQUIRED="1"
+fi
 
 json_string() {
   "${PYTHON_BIN}" -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
@@ -275,92 +298,29 @@ run_isolated_inventory_pip() {
   run_isolated_inventory_python "${python_executable}" -m pip --isolated "$@"
 }
 
-verify_and_copy_offline_dependency_wheels() {
+verify_and_copy_open3d_release_wheel() {
   local destination_directory="$1"
-  "${PYTHON_BIN}" - \
-    "${OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT}" \
-    "${destination_directory}" \
-    "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" <<'PY'
-from __future__ import annotations
-
-import hashlib
-import json
-import shutil
-import stat
-import sys
-from pathlib import Path
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-artifact_root = Path(sys.argv[1])
-destination = Path(sys.argv[2])
-expected_manifest_sha256 = sys.argv[3]
-manifest_path = artifact_root / "manifest.json"
-wheel_directory = artifact_root / "wheels"
-
-if artifact_root.is_symlink() or not artifact_root.is_dir():
-    raise SystemExit("offline dependency wheelhouse root must be a regular directory")
-manifest_stat = manifest_path.lstat()
-wheel_directory_stat = wheel_directory.lstat()
-if stat.S_ISLNK(manifest_stat.st_mode) or not stat.S_ISREG(manifest_stat.st_mode):
-    raise SystemExit("offline dependency wheelhouse manifest must be a regular file")
-if stat.S_ISLNK(wheel_directory_stat.st_mode) or not stat.S_ISDIR(wheel_directory_stat.st_mode):
-    raise SystemExit("offline dependency wheelhouse wheels must be a regular directory")
-if sha256_file(manifest_path) != expected_manifest_sha256:
-    raise SystemExit("offline dependency wheelhouse manifest changed after verification")
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-entries = manifest.get("wheels")
-if not isinstance(entries, list) or not entries:
-    raise SystemExit("offline dependency wheelhouse manifest has no wheel inventory")
-if destination.is_symlink() or not destination.is_dir():
-    raise SystemExit("offline dependency wheel destination must be a regular directory")
-if any(destination.iterdir()):
-    raise SystemExit("offline dependency wheel destination must start empty")
-
-copied_names: set[str] = set()
-for entry in entries:
-    if not isinstance(entry, dict):
-        raise SystemExit("offline dependency wheelhouse manifest contains an invalid entry")
-    filename = entry.get("filename")
-    distribution = entry.get("distribution")
-    expected_sha256 = entry.get("sha256")
-    if (
-        not isinstance(filename, str)
-        or Path(filename).name != filename
-        or not filename.endswith(".whl")
-        or filename in copied_names
-        or not isinstance(distribution, str)
-        or not isinstance(expected_sha256, str)
-        or len(expected_sha256) != 64
-    ):
-        raise SystemExit("offline dependency wheelhouse manifest entry is unsafe")
-    source = wheel_directory / filename
-    source_stat = source.lstat()
-    if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISREG(source_stat.st_mode):
-        raise SystemExit(f"offline dependency wheel is not a regular file: {filename}")
-    source_sha256 = sha256_file(source)
-    if source_sha256 != expected_sha256:
-        raise SystemExit(f"offline dependency wheel SHA-256 changed: {filename}")
-    target = destination / filename
-    shutil.copyfile(source, target, follow_symlinks=False)
-    if sha256_file(source) != source_sha256 or sha256_file(target) != source_sha256:
-        raise SystemExit(f"offline dependency wheel changed while copying: {filename}")
-    copied_names.add(filename)
-
-source_names = {path.name for path in wheel_directory.iterdir()}
-destination_names = {path.name for path in destination.iterdir()}
-if source_names != copied_names or destination_names != copied_names:
-    raise SystemExit("offline dependency wheelhouse contains an unsealed or uncopied member")
-if sha256_file(manifest_path) != expected_manifest_sha256:
-    raise SystemExit("offline dependency wheelhouse manifest changed while copying")
-PY
+  local source="${OPEN3D_WHEEL_DIRECTORY}/${OPEN3D_WHEEL_FILENAME}"
+  local target="${destination_directory}/${OPEN3D_WHEEL_FILENAME}"
+  if [[ ! -d "${destination_directory}" || -L "${destination_directory}" ]]; then
+    echo "Open3D wheel destination must be a regular directory." >&2
+    exit 2
+  fi
+  if [[ -e "${target}" || -L "${target}" ]]; then
+    echo "Open3D wheel destination already exists: ${target}" >&2
+    exit 2
+  fi
+  "${PYTHON_BIN}" "${OPEN3D_WHEEL_REWRITE_SCRIPT}" \
+    --verify-existing \
+    --output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}" >/dev/null
+  local source_sha256
+  source_sha256="$(sha256_file "${source}")"
+  cp "${source}" "${target}"
+  if [[ "$(sha256_file "${source}")" != "${source_sha256}" \
+    || "$(sha256_file "${target}")" != "${source_sha256}" ]]; then
+    echo "Rewritten Open3D wheel changed while copying." >&2
+    exit 1
+  fi
 }
 
 verify_copied_python_runtime_smoke() {
@@ -666,11 +626,7 @@ if [[ "${SIGNING_MODE}" == "developer-id" && "${SOURCE_TREE_DIRTY_JSON}" != "fal
   exit 2
 fi
 require_release_python_runtime
-if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARIZED:-0}" == "1" ]]; then
-  # The build-toolchain receipt records this full Xcode/clang boundary.  Do
-  # this before it is prepared so component compilation cannot silently select
-  # Command Line Tools or an ambient Homebrew compiler later.
-  require_full_xcode
+if [[ "${RELEASE_INPUTS_REQUIRED}" == "1" ]]; then
   if [[ ! -f "${RELEASE_INPUT_READINESS_SCRIPT}" ]]; then
     echo "Release input readiness verifier is missing: ${RELEASE_INPUT_READINESS_SCRIPT}" >&2
     exit 2
@@ -682,10 +638,11 @@ if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOT
     --project-file "${PROJECT_FILE_PATH}" \
     --setup-manager-source "${ROOT}/src/totalsegmentator_wrapper_mac/setup_manager.py" \
     --setup-weights-manifest "${SETUP_WEIGHTS_MANIFEST_PATH}" \
-    --release-build-toolchain-lock "${RELEASE_BUILD_TOOLCHAIN_LOCK_PATH}" \
-    --release-build-toolchain-metadata "${RELEASE_BUILD_TOOLCHAIN_METADATA_PATH}" \
-    --release-build-toolchain-wheelhouse "${RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE}" \
     --json)"
+  if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARIZED:-0}" == "1" ]]; then
+    # Only signed/notarized builds need the sealed compiler toolchain. An
+    # ad-hoc release candidate still validates and bundles the dependency lock.
+    require_full_xcode
   if [[ ! -f "${RELEASE_BUILD_TOOLCHAIN_SCRIPT}" ]]; then
     echo "Release build toolchain verifier is missing: ${RELEASE_BUILD_TOOLCHAIN_SCRIPT}" >&2
     exit 2
@@ -706,6 +663,8 @@ if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOT
     --uv "${UV_BIN}" \
     --prepare-work-directory "${RELEASE_BUILD_TOOLCHAIN_WORK_DIRECTORY}" \
     --receipt "${RELEASE_BUILD_TOOLCHAIN_RECEIPT_PATH}" \
+    --bootstrap-declaration "${RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH}" \
+    --source-identity "${RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH}" \
     --json)"
   RELEASE_BUILD_TOOLCHAIN_PREPARED_PYTHON="$("${PYTHON_BIN}" -c 'import json, sys; print(json.loads(sys.argv[1])["prepared_python"])' "${RELEASE_BUILD_TOOLCHAIN_PREPARE_JSON}")"
   RELEASE_BUILD_TOOLCHAIN_LOCK_SHA256="$("${PYTHON_BIN}" -c 'import json, sys; print(json.loads(sys.argv[1])["lock_sha256"])' "${RELEASE_BUILD_TOOLCHAIN_PREPARE_JSON}")"
@@ -730,6 +689,8 @@ if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOT
   require_sha256_digest "${FPSAMPLE_PRE_SIGN_WHEEL_SHA256}" "fpsample resolver input SHA-256"
   require_sha256_digest "${ACVL_UTILS_RESOLUTION_INPUT_SHA256}" "acvl-utils resolver input SHA-256"
   FPSAMPLE_PRE_SIGN_WHEEL_SHA256_JSON="$(json_string "${FPSAMPLE_PRE_SIGN_WHEEL_SHA256}")"
+  RELEASE_BUILD_TOOLCHAIN_ATTESTED="1"
+  fi
   REQUIREMENTS_LOCK_SHA256="$(sha256_file "${REQUIREMENTS_LOCK_PATH}")"
   DEPENDENCY_LOCK_METADATA_SHA256="$(sha256_file "${DEPENDENCY_LOCK_METADATA_PATH}")"
   PROJECT_FILE_SHA256="$(sha256_file "${PROJECT_FILE_PATH}")"
@@ -747,22 +708,18 @@ if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOT
   REQUIREMENTS_LOCK_BUNDLED_JSON='"constraints/macos-arm64-py312.requirements.lock"'
   DEPENDENCY_LOCK_METADATA_BUNDLED_JSON='"constraints/macos-arm64-py312.lock.json"'
   PROJECT_FILE_BUNDLED_JSON='"constraints/pyproject.toml"'
-  if [[ ! -f "${OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT}" || -L "${OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT}" ]]; then
-    echo "Offline dependency wheelhouse verifier is missing or unsafe: ${OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT}" >&2
+  if [[ ! -f "${OPEN3D_WHEEL_REWRITE_SCRIPT}" || -L "${OPEN3D_WHEEL_REWRITE_SCRIPT}" ]]; then
+    echo "Open3D wheel rewrite verifier is missing or unsafe: ${OPEN3D_WHEEL_REWRITE_SCRIPT}" >&2
     exit 2
   fi
-  "${PYTHON_BIN}" "${OFFLINE_DEPENDENCY_WHEELHOUSE_SCRIPT}" \
+  "${PYTHON_BIN}" "${OPEN3D_WHEEL_REWRITE_SCRIPT}" \
     --verify-existing \
-    --constraints "${CONSTRAINTS_PATH}" \
-    --requirements-lock "${REQUIREMENTS_LOCK_PATH}" \
-    --lock-metadata "${DEPENDENCY_LOCK_METADATA_PATH}" \
-    --output-directory "${OFFLINE_DEPENDENCY_WHEELHOUSE_ROOT}" >/dev/null
-  DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256="$(sha256_file "${OFFLINE_DEPENDENCY_WHEELHOUSE_MANIFEST_PATH}")"
-  require_sha256_digest "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" "Offline dependency wheelhouse manifest SHA-256"
+    --output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}" >/dev/null
+  DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256="$(sha256_file "${OPEN3D_WHEEL_REWRITE_MANIFEST_PATH}")"
+  require_sha256_digest "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" "Open3D wheel rewrite manifest SHA-256"
   DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256_JSON="$(json_string "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}")"
   DEPENDENCY_WHEELHOUSE_MANIFEST_BUNDLED_JSON='"constraints/macos-arm64-py312.wheelhouse.json"'
   RELEASE_DEPENDENCY_LOCK_ATTESTED="1"
-  RELEASE_BUILD_TOOLCHAIN_ATTESTED="1"
   DEPENDENCY_SET_ID="${DEPENDENCY_SET_ID}-lock-${REQUIREMENTS_LOCK_SHA256:0:12}-metadata-${DEPENDENCY_LOCK_METADATA_SHA256:0:12}"
 fi
 
@@ -855,6 +812,11 @@ if [[ "${RELEASE_BUILD_TOOLCHAIN_ATTESTED}" == "1" ]]; then
     --metadata "${RELEASE_BUILD_TOOLCHAIN_METADATA_PATH}" \
     --receipt "${RELEASE_BUILD_TOOLCHAIN_RECEIPT_PATH}" \
     --prepared-python "${RELEASE_BUILD_TOOLCHAIN_PREPARED_PYTHON}" \
+    --wheelhouse "${RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE}" \
+    --bootstrap-declaration "${RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH}" \
+    --source-identity "${RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH}" \
+    --pre-sign-wheel-receipt "${RELEASE_PRE_SIGN_WHEEL_RECEIPT_PATH}" \
+    --pre-sign-wheel-directory "${RELEASE_PRE_SIGN_WHEEL_DIRECTORY}" \
     --component wrapper \
     -- "${ROOT}/scripts/build_mac_wheel.sh" >/dev/null
   TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_FPSAMPLE_PRE_SIGN_SHA256="${FPSAMPLE_PRE_SIGN_WHEEL_SHA256}" \
@@ -863,6 +825,11 @@ if [[ "${RELEASE_BUILD_TOOLCHAIN_ATTESTED}" == "1" ]]; then
       --metadata "${RELEASE_BUILD_TOOLCHAIN_METADATA_PATH}" \
       --receipt "${RELEASE_BUILD_TOOLCHAIN_RECEIPT_PATH}" \
       --prepared-python "${RELEASE_BUILD_TOOLCHAIN_PREPARED_PYTHON}" \
+      --wheelhouse "${RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE}" \
+      --bootstrap-declaration "${RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH}" \
+      --source-identity "${RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH}" \
+      --pre-sign-wheel-receipt "${RELEASE_PRE_SIGN_WHEEL_RECEIPT_PATH}" \
+      --pre-sign-wheel-directory "${RELEASE_PRE_SIGN_WHEEL_DIRECTORY}" \
       --component fpsample \
       -- "${ROOT}/scripts/build_fpsample_wheel_macos.sh" >/dev/null
   TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_ACVL_UTILS_WHEEL_SHA256="${ACVL_UTILS_RESOLUTION_INPUT_SHA256}" \
@@ -871,6 +838,11 @@ if [[ "${RELEASE_BUILD_TOOLCHAIN_ATTESTED}" == "1" ]]; then
       --metadata "${RELEASE_BUILD_TOOLCHAIN_METADATA_PATH}" \
       --receipt "${RELEASE_BUILD_TOOLCHAIN_RECEIPT_PATH}" \
       --prepared-python "${RELEASE_BUILD_TOOLCHAIN_PREPARED_PYTHON}" \
+      --wheelhouse "${RELEASE_BUILD_TOOLCHAIN_WHEELHOUSE}" \
+      --bootstrap-declaration "${RELEASE_BUILD_TOOLCHAIN_BOOTSTRAP_DECLARATION_PATH}" \
+      --source-identity "${RELEASE_BUILD_TOOLCHAIN_SOURCE_IDENTITY_PATH}" \
+      --pre-sign-wheel-receipt "${RELEASE_PRE_SIGN_WHEEL_RECEIPT_PATH}" \
+      --pre-sign-wheel-directory "${RELEASE_PRE_SIGN_WHEEL_DIRECTORY}" \
       --component acvl-utils \
       -- "${ROOT}/scripts/build_acvl_utils_wheel.sh" >/dev/null
 else
@@ -993,7 +965,7 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/wheels" "${RESOURCES_DIR}/bin" "${RESO
 build_swiftui_frontend
 require_release_project_file_unchanged
 if [[ "${RELEASE_DEPENDENCY_LOCK_ATTESTED}" == "1" ]]; then
-  verify_and_copy_offline_dependency_wheels "${RESOURCES_DIR}/wheels"
+  verify_and_copy_open3d_release_wheel "${RESOURCES_DIR}/wheels"
 fi
 for component_wheel in "${FPSAMPLE_WHEEL_PATH}" "${ACVL_UTILS_WHEEL_PATH}" "${WHEEL_PATH}"; do
   if [[ -e "${RESOURCES_DIR}/wheels/$(basename "${component_wheel}")" ]]; then
@@ -1008,12 +980,12 @@ if [[ "${RELEASE_DEPENDENCY_LOCK_ATTESTED}" == "1" ]]; then
   cp "${REQUIREMENTS_LOCK_PATH}" "${RESOURCES_DIR}/constraints/macos-arm64-py312.requirements.lock"
   cp "${DEPENDENCY_LOCK_METADATA_PATH}" "${RESOURCES_DIR}/constraints/macos-arm64-py312.lock.json"
   cp "${PROJECT_FILE_PATH}" "${RESOURCES_DIR}/constraints/pyproject.toml"
-  cp "${OFFLINE_DEPENDENCY_WHEELHOUSE_MANIFEST_PATH}" \
+  cp "${OPEN3D_WHEEL_REWRITE_MANIFEST_PATH}" \
     "${RESOURCES_DIR}/constraints/macos-arm64-py312.wheelhouse.json"
   if [[ "$(sha256_file "${RESOURCES_DIR}/constraints/macos-arm64-py312.requirements.lock")" != "${REQUIREMENTS_LOCK_SHA256}" \
     || "$(sha256_file "${RESOURCES_DIR}/constraints/macos-arm64-py312.lock.json")" != "${DEPENDENCY_LOCK_METADATA_SHA256}" \
     || "$(sha256_file "${RESOURCES_DIR}/constraints/pyproject.toml")" != "${PROJECT_FILE_SHA256}" \
-    || "$(sha256_file "${OFFLINE_DEPENDENCY_WHEELHOUSE_MANIFEST_PATH}")" != "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" \
+    || "$(sha256_file "${OPEN3D_WHEEL_REWRITE_MANIFEST_PATH}")" != "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" \
     || "$(sha256_file "${RESOURCES_DIR}/constraints/macos-arm64-py312.wheelhouse.json")" != "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" ]]; then
     echo "Copied dependency lock or wheelhouse inputs differ from their release-attested SHA-256 values." >&2
     exit 1
@@ -1081,6 +1053,14 @@ if [[ -n "${PYTHON_RUNTIME_SOURCE}" ]]; then
     rm "${bundled_site_packages}"
   fi
   chmod 755 "${RESOURCES_DIR}/python/cpython-3.12/bin/python3.12"
+  bundled_libpython="${BUNDLED_PYTHON_RUNTIME_ROOT}/lib/libpython3.12.dylib"
+  if [[ ! -f "${bundled_libpython}" || -L "${bundled_libpython}" ]]; then
+    echo "Copied Python runtime is missing a regular lib/libpython3.12.dylib." >&2
+    exit 1
+  fi
+  /usr/bin/xcrun install_name_tool -id "@rpath/libpython3.12.dylib" "${bundled_libpython}"
+  # Standalone linkage verification intentionally allows only system libraries,
+  # so app-relative install names are resolved by the whole-bundle verifier below.
   # This is intentionally a copied, pre-sign runtime payload fingerprint.
   # Code signing may add signature bytes to Mach-O files afterwards; final app
   # bytes are instead attested by codesign/notarization verification.
@@ -1140,7 +1120,11 @@ if [[ "${RELEASE_DEPENDENCY_LOCK_ATTESTED}" == "1" ]]; then
     "${FPSAMPLE_WHEEL_PATH}" "${ACVL_UTILS_WHEEL_PATH}" >/dev/null
   run_isolated_inventory_pip "${LICENSE_INVENTORY_ENV_PYTHON}" install \
     --no-index \
-    --find-links "${OFFLINE_DEPENDENCY_WHEEL_DIRECTORY}" \
+    --no-deps \
+    --only-binary :all: \
+    "${OPEN3D_WHEEL_DIRECTORY}/${OPEN3D_WHEEL_FILENAME}" >/dev/null
+  run_isolated_inventory_pip "${LICENSE_INVENTORY_ENV_PYTHON}" install \
+    --find-links "${OPEN3D_WHEEL_DIRECTORY}" \
     --require-hashes \
     --no-deps \
     --only-binary :all: \
@@ -1458,11 +1442,7 @@ if command -v xattr >/dev/null 2>&1; then
   find "${APP_DIR}" -type f -exec chmod u+rw {} +
   xattr -cr "${APP_DIR}" || true
 fi
-if [[ "${SIGNING_MODE}" == "developer-id" && "${SKIP_CODESIGN:-0}" == "1" ]]; then
-  echo "Developer ID builds cannot set SKIP_CODESIGN=1." >&2
-  exit 2
-fi
-if [[ "${SKIP_CODESIGN:-0}" != "1" ]] && command -v codesign >/dev/null 2>&1; then
+if [[ "${SKIP_CODESIGN_VALUE}" != "1" ]] && command -v codesign >/dev/null 2>&1; then
   if [[ "${SIGNING_MODE}" == "developer-id" ]]; then
     codesign_developer_id
   else

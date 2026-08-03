@@ -535,7 +535,6 @@ struct CommandBuilder {
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONNOUSERSITE"] = "1"
         env["PIP_CONFIG_FILE"] = "/dev/null"
-        env["PIP_NO_INDEX"] = "1"
         env["PIP_NO_INPUT"] = "1"
         env["PIP_CACHE_DIR"] = paths.cache.appendingPathComponent("pip", isDirectory: true).path
         env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
@@ -563,7 +562,7 @@ struct CommandBuilder {
     }
 
     static func bootstrapInstallCommand(python: URL, wheel: URL) -> [String] {
-        [python.path, "-I", "-m", "pip", "--isolated", "install", "--no-index", "--force-reinstall", "--no-deps", wheel.path]
+        [python.path, "-I", "-m", "pip", "--isolated", "install", "--force-reinstall", "--no-deps", wheel.path]
     }
 
     static func setupCommand(
@@ -1254,7 +1253,7 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
     case "python312_missing", "wheel_missing", "constraints_missing", "bundle_manifest_invalid":
         return "アプリをDMGからもう一度コピーしてから起動してください。改善しない場合はログ回収コマンドを実行してください。"
     case "dependency_network_failed":
-        return "現行版は同梱依存をオフライン導入します。セットアップを再実行し、改善しない場合はエラー報告フォームへ診断情報を貼り付けてください。"
+        return "ネットワーク接続を確認してセットアップを再実行し、改善しない場合はエラー報告フォームへ診断情報を貼り付けてください。"
     case "insufficient_disk_space":
         return "Macの空き容量を増やしてから、もう一度セットアップしてください。"
     case "setup_busy", "weights_setup_busy":

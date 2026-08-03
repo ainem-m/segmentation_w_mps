@@ -111,7 +111,7 @@ Required evidence:
 - `passed: true`
 - `setup_state_success`
 - `install_wheel_step_success`
-- `wheel_install_hashed_lock`（`offline_require_hashes_wheelhouse`）
+- `wheel_install_hashed_lock`（`network_require_hashes_lock`）
 - `install_bundled_wheels_step_success`
 - `install_locked_dependencies_step_success`
 - `pip_check_step_success`
@@ -155,7 +155,7 @@ Required evidence:
 - `manifest_bundled_python312`
 - `bundled_python_has_no_absolute_symlinks`
 
-`offline_local_no_deps` は、lockを同梱しない開発用smoke testだけの経路です。
+`network_constraints_binary_only` は、lockを同梱しない開発用smoke testだけの経路です。
 その証跡は最終release evidenceとしてimportできません。release DMGでは、上記の
 hashed-lock / bundled-wheel / `pip check` のすべてが成功している必要があります。
 

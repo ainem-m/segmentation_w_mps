@@ -37,6 +37,7 @@ EXACT_REQUIREMENT = re.compile(
     r"(?:\s*;\s*[^\s].*)?$"
 )
 HASH_TOKEN = re.compile(r"--hash=sha256:[0-9a-f]{64}(?:\s|$)")
+HASH_VALUE = re.compile(r"--hash=sha256:([0-9a-f]{64})(?:\s|$)")
 REVALIDATION_EVIDENCE_SCHEMA = (
     "totalsegmentator_wrapper_mac.official_asset_revalidation.v1"
 )
@@ -59,14 +60,10 @@ CANONICAL_TARGET_COMPATIBILITY = {
     "abi": "cp312",
     "selection": "pip-cross-target-options-and-wheelhouse-tag-audit-v1",
 }
-DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v4"
-DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA = (
-    "totalsegmentator_wrapper_mac.dependency_lock_bootstrap_binding.v1"
-)
+DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v5"
 DEFAULT_PROJECT_FILE = Path(__file__).resolve().parents[1] / "pyproject.toml"
 DEPENDENCY_LOCK_METADATA_FIELDS = {
     "schema",
-    "bootstrap",
     "generation_id",
     "constraints_sha256",
     "project_file",
@@ -81,17 +78,6 @@ DEPENDENCY_LOCK_METADATA_FIELDS = {
     "resolver",
     "pip_require_hashes",
     "setup_consumes_requirements_lock",
-}
-DEPENDENCY_LOCK_BOOTSTRAP_BINDING_FIELDS = {
-    "schema",
-    "source_identity_sha256",
-    "sealed_toolchain",
-    "pre_sign_wheel_receipt_sha256",
-}
-SEALED_TOOLCHAIN_BINDING_FIELDS = {
-    "lock_sha256",
-    "metadata_sha256",
-    "receipt_sha256",
 }
 DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX = (
     "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
@@ -147,6 +133,12 @@ MACOS_14_OR_LATER_FULL_VERSION = re.compile(
 MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(
     r"^macosx-[0-9]+(?:\.[0-9]+)*-arm64$"
 )
+APPROVED_REPAIRED_REQUIREMENTS = {
+    "open3d": (
+        "0.19.0",
+        "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d",
+    ),
+}
 
 
 class ReleaseInputReadinessError(RuntimeError):
@@ -193,6 +185,36 @@ def verify_hashed_requirement_entries(path: Path) -> None:
             "requirement entries are not exact and SHA-256 hashed:\n- "
             + "\n- ".join(failures)
         )
+
+
+def verify_approved_repaired_requirement_hashes(path: Path) -> None:
+    """Require only the canonical rewritten Open3D wheel in the release lock."""
+
+    observed: dict[str, tuple[str, set[str]]] = {}
+    for line in _logical_requirement_lines(path):
+        name, version = _requirement_name_and_version(line)
+        if name not in APPROVED_REPAIRED_REQUIREMENTS:
+            continue
+        if name in observed:
+            raise ReleaseInputReadinessError(
+                f"approved repaired requirement is duplicated: {name}"
+            )
+        observed[name] = (version, set(HASH_VALUE.findall(line + " ")))
+    if set(observed) != set(APPROVED_REPAIRED_REQUIREMENTS):
+        raise ReleaseInputReadinessError(
+            "dependency lock omits an approved repaired requirement: "
+            + ", ".join(
+                sorted(set(APPROVED_REPAIRED_REQUIREMENTS) - set(observed))
+            )
+        )
+    for name, (expected_version, expected_sha256) in (
+        APPROVED_REPAIRED_REQUIREMENTS.items()
+    ):
+        version, hashes = observed[name]
+        if version != expected_version or hashes != {expected_sha256}:
+            raise ReleaseInputReadinessError(
+                f"dependency lock does not bind only the approved repaired wheel: {name}"
+            )
 
 
 def _sha256_file(path: Path) -> str:
@@ -370,8 +392,9 @@ def _has_hashed_lock_call_in_setup(run_setup: ast.FunctionDef) -> bool:
     A mere call (or a comment) to the builder is not enough: this is a
     release-gating check on the shipped wheel, so the current compatibility
     contract deliberately requires the builder's result to be passed directly
-    to the ``install_locked_dependencies`` execution step inside the network
-    and lock-available branch.
+    to the ``install_locked_dependencies`` execution step inside the
+    lock-available, network-enabled branch. Package downloads are allowed, but
+    the selected artifacts must remain hash-locked and binary-only.
     """
 
     def is_lock_builder_call(node: ast.AST) -> bool:
@@ -435,7 +458,13 @@ def verify_setup_manager_hashed_lock_contract(setup_source: str) -> None:
         argument.arg
         for argument in (*locked_builder.args.args, *locked_builder.args.kwonlyargs)
     }
-    required_builder_literals = {"--require-hashes", "--no-deps", "-r"}
+    required_builder_literals = {
+        "--find-links",
+        "--no-deps",
+        "--only-binary",
+        "--require-hashes",
+        "-r",
+    }
     has_required_builder_literals = all(
         _contains_string_literal(locked_builder, literal)
         for literal in required_builder_literals
@@ -515,38 +544,6 @@ def _validate_resolver_provenance(resolver: object) -> None:
         raise ReleaseInputReadinessError("dependency lock resolver provenance is invalid")
 
 
-def verify_dependency_lock_bootstrap_binding(value: object) -> dict[str, object]:
-    """Require the canonical lock to name the preceding bootstrap handoff."""
-
-    if not isinstance(value, dict) or set(value) != DEPENDENCY_LOCK_BOOTSTRAP_BINDING_FIELDS:
-        raise ReleaseInputReadinessError("dependency lock bootstrap binding field set mismatch")
-    sealed_toolchain = value.get("sealed_toolchain")
-    if (
-        value.get("schema") != DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA
-        or not isinstance(value.get("source_identity_sha256"), str)
-        or re.fullmatch(r"[0-9a-f]{64}", value["source_identity_sha256"]) is None
-        or not isinstance(value.get("pre_sign_wheel_receipt_sha256"), str)
-        or re.fullmatch(r"[0-9a-f]{64}", value["pre_sign_wheel_receipt_sha256"])
-        is None
-        or not isinstance(sealed_toolchain, dict)
-        or set(sealed_toolchain) != SEALED_TOOLCHAIN_BINDING_FIELDS
-        or any(
-            not isinstance(sealed_toolchain.get(key), str)
-            or re.fullmatch(r"[0-9a-f]{64}", str(sealed_toolchain[key])) is None
-            for key in SEALED_TOOLCHAIN_BINDING_FIELDS
-        )
-    ):
-        raise ReleaseInputReadinessError("dependency lock bootstrap binding is invalid")
-    return {
-        "schema": DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA,
-        "source_identity_sha256": str(value["source_identity_sha256"]),
-        "sealed_toolchain": {
-            key: str(sealed_toolchain[key]) for key in SEALED_TOOLCHAIN_BINDING_FIELDS
-        },
-        "pre_sign_wheel_receipt_sha256": str(value["pre_sign_wheel_receipt_sha256"]),
-    }
-
-
 def verify_canonical_dependency_lock(
     *,
     constraints: Path,
@@ -555,7 +552,6 @@ def verify_canonical_dependency_lock(
     project_file: Path = DEFAULT_PROJECT_FILE,
     setup_manager_source: Path | None = None,
     setup_manager_source_text: str | None = None,
-    pre_sign_wheel_receipt: Path | None = None,
 ) -> None:
     """Require a resolved lock that setup actually installs with --require-hashes."""
 
@@ -588,28 +584,6 @@ def verify_canonical_dependency_lock(
         raise ReleaseInputReadinessError("dependency lock metadata field set mismatch")
     if metadata.get("schema") != DEPENDENCY_LOCK_SCHEMA:
         raise ReleaseInputReadinessError("dependency lock metadata schema mismatch")
-    bootstrap_binding = verify_dependency_lock_bootstrap_binding(
-        metadata.get("bootstrap")
-    )
-    if pre_sign_wheel_receipt is not None:
-        try:
-            pre_sign_receipt, pre_sign_sha256 = load_release_pre_sign_wheel_receipt(
-                pre_sign_wheel_receipt
-            )
-        except ReleaseBuildToolchainError as exc:
-            raise ReleaseInputReadinessError(
-                f"dependency lock pre-sign wheel receipt is invalid: {exc}"
-            ) from exc
-        if (
-            bootstrap_binding["pre_sign_wheel_receipt_sha256"] != pre_sign_sha256
-            or bootstrap_binding["source_identity_sha256"]
-            != pre_sign_receipt["source_identity_sha256"]
-            or bootstrap_binding["sealed_toolchain"]
-            != pre_sign_receipt["sealed_toolchain"]
-        ):
-            raise ReleaseInputReadinessError(
-                "dependency lock bootstrap binding does not match the pre-sign wheel receipt"
-            )
     metadata_generation_id = _canonical_uuid(metadata.get("generation_id"))
     if metadata_generation_id is None:
         raise ReleaseInputReadinessError("dependency lock metadata generation ID is invalid")
@@ -879,21 +853,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ReleaseInputReadinessError(
             "final strict release readiness requires the complete toolchain bootstrap artifact: lock, metadata, wheelhouse, declaration, source identity, sealed receipt, pre-sign wheel receipt, and pre-sign wheel directory"
         )
-    pre_sign_receipt = (
-        args.release_pre_sign_wheel_receipt.expanduser()
-        if all(value is not None for value in toolchain_args)
-        and args.release_pre_sign_wheel_receipt is not None
-        else None
-    )
-    checks = (
-        ("dependencies", lambda: verify_canonical_dependency_lock(
+    def verify_release_dependencies() -> None:
+        verify_canonical_dependency_lock(
             constraints=args.constraints.expanduser(),
             requirements_lock=args.requirements_lock.expanduser(),
             lock_metadata=args.lock_metadata.expanduser(),
             project_file=args.project_file.expanduser(),
             setup_manager_source=args.setup_manager_source.expanduser(),
-            pre_sign_wheel_receipt=pre_sign_receipt,
-        )),
+        )
+        verify_approved_repaired_requirement_hashes(
+            args.requirements_lock.expanduser()
+        )
+
+    checks = (
+        ("dependencies", verify_release_dependencies),
         ("weights", lambda: verify_setup_weight_revalidation_complete(
             args.setup_weights_manifest.expanduser()
         )),

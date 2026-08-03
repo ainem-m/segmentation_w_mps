@@ -253,6 +253,20 @@ The runtime fingerprint records this copied payload before signing; app-relative
 Mach-O linkage, code signing, notarization, and DMG verification cover the
 candidate app afterwards.
 
+For 0.4.1, native linkage checks have two deliberately separate responsibility
+boundaries. The app itself, every native artifact copied into the app, and any
+wheel rewritten by this project (currently the Open3D 0.19.0 wheel) must pass
+the strict self-contained/app-relative linkage gate. Unmodified official wheels
+downloaded by the hash-locked setup path are not treated as project-rewritten
+artifacts: they must match the exact lock hash, be selected with
+`--only-binary :all:`, contain an arm64 slice with `minos <= 14.0`, satisfy
+`pip check`, and pass the product import/runtime smoke. The exact official
+`imagecodecs 2026.6.26` wheel is recorded with a known nonblocking warning for
+its absolute `/DLC/imagecodecs/.dylibs/` `LC_ID_DYLIB` values. That exception
+does not admit a different imagecodecs hash, an unresolved external dependency,
+an external runtime search path, a source distribution, or any relaxation of
+the app/Open3D strict gates.
+
 The dependency-lock v4 receipt is intentionally exact. It records the static
 resolver identity (`pip-compile` 7.5.0, `platform=macos-14-arm64`, and
 `python=3.12`) and the observed `pip` version, complete CPython version, macOS
@@ -568,10 +582,10 @@ records `python_version_unsupported` before the private venv is created.
 
 Launcher startup also checks whether the setup state matches the current app
 bundle fingerprint. If the bundled wheel changed but the dependency set did not,
-the launcher performs an offline `pip install --force-reinstall --no-deps` into
+the launcher performs an isolated `pip install --force-reinstall --no-deps` into
 the existing App Support venv before opening the UI. If the dependency set or
 constraints or the bundled wheelhouse changed, it shows Setup again and waits
-for user action before reinstalling the bundled dependencies offline.
+for user action before reinstalling the dependency set.
 
 Update checking runs only when the user presses `更新を確認`. When
 `setup_manifest.json update_manifest_url` is configured, SwiftUI fetches that
@@ -605,15 +619,11 @@ Support, and re-run `codesign --verify` after setup. They also collect the same
 evidence JSON used by the manual test-account gate. The DMG variant mounts the
 DMG and copies the app into clean `~/Applications` before setup.
 
-For offline-only validation, the release-build behavior is to create the
-private venv, install every Python dependency from the hash-locked bundled
-wheelhouse, install the separately bound component and wrapper wheels, run
-`pip check`, write `setup_state.json`, and then stop with `needs_network` before
-model download.
-
-`--allow-network` permits only model-weight downloads. Python dependency
-installation always uses the bundled hashed lock and wheelhouse; the end-user
-Mac does not run an index resolver or source build. The tested MPS stack is
+Setup creates the private venv, installs the hash-locked Python dependency set
+from binary wheels, installs the separately bound component and wrapper wheels,
+runs `pip check`, and then downloads the required model weights. Package index
+access is allowed; `--only-binary :all:` prevents source builds on the end-user
+Mac. The tested MPS stack is
 declared by:
 
 ```text

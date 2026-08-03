@@ -10,6 +10,7 @@ from scripts.verify_release_input_readiness import (
     CANONICAL_TARGET_COMPATIBILITY,
     ReleaseInputReadinessError,
     verify_canonical_dependency_lock,
+    verify_approved_repaired_requirement_hashes,
     verify_hashed_requirement_entries,
     verify_setup_weight_revalidation_complete,
 )
@@ -21,19 +22,41 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReleaseInputReadinessTests(unittest.TestCase):
     _GENERATION_ID = "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3"
 
-    def _write_setup_lock_consumer(self, path: Path) -> None:
+    def _write_setup_lock_consumer(
+        self,
+        path: Path,
+        *,
+        network_coupling: str = "combined",
+    ) -> None:
+        if network_coupling == "combined":
+            setup_body = (
+                "    if allow_network and requirements_lock is not None:\n"
+                "        return _execute_step('install_locked_dependencies', build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory))\n"
+            )
+        elif network_coupling == "nested":
+            setup_body = (
+                "    if requirements_lock is not None:\n"
+                "        if allow_network:\n"
+                "            return _execute_step('install_locked_dependencies', build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory))\n"
+            )
+        elif network_coupling == "none":
+            setup_body = (
+                "    if requirements_lock is not None:\n"
+                "        return _execute_step('install_locked_dependencies', build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory))\n"
+            )
+        else:
+            raise ValueError(f"unsupported network coupling fixture: {network_coupling}")
         path.write_text(
             "def validate_safe_command(command):\n"
             "    return command\n\n"
             "def build_locked_dependencies_install_command(venv_python, *, requirements_lock, wheel_directory):\n"
-            "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '-r', str(requirements_lock)]\n"
+            "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '--only-binary', ':all:', '--find-links', str(wheel_directory), '-r', str(requirements_lock)]\n"
             "    validate_safe_command(command)\n"
             "    return command\n\n"
             "def _execute_step(name, command):\n"
             "    return name, command\n\n"
             "def run_setup(venv_python, requirements_lock, wheel_directory, allow_network):\n"
-            "    if allow_network and requirements_lock is not None:\n"
-            "        return _execute_step('install_locked_dependencies', build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory))\n",
+            + setup_body,
             encoding="utf-8",
         )
 
@@ -83,20 +106,7 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 if name not in {"acvl-utils", "fpsample"}
             ]
         return {
-            "schema": "totalsegmentator_wrapper_mac.dependency_lock.v4",
-            "bootstrap": {
-                "schema": (
-                    "totalsegmentator_wrapper_mac."
-                    "dependency_lock_bootstrap_binding.v1"
-                ),
-                "source_identity_sha256": "1" * 64,
-                "sealed_toolchain": {
-                    "lock_sha256": "2" * 64,
-                    "metadata_sha256": "3" * 64,
-                    "receipt_sha256": "4" * 64,
-                },
-                "pre_sign_wheel_receipt_sha256": "5" * 64,
-            },
+            "schema": "totalsegmentator_wrapper_mac.dependency_lock.v5",
             "generation_id": self._GENERATION_ID,
             "constraints_sha256": digest(constraints),
             "project_file": project_file.name,
@@ -138,6 +148,30 @@ class ReleaseInputReadinessTests(unittest.TestCase):
             path.write_text("numpy==2.0.0\n", encoding="utf-8")
             with self.assertRaisesRegex(ReleaseInputReadinessError, "no SHA-256"):
                 verify_hashed_requirement_entries(path)
+
+    def test_release_lock_requires_only_canonical_repaired_wheel_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "requirements.lock"
+            path.write_text(
+                "imagecodecs==2026.6.26 --hash=sha256:"
+                "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6\n"
+                "open3d==0.19.0 --hash=sha256:"
+                "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d\n",
+                encoding="utf-8",
+            )
+            verify_approved_repaired_requirement_hashes(path)
+            path.write_text(
+                "imagecodecs==2026.6.26 --hash=sha256:"
+                "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6\n"
+                "open3d==0.19.0 --hash=sha256:"
+                "9e4a8d29443ba4c83010d199d56c96bf553dd970d3351692ab271759cbe2d7ac\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ReleaseInputReadinessError,
+                "approved repaired wheel: open3d",
+            ):
+                verify_approved_repaired_requirement_hashes(path)
 
     def test_single_hashed_entry_only_passes_entry_syntax_not_release_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -492,6 +526,60 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                     setup_manager_source=setup_source,
                 )
 
+    def test_canonical_lock_requires_network_enabled_dependency_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraints = root / "constraints.txt"
+            requirements_lock = root / "requirements.lock"
+            metadata_path = root / "lock.json"
+            setup_source = root / "setup_manager.py"
+            constraints.write_text(
+                "acvl-utils==0.2.6\nfpsample==1.0.2\n",
+                encoding="utf-8",
+            )
+            requirements_lock.write_text(
+                "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
+                + self._GENERATION_ID
+                + "\n"
+                "numpy==2.3.3 --hash=sha256:" + "a" * 64 + "\n",
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    self._metadata_payload(
+                        constraints=constraints,
+                        requirements_lock=requirements_lock,
+                        resolved_distribution_names=["acvl-utils", "fpsample", "numpy"],
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            for network_coupling in ("combined",):
+                with self.subTest(network_coupling=network_coupling):
+                    self._write_setup_lock_consumer(
+                        setup_source,
+                        network_coupling=network_coupling,
+                    )
+                    verify_canonical_dependency_lock(
+                        constraints=constraints,
+                        requirements_lock=requirements_lock,
+                        lock_metadata=metadata_path,
+                        setup_manager_source=setup_source,
+                    )
+
+            self._write_setup_lock_consumer(setup_source, network_coupling="none")
+            with self.assertRaisesRegex(
+                ReleaseInputReadinessError,
+                "setup lock-consumer contract",
+            ):
+                verify_canonical_dependency_lock(
+                    constraints=constraints,
+                    requirements_lock=requirements_lock,
+                    lock_metadata=metadata_path,
+                    setup_manager_source=setup_source,
+                )
+
     def test_canonical_lock_rejects_comment_only_hashed_lock_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -558,11 +646,11 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 "def validate_safe_command(command):\n"
                 "    return command\n\n"
                 "def build_locked_dependencies_install_command(venv_python, *, requirements_lock, wheel_directory):\n"
-                "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '-r', str(requirements_lock)]\n"
+                "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '--only-binary', ':all:', '--find-links', str(wheel_directory), '-r', str(requirements_lock)]\n"
                 "    validate_safe_command(command)\n"
                 "    return command\n\n"
                 "def run_setup(venv_python, requirements_lock, wheel_directory, allow_network):\n"
-                "    if allow_network and requirements_lock is not None:\n"
+                "    if requirements_lock is not None:\n"
                 "        build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory)\n",
                 encoding="utf-8",
             )
@@ -610,13 +698,13 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 "def validate_safe_command(command):\n"
                 "    return command\n\n"
                 "def build_locked_dependencies_install_command(venv_python, *, requirements_lock, wheel_directory):\n"
-                "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '-r', str(requirements_lock)]\n"
+                "    command = [str(venv_python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--only-binary', ':all:', '--find-links', str(wheel_directory), '-r', str(requirements_lock)]\n"
                 "    validate_safe_command(command)\n"
                 "    return command\n\n"
                 "def _execute_step(name, command):\n"
                 "    return name, command\n\n"
                 "def run_setup(venv_python, requirements_lock, wheel_directory, allow_network):\n"
-                "    if allow_network and requirements_lock is not None:\n"
+                "    if requirements_lock is not None:\n"
                 "        return _execute_step('install_locked_dependencies', build_locked_dependencies_install_command(venv_python, requirements_lock=requirements_lock, wheel_directory=wheel_directory))\n",
                 encoding="utf-8",
             )

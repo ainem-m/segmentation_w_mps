@@ -69,7 +69,7 @@ BUNDLED_WHEEL_SPECS = (
 )
 WRAPPER_WHEEL_PREFIX = "totalsegmentator_wrapper_mac-"
 WRAPPER_WHEEL_SUFFIX = ".whl"
-DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v3"
+DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v5"
 DEPENDENCY_LOCK_ROOT_REQUIREMENT = (
     "totalsegmentator-wrapper-mac[dicom,mps,dentalseg,toothseg,ios-meshsegnet]"
 )
@@ -79,10 +79,18 @@ CANONICAL_DEPENDENCY_LOCK_RESOLVER = {
     "platform": "macos-14-arm64",
     "python": "3.12",
 }
+CANONICAL_TARGET_COMPATIBILITY = {
+    "platform": "macosx_14_0_arm64",
+    "python_version": "3.12",
+    "implementation": "cp",
+    "abi": "cp312",
+    "selection": "pip-cross-target-options-and-wheelhouse-tag-audit-v1",
+}
 BUNDLED_OVERRIDE_DISTRIBUTION_PINS = {
     "acvl-utils": "0.2.6",
     "fpsample": "1.0.2",
 }
+BUNDLED_LOCKED_DISTRIBUTIONS = frozenset({"open3d"})
 BUNDLED_OVERRIDE_ROLE = "separately_bundled_no_deps_override"
 BUNDLED_OVERRIDE_RELEASE_HASH_BINDING = "setup_manifest_after_signing"
 BUNDLED_OVERRIDE_METADATA_FIELDS = {
@@ -130,6 +138,7 @@ DEPENDENCY_LOCK_RESOLVER_OBSERVED_FIELDS = {
     "python_full_version",
     "macos_version",
     "sysconfig_platform",
+    "target_compatibility",
 }
 EXACT_LOCK_REQUIREMENT = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+"
@@ -141,8 +150,12 @@ EXACT_LOCK_PINNED_REQUIREMENT = re.compile(
 )
 PIP_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+(?:[A-Za-z0-9.+-]+)?$")
 PYTHON_312_FULL_VERSION = re.compile(r"^3\.12\.(?:0|[1-9][0-9]*)$")
-MACOS_14_FULL_VERSION = re.compile(r"^14\.(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
-MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(r"^macosx-14(?:\.[0-9]+)*-arm64$")
+MACOS_14_OR_LATER_FULL_VERSION = re.compile(
+    r"^(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+){1,2}$"
+)
+MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(
+    r"^macosx-[0-9]+(?:\.[0-9]+)*-arm64$"
+)
 
 
 class BundleResourceValidationError(ValueError):
@@ -385,23 +398,29 @@ def build_wheel_install_command(
     allow_network: bool,
     constraints: Path | None = None,
 ) -> list[str]:
-    """Install the already-selected wrapper wheel without contacting an index.
+    """Install the wrapper and resolve binary dependencies when permitted."""
 
-    ``allow_network`` is retained in the public helper signature for callers
-    that use it to permit model-weight downloads later in setup.  It must not
-    enable a Python package resolver or index access on an end-user Mac.
-    ``constraints`` is validated as part of the bundle contract, not supplied
-    to this direct, dependency-free wheel installation.
-    """
-
-    _ = allow_network, constraints
-    command = [
-        *_isolated_pip_command(venv_python),
-        "install",
-        "--no-index",
-        "--no-deps",
-        str(wheel),
-    ]
+    target = str(wheel)
+    if allow_network:
+        target = f"{target}[dicom,mps,dentalseg,toothseg,ios-meshsegnet]"
+        command = [
+            *_isolated_pip_command(venv_python),
+            "install",
+            "--find-links",
+            str(wheel.parent),
+            "--only-binary",
+            ":all:",
+        ]
+        if constraints is not None:
+            command.extend(["-c", str(constraints)])
+        command.append(target)
+    else:
+        command = [
+            *_isolated_pip_command(venv_python),
+            "install",
+            "--no-deps",
+            str(wheel),
+        ]
     validate_safe_command(command)
     return command
 
@@ -415,7 +434,6 @@ def build_bundled_wheels_install_command(
     command = [
         *_isolated_pip_command(venv_python),
         "install",
-        "--no-index",
         "--force-reinstall",
         "--no-deps",
         *(str(path) for path in bundled_wheels),
@@ -433,7 +451,6 @@ def build_locked_dependencies_install_command(
     command = [
         *_isolated_pip_command(venv_python),
         "install",
-        "--no-index",
         "--require-hashes",
         "--no-deps",
         "--only-binary",
@@ -779,14 +796,12 @@ def _dependency_lock_distribution_pins(path: Path) -> dict[str, str]:
 def validate_locked_wheelhouse(
     requirements_lock: Path,
     wheel_directory: Path,
-) -> None:
-    """Require a local wheel candidate for every hash-locked dependency.
+) -> tuple[Path, ...]:
+    """Require the release-owned local wheel candidates from the hashed lock.
 
-    This is an availability preflight, deliberately separate from integrity
-    validation: pip subsequently verifies the exact selected artifact against
-    the lock's SHA-256 hashes under ``--require-hashes``.  Checking metadata
-    here makes a partial app bundle fail before venv creation, rather than
-    presenting a misleading resolver/network failure to the user.
+    Remaining dependencies are fetched from the package index as binary wheels.
+    Open3D is the sole rewritten wheel owned by this release and must be present
+    locally with bytes allowed by the lock.
     """
 
     if not _is_directory_without_symlink(wheel_directory):
@@ -798,7 +813,15 @@ def validate_locked_wheelhouse(
     except (OSError, UnicodeError, ValueError) as exc:
         raise BundleResourceValidationError("bundle_wheelhouse_lock_invalid") from exc
 
-    available: dict[str, set[str]] = {}
+    locked_hashes: dict[str, set[str]] = {}
+    for line in _dependency_lock_logical_lines(requirements_lock):
+        requirement = line.split(" --hash=", 1)[0].split(";", 1)[0].strip()
+        name = _dependency_requirement_name(requirement)
+        locked_hashes[name] = set(
+            re.findall(r"--hash=sha256:([0-9a-f]{64})(?:\s|$)", line + " ")
+        )
+
+    available: dict[str, dict[str, list[Path]]] = {}
     try:
         candidates = sorted(wheel_directory.iterdir(), key=lambda item: item.name)
     except OSError as exc:
@@ -810,19 +833,29 @@ def validate_locked_wheelhouse(
         if identity is None:
             continue
         name, version = identity
-        available.setdefault(name, set()).add(version)
+        available.setdefault(name, {}).setdefault(version, []).append(candidate)
 
     missing = sorted(
         name
-        for name, version in pins.items()
-        if version not in available.get(name, set())
+        for name in BUNDLED_LOCKED_DISTRIBUTIONS
+        if name not in pins or pins[name] not in available.get(name, {})
     )
     if missing:
         raise BundleResourceValidationError("bundle_wheelhouse_incomplete")
+    for name in BUNDLED_LOCKED_DISTRIBUTIONS:
+        candidates_for_pin = available[name][pins[name]]
+        if len(candidates_for_pin) != 1:
+            raise BundleResourceValidationError("bundle_wheelhouse_ambiguous")
+        if _sha256_file(candidates_for_pin[0]) not in locked_hashes.get(name, set()):
+            raise BundleResourceValidationError("bundle_wheelhouse_hash_mismatch")
+    return tuple(
+        available[name][pins[name]][0].resolve(strict=True)
+        for name in sorted(BUNDLED_LOCKED_DISTRIBUTIONS)
+    )
 
 
 def _wheel_distribution_identity(path: Path) -> tuple[str, str] | None:
-    """Read just enough wheel metadata for the offline availability check."""
+    """Read just enough wheel metadata for the bundled availability check."""
 
     try:
         with zipfile.ZipFile(path) as archive:
@@ -925,12 +958,14 @@ def _dependency_lock_resolver_is_valid(value: object) -> bool:
         and PYTHON_312_FULL_VERSION.fullmatch(str(value["python_full_version"]))
         is not None
         and isinstance(value.get("macos_version"), str)
-        and MACOS_14_FULL_VERSION.fullmatch(str(value["macos_version"])) is not None
+        and MACOS_14_OR_LATER_FULL_VERSION.fullmatch(str(value["macos_version"]))
+        is not None
         and isinstance(value.get("sysconfig_platform"), str)
         and MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(
             str(value["sysconfig_platform"]).lower()
         )
         is not None
+        and value.get("target_compatibility") == CANONICAL_TARGET_COMPATIBILITY
     )
 
 
@@ -1162,9 +1197,6 @@ def build_setup_environment(
     env["PYTHONNOUSERSITE"] = "1"
     env["PIP_CONFIG_FILE"] = os.devnull
     env["PIP_NO_INPUT"] = "1"
-    # Python packages are only installed from the app-bundled wheelhouse.
-    # Model preparation uses its own HTTPS download code and is unaffected.
-    env["PIP_NO_INDEX"] = "1"
     env["PIP_CACHE_DIR"] = str(paths.cache_dir / "pip")
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     env["PYTHONPYCACHEPREFIX"] = str(paths.cache_dir / "pycache")
@@ -1424,7 +1456,9 @@ def run_setup(
                 assert bundle_payload is not None
                 bundled_wheels = resolve_bundled_wheels(bundle_manifest, bundle_payload)
                 if requirements_lock is not None:
-                    validate_locked_wheelhouse(requirements_lock, wheel.parent)
+                    bundled_wheels += validate_locked_wheelhouse(
+                        requirements_lock, wheel.parent
+                    )
             except Exception as exc:  # noqa: BLE001
                 diagnostic_log = _write_local_diagnostic_log(
                     paths.logs_dir / "validate_bundled_wheels.log",
@@ -1518,12 +1552,12 @@ def run_setup(
                 "同梱依存パッケージの導入が完了しました。",
             )
 
-        if requirements_lock is not None:
+        if allow_network and requirements_lock is not None:
             _write_progress(
                 progress_log,
                 "install_locked_dependencies",
                 "running",
-                "SHA-256固定済みの同梱依存パッケージを導入しています。",
+                "SHA-256固定済みの依存パッケージを取得・導入しています。",
             )
             locked_dependencies_step = _execute_step(
                 "install_locked_dependencies",
@@ -1552,7 +1586,7 @@ def run_setup(
                     progress_log,
                     "install_locked_dependencies",
                     "failed",
-                    "固定済みの同梱依存パッケージの導入に失敗しました。",
+                    "固定済み依存パッケージの導入に失敗しました。",
                 )
                 result.status = "failed"
                 result.reason = failure_reason
@@ -1561,20 +1595,20 @@ def run_setup(
                 progress_log,
                 "install_locked_dependencies",
                 locked_dependencies_step.status,
-                "固定済みの同梱依存パッケージの導入が完了しました。",
+                "固定済み依存パッケージの導入が完了しました。",
             )
         result.wheel_install_mode = (
-            "offline_require_hashes_wheelhouse"
-            if requirements_lock is not None
-            else "offline_local_no_deps"
+            "network_require_hashes_lock"
+            if allow_network and requirements_lock is not None
+            else ("network_constraints_binary_only" if allow_network else "no_deps")
         )
-        _write_progress(progress_log, "install_wheel", "running", "同梱アプリ本体を導入しています。")
+        _write_progress(progress_log, "install_wheel", "running", "依存パッケージを取得中です。数分かかることがあります。")
         install_step = _execute_step(
             "install_wheel",
             build_wheel_install_command(
                 venv_python,
                 wheel,
-                allow_network=allow_network,
+                allow_network=allow_network and requirements_lock is None,
                 constraints=constraints,
             ),
             paths.logs_dir,
@@ -1590,7 +1624,7 @@ def run_setup(
             return _finalize_result(result, write_state=not dry_run)
         _write_progress(progress_log, "install_wheel", "success", "同梱アプリ本体の導入が完了しました。")
 
-        if requirements_lock is not None:
+        if allow_network:
             _write_progress(
                 progress_log,
                 "verify_dependencies",

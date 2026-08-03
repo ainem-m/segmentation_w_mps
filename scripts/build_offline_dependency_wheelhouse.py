@@ -446,7 +446,9 @@ def inspect_wheel(path: Path) -> WheelIdentity:
             metadata_members = [
                 info
                 for info in infos
-                if not info.is_dir() and info.filename.endswith(".dist-info/METADATA")
+                if not info.is_dir()
+                and len(PurePosixPath(info.filename).parts) == 2
+                and info.filename.endswith(".dist-info/METADATA")
             ]
             if len(metadata_members) != 1:
                 raise OfflineWheelhouseError(
@@ -572,6 +574,7 @@ def build_download_command(
     requirements_lock: Path,
     destination: Path,
     approved_local_wheel_directory: Path | None = None,
+    no_index: bool = False,
 ) -> list[str]:
     """Return the sole permitted network-facing command for this artifact."""
 
@@ -598,6 +601,8 @@ def build_download_command(
     ]
     if approved_local_wheel_directory is not None:
         command.extend(["--find-links", str(approved_local_wheel_directory)])
+    if no_index:
+        command.append("--no-index")
     command.extend(["-r", str(requirements_lock)])
     return command
 
@@ -665,15 +670,75 @@ def _stage_candidate_wheels(
         _copy_wheel(source, staged_wheelhouse / source.name)
 
 
+def _stage_approved_local_wheels(
+    *,
+    approved_local_wheel_directory: Path | None,
+    approved_local_hashes: Mapping[str, str],
+    staged_wheelhouse: Path,
+) -> None:
+    if approved_local_wheel_directory is None:
+        if approved_local_hashes:
+            raise OfflineWheelhouseError(
+                "approved local wheel hashes exist without their source directory"
+            )
+        return
+    staged: set[str] = set()
+    for source in _collect_wheels(
+        approved_local_wheel_directory, "approved local wheel directory"
+    ):
+        identity = inspect_wheel(source)
+        if approved_local_hashes.get(identity.distribution) != identity.sha256:
+            raise OfflineWheelhouseError(
+                f"approved local wheel changed before staging: {identity.distribution}"
+            )
+        _copy_wheel(source, staged_wheelhouse / source.name)
+        staged.add(identity.distribution)
+    if staged != set(approved_local_hashes):
+        raise OfflineWheelhouseError("approved local wheel staging inventory mismatch")
+
+
+def _write_network_download_lock(
+    *,
+    requirements_lock: Path,
+    destination: Path,
+    excluded_distributions: set[str],
+) -> bool:
+    """Write the exact hashed subset that must come from the package index."""
+
+    if destination.exists() or destination.is_symlink():
+        raise OfflineWheelhouseError(
+            f"network download lock output must be absent: {destination}"
+        )
+    remaining: list[str] = []
+    for line in _logical_requirement_lines(requirements_lock):
+        requirement = line.split(" --hash=", 1)[0].strip()
+        matched = _PINNED_REQUIREMENT.fullmatch(requirement)
+        if matched is None:
+            raise OfflineWheelhouseError(
+                f"canonical requirements lock is not exact-pinned: {requirement}"
+            )
+        distribution = _normalize_distribution(matched.group(1))
+        if distribution not in excluded_distributions:
+            remaining.append(line)
+    if not remaining:
+        return False
+    destination.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+    parsed = parse_hashed_requirements_lock(destination)
+    expected = set(parse_hashed_requirements_lock(requirements_lock)) - excluded_distributions
+    if set(parsed) != expected:
+        raise OfflineWheelhouseError("network download lock inventory mismatch")
+    return True
+
+
 def _validate_approved_local_wheels(
     directory: Path | None,
     lock_entries: Mapping[str, LockEntry],
 ) -> dict[str, str]:
     """Validate the explicit fallback for a dependency without a public wheel.
 
-    pip consumes this directory through ``--find-links``.  It is not copied
-    separately, which avoids a duplicate wheel if pip selected the same local
-    input.  The returned hashes label that selected byte in the manifest.
+    The wheel is staged directly after validation.  Its distribution is
+    removed from the transient package-index download lock so pip cannot pick
+    an equal-version public wheel with different bytes.
     """
 
     if directory is None:
@@ -935,23 +1000,34 @@ def build_offline_dependency_wheelhouse(
         downloaded_directory.mkdir(mode=0o700)
         staged_wheelhouse = staged_output / "wheels"
         staged_wheelhouse.mkdir(mode=0o700)
-        command = build_download_command(
-            python_executable=python_executable,
-            requirements_lock=requirements_lock,
-            destination=downloaded_directory,
+        _stage_approved_local_wheels(
             approved_local_wheel_directory=approved_local_wheel_directory,
+            approved_local_hashes=approved_local_hashes,
+            staged_wheelhouse=staged_wheelhouse,
         )
-        completed = download_runner(
-            command,
-            cwd=staged_output,
-            env=_clean_pip_environment(),
+        network_lock = temporary_root / "network-download.requirements.lock"
+        has_network_requirements = _write_network_download_lock(
+            requirements_lock=requirements_lock,
+            destination=network_lock,
+            excluded_distributions=set(approved_local_hashes),
         )
-        if completed.returncode != 0:
-            raise OfflineWheelhouseError(
-                "offline wheel download failed: "
-                f"returncode={completed.returncode}; stdout={completed.stdout.strip()}; "
-                f"stderr={completed.stderr.strip()}"
+        if has_network_requirements:
+            command = build_download_command(
+                python_executable=python_executable,
+                requirements_lock=network_lock,
+                destination=downloaded_directory,
             )
+            completed = download_runner(
+                command,
+                cwd=staged_output,
+                env=_clean_pip_environment(),
+            )
+            if completed.returncode != 0:
+                raise OfflineWheelhouseError(
+                    "offline wheel download failed: "
+                    f"returncode={completed.returncode}; stdout={completed.stdout.strip()}; "
+                    f"stderr={completed.stderr.strip()}"
+                )
         _stage_candidate_wheels(
             downloaded_directory=downloaded_directory,
             staged_wheelhouse=staged_wheelhouse,

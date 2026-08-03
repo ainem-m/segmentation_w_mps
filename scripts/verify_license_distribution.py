@@ -36,12 +36,14 @@ try:
     from scripts.verify_macos_binary_linkage import (
         verify_app_bundle_macos_linkage,
         verify_system_macos_linkage,
+        verify_wheel_self_contained_macos_linkage,
         verify_wheel_system_macos_linkage,
     )
 except ModuleNotFoundError:  # Direct execution from the scripts directory.
     from verify_macos_binary_linkage import (  # type: ignore[no-redef]
         verify_app_bundle_macos_linkage,
         verify_system_macos_linkage,
+        verify_wheel_self_contained_macos_linkage,
         verify_wheel_system_macos_linkage,
     )
 
@@ -1858,7 +1860,7 @@ def verify_app(
     )
     verify_app_bundle_macos_linkage(app)
     for bundled_wheel in sorted((resources / "wheels").glob("*.whl")):
-        verify_wheel_system_macos_linkage(bundled_wheel)
+        verify_wheel_self_contained_macos_linkage(bundled_wheel)
     payloads = find_tree_model_payloads(
         resources,
         [
@@ -1882,6 +1884,7 @@ def verify_app(
 
     fpsample_wheels = list((resources / "wheels").glob("fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl"))
     require(len(fpsample_wheels) == 1, "app must contain exactly one macOS 13 arm64 fpsample wheel")
+    verify_wheel_system_macos_linkage(fpsample_wheels[0])
     with zipfile.ZipFile(fpsample_wheels[0]) as archive:
         names = archive.namelist()
         require(
@@ -2007,12 +2010,15 @@ def verify_app(
         manifest.get("signing_mode") == "developer-id"
         or manifest.get("notarized") is True
     )
+    release_dependency_attestation_required = (
+        bundled.get("requirements_lock") is not None
+    )
     third_party_licenses = manifest.get("third_party_licenses")
     require(
         isinstance(third_party_licenses, dict),
         "app manifest third_party_licenses section is missing or invalid",
     )
-    if release_runtime_attestation_required:
+    if release_dependency_attestation_required:
         require(
             third_party_licenses.get("inventory_mode") == "release_hashed_lock"
             and third_party_licenses.get("release_eligible") is True,
@@ -2025,7 +2031,7 @@ def verify_app(
             and third_party_licenses.get("release_eligible") is False,
             "development app third-party license inventory must be explicitly marked non-release-eligible",
         )
-    if release_runtime_attestation_required:
+    if release_dependency_attestation_required:
         require(
             bundled.get("requirements_lock")
             == "constraints/macos-arm64-py312.requirements.lock"
@@ -2076,6 +2082,17 @@ def verify_app(
             raise RuntimeError(
                 f"release app dependency lock metadata binding is invalid: {exc}"
             ) from exc
+    else:
+        require(
+            manifest.get("requirements_lock_sha256") is None
+            and manifest.get("dependency_lock_metadata_sha256") is None
+            and manifest.get("project_file_sha256") is None
+            and bundled.get("requirements_lock") is None
+            and bundled.get("dependency_lock_metadata") is None
+            and bundled.get("project_file") is None,
+            "development app must not claim release-attested dependency locks",
+        )
+    if release_runtime_attestation_required:
         require(
             bundled.get("release_build_toolchain_lock")
             == "build-toolchain/macos-arm64-py312.release-build-toolchain.lock"
@@ -2146,15 +2163,6 @@ def verify_app(
             "release app build-toolchain manifest provenance does not match its receipt",
         )
     else:
-        require(
-            manifest.get("requirements_lock_sha256") is None
-            and manifest.get("dependency_lock_metadata_sha256") is None
-            and manifest.get("project_file_sha256") is None
-            and bundled.get("requirements_lock") is None
-            and bundled.get("dependency_lock_metadata") is None
-            and bundled.get("project_file") is None,
-            "development app must not claim release-attested dependency locks",
-        )
         require(
             manifest.get("fpsample_pre_sign_wheel_sha256") is None
             and manifest.get("release_build_toolchain_lock_sha256") is None
