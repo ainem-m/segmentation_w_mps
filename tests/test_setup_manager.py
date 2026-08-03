@@ -628,6 +628,8 @@ class SetupManagerTests(unittest.TestCase):
                 "pip",
                 "--isolated",
             ])
+            self.assertIn("--disable-pip-version-check", command)
+            self.assertIn("--no-cache-dir", command)
             self.assertIn("--find-links", command)
             self.assertIn("--only-binary", command)
             self.assertEqual(
@@ -672,6 +674,8 @@ class SetupManagerTests(unittest.TestCase):
                     "-m",
                     "pip",
                     "--isolated",
+                    "--disable-pip-version-check",
+                    "--no-cache-dir",
                     "install",
                     "--force-reinstall",
                     "--no-deps",

@@ -1135,6 +1135,8 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertNotIn('env["PIP_NO_INDEX"] = "1"', launch_environment)
         self.assertNotIn('"--no-index"', bootstrap)
         self.assertIn('"--no-deps"', bootstrap)
+        self.assertIn('"--disable-pip-version-check"', bootstrap)
+        self.assertIn('"--no-cache-dir"', bootstrap)
         self.assertIn(
             'onProgress(.installWheel, "依存パッケージを取得中です。数分かかることがあります。")',
             PROCESS,

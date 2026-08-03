@@ -1381,8 +1381,81 @@ def _macos_wheel_member_key(path: PurePosixPath) -> str:
     return unicodedata.normalize("NFC", str(path)).casefold()
 
 
+_OPEN3D_WHEEL_FILENAME = (
+    "open3d-0.19.0-cp312-cp312-macosx_10_15_universal2.whl"
+)
+_OPEN3D_NATIVE_MEMBERS = {
+    PurePosixPath("open3d/cpu/pybind.cpython-312-darwin.so"),
+    PurePosixPath("open3d/libomp.dylib"),
+    PurePosixPath("open3d/libtbb.12.dylib"),
+}
+
+
+def _verify_open3d_wheel_linkage(
+    slices: tuple[_MachOSlice, ...],
+    *,
+    member: PurePosixPath,
+    label: str,
+) -> None:
+    expected_ids = {
+        PurePosixPath("open3d/cpu/pybind.cpython-312-darwin.so"): (),
+        PurePosixPath("open3d/libomp.dylib"): ("@rpath/libomp.dylib",),
+        PurePosixPath("open3d/libtbb.12.dylib"): ("@rpath/libtbb.12.dylib",),
+    }
+    expected_rpaths = {
+        PurePosixPath("open3d/cpu/pybind.cpython-312-darwin.so"): (
+            "@loader_path",
+            "@loader_path/..",
+        ),
+        PurePosixPath("open3d/libomp.dylib"): (),
+        PurePosixPath("open3d/libtbb.12.dylib"): (),
+    }
+    expected_internal = {
+        PurePosixPath("open3d/cpu/pybind.cpython-312-darwin.so"): {
+            "@rpath/libomp.dylib",
+            "@rpath/libtbb.12.dylib",
+        },
+        PurePosixPath("open3d/libomp.dylib"): set(),
+        PurePosixPath("open3d/libtbb.12.dylib"): set(),
+    }
+    if member not in _OPEN3D_NATIVE_MEMBERS:
+        raise TestAccountBundleEvidenceError(
+            f"{label}: unexpected Open3D native member"
+        )
+    for index, item in enumerate(slices):
+        slice_label = f"{label} [{item.architecture} slice {index}]"
+        if item.dylib_ids != expected_ids[member]:
+            raise TestAccountBundleEvidenceError(
+                f"{slice_label}: Open3D LC_ID_DYLIB mismatch"
+            )
+        if item.rpaths != expected_rpaths[member]:
+            raise TestAccountBundleEvidenceError(
+                f"{slice_label}: Open3D LC_RPATH mismatch"
+            )
+        if len(item.dylinkers) > 1 or (
+            item.dylinkers and item.dylinkers[0] != "/usr/lib/dyld"
+        ):
+            raise TestAccountBundleEvidenceError(
+                f"{slice_label}: LC_LOAD_DYLINKER must be exactly /usr/lib/dyld"
+            )
+        if item.dyld_environments:
+            raise TestAccountBundleEvidenceError(
+                f"{slice_label}: LC_DYLD_ENVIRONMENT is not allowed"
+            )
+        internal = {
+            dependency
+            for dependency in item.dependencies
+            if not _is_sealed_system_dependency(dependency)
+        }
+        if internal != expected_internal[member]:
+            raise TestAccountBundleEvidenceError(
+                f"{slice_label}: Open3D internal dependency closure mismatch"
+            )
+
+
 def _verify_wheel_machos(wheel: Path) -> list[tuple[str, tuple[_MachOSlice, ...]]]:
     results: list[tuple[str, tuple[_MachOSlice, ...]]] = []
+    native_members: set[PurePosixPath] = set()
     total_native_bytes = 0
     descriptor: int | None = None
     try:
@@ -1438,14 +1511,23 @@ def _verify_wheel_machos(wheel: Path) -> list[tuple[str, tuple[_MachOSlice, ...]
                             f"{label}: packaged native-library suffix is not a recognized Mach-O"
                         )
                     slices = _verify_macos14_arm64(data, label)
-                    # Wheels are installed under App Support rather than inside
-                    # this signed app bundle.  Their @loader_path and rpath
-                    # targets cannot be proven from the archive alone, so do
-                    # not grant them the app bundle's tokenized-dependency
-                    # exception.  This matches the release linkage gate:
-                    # native wheel members must use only sealed macOS dylibs.
-                    _verify_system_linkage(slices, label)
+                    native_members.add(relative)
+                    if wheel.name == _OPEN3D_WHEEL_FILENAME:
+                        _verify_open3d_wheel_linkage(
+                            slices,
+                            member=relative,
+                            label=label,
+                        )
+                    else:
+                        _verify_system_linkage(slices, label)
                     results.append((label, slices))
+                if (
+                    wheel.name == _OPEN3D_WHEEL_FILENAME
+                    and native_members != _OPEN3D_NATIVE_MEMBERS
+                ):
+                    raise TestAccountBundleEvidenceError(
+                        f"{wheel}: Open3D native member inventory mismatch"
+                    )
             _verify_regular_file_unchanged(
                 wheel_handle.fileno(),
                 wheel_metadata,

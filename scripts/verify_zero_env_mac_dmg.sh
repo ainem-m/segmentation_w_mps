@@ -133,15 +133,15 @@ fi
 
 cat "${STATE_JSON}"
 
-if ! grep -q '"status": "success"' "${STATE_JSON}"; then
+if ! /usr/bin/python3 -c 'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("status") == "success" else 1)' "${STATE_JSON}"; then
   echo "Setup did not finish with status=success" >&2
   exit 1
 fi
-if ! grep -q '"actual_device": "mps"' "${STATE_JSON}"; then
+if ! /usr/bin/python3 -c 'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("doctor", {}).get("actual_device") == "mps" else 1)' "${STATE_JSON}"; then
   echo "MPS doctor did not record actual_device=mps" >&2
   exit 1
 fi
-if ! grep -q '"normalizer_source": "app_bundle"' "${STATE_JSON}"; then
+if ! /usr/bin/python3 -c 'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("dicom_normalizer", {}).get("normalizer_source") == "app_bundle" else 1)' "${STATE_JSON}"; then
   echo "Bundled DICOM normalizer was not used" >&2
   exit 1
 fi

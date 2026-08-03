@@ -136,6 +136,40 @@ class TestAccountBundleEvidenceTests(unittest.TestCase):
             archive.writestr("fixture/native.so", binary)
         return app, resources
 
+    @staticmethod
+    def _add_open3d_wheel(
+        resources: Path,
+        *,
+        pybind_dependencies: tuple[str, ...] = (
+            "/usr/lib/libSystem.B.dylib",
+            "@rpath/libtbb.12.dylib",
+            "@rpath/libomp.dylib",
+        ),
+        include_libomp: bool = True,
+    ) -> None:
+        wheel = (
+            resources
+            / "wheels"
+            / "open3d-0.19.0-cp312-cp312-macosx_10_15_universal2.whl"
+        )
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr(
+                "open3d/cpu/pybind.cpython-312-darwin.so",
+                thin_arm64_macho(
+                    dependencies=pybind_dependencies,
+                    rpaths=("@loader_path", "@loader_path/.."),
+                ),
+            )
+            if include_libomp:
+                archive.writestr(
+                    "open3d/libomp.dylib",
+                    thin_arm64_macho(install_name="@rpath/libomp.dylib"),
+                )
+            archive.writestr(
+                "open3d/libtbb.12.dylib",
+                thin_arm64_macho(install_name="@rpath/libtbb.12.dylib"),
+            )
+
     def test_app_and_wheels_require_arm64_and_macos14_or_earlier(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             app, _ = self._make_app(Path(temporary))
@@ -358,6 +392,47 @@ class TestAccountBundleEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 TestAccountBundleEvidenceError,
                 "non-system Mach-O dependency.*@loader_path",
+            ):
+                verify_macos14_arm64_app_and_wheels(app)
+
+    def test_app_and_wheels_accept_exact_bundled_open3d_linkage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            app, resources = self._make_app(Path(temporary))
+            self._add_open3d_wheel(resources)
+
+            result = verify_macos14_arm64_app_and_wheels(app)
+
+        self.assertEqual(result["wheel_count"], 2)
+        self.assertEqual(result["macho_file_count"], 7)
+        self.assertEqual(result["macho_slice_count"], 7)
+
+    def test_app_and_wheels_reject_incomplete_bundled_open3d_linkage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            app, resources = self._make_app(Path(temporary))
+            self._add_open3d_wheel(resources, include_libomp=False)
+
+            with self.assertRaisesRegex(
+                TestAccountBundleEvidenceError,
+                "Open3D native member inventory mismatch",
+            ):
+                verify_macos14_arm64_app_and_wheels(app)
+
+    def test_app_and_wheels_reject_external_bundled_open3d_linkage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            app, resources = self._make_app(Path(temporary))
+            self._add_open3d_wheel(
+                resources,
+                pybind_dependencies=(
+                    "/usr/lib/libSystem.B.dylib",
+                    "@rpath/libtbb.12.dylib",
+                    "@rpath/libomp.dylib",
+                    "/opt/homebrew/opt/bad/lib/libbad.dylib",
+                ),
+            )
+
+            with self.assertRaisesRegex(
+                TestAccountBundleEvidenceError,
+                "Open3D internal dependency closure mismatch",
             ):
                 verify_macos14_arm64_app_and_wheels(app)
 

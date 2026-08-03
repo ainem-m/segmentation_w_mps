@@ -388,7 +388,15 @@ def build_venv_command(python_executable: Path, env_dir: Path) -> list[str]:
 def _isolated_pip_command(venv_python: Path) -> list[str]:
     """Use the managed interpreter and ignore all user pip configuration."""
 
-    return [str(venv_python), "-I", "-m", "pip", "--isolated"]
+    return [
+        str(venv_python),
+        "-I",
+        "-m",
+        "pip",
+        "--isolated",
+        "--disable-pip-version-check",
+        "--no-cache-dir",
+    ]
 
 
 def build_wheel_install_command(

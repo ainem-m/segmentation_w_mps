@@ -994,9 +994,11 @@ struct SwiftProgressContractTests {
         )
         require(
             bootstrapInstall.contains("--isolated")
+                && bootstrapInstall.contains("--disable-pip-version-check")
+                && bootstrapInstall.contains("--no-cache-dir")
                 && !bootstrapInstall.contains("--no-index")
                 && bootstrapInstall.contains("--no-deps"),
-            "bootstrap pip install must be isolated and dependency-free"
+            "bootstrap pip install must be isolated, cache-free, and dependency-free"
         )
         try! FileManager.default.createDirectory(
             at: refreshPaths.venvPython.deletingLastPathComponent(),

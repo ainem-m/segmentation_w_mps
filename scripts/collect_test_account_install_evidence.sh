@@ -1016,6 +1016,10 @@ current_bundle = {
     "sample1_manifest_sha256": manifest.get("sample1_manifest_sha256"),
     "setup_weights_manifest_sha256": manifest.get("setup_weights_manifest_sha256"),
     "update_manifest_url": manifest.get("update_manifest_url"),
+    "python_runtime_fingerprint": manifest.get("python_runtime_fingerprint"),
+    "python_runtime_executable_sha256": manifest.get(
+        "python_runtime_executable_sha256"
+    ),
 }
 check("setup_state_installed_bundle_current", installed_bundle == current_bundle, installed_bundle)
 if release_requires_hashed_lock:

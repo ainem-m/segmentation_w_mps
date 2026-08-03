@@ -562,7 +562,7 @@ struct CommandBuilder {
     }
 
     static func bootstrapInstallCommand(python: URL, wheel: URL) -> [String] {
-        [python.path, "-I", "-m", "pip", "--isolated", "install", "--force-reinstall", "--no-deps", wheel.path]
+        [python.path, "-I", "-m", "pip", "--isolated", "--disable-pip-version-check", "--no-cache-dir", "install", "--force-reinstall", "--no-deps", wheel.path]
     }
 
     static func setupCommand(
