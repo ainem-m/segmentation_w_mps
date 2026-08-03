@@ -228,6 +228,99 @@ expected_app_version = project_version or expected_app_version_from_env
 if not expected_app_version:
     identity_failures.append("expected_app_version_unavailable")
 
+development_preflight_value = os.environ.get(
+    "TOTALSEGMENTATOR_WRAPPER_MAC_TEST_ACCOUNT_DEVELOPMENT_PREFLIGHT", "0"
+).strip()
+if development_preflight_value not in {"0", "1"}:
+    identity_failures.append("invalid_development_preflight_flag")
+development_preflight = development_preflight_value == "1"
+expected_dmg_sha256 = os.environ.get(
+    "TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256", ""
+).strip()
+notary_receipt_value = os.environ.get(
+    "TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_RECEIPT", ""
+).strip()
+notary_receipt_path = normalized_absolute_path(notary_receipt_value)
+notary_receipt_bytes: bytes | None = None
+notary_receipt: dict[str, object] = {}
+if development_preflight:
+    identity_failures.append("development_preflight_not_release_evidence")
+else:
+    if not valid_sha256(expected_dmg_sha256):
+        identity_failures.append("expected_dmg_sha256_required_for_final_import")
+    if notary_receipt_path is None:
+        identity_failures.append("notary_receipt_required_for_final_import")
+    else:
+        try:
+            notary_receipt_bytes = read_regular_non_symlink(notary_receipt_path)
+            decoded_receipt = json.loads(
+                notary_receipt_bytes.decode("utf-8"),
+                object_pairs_hook=reject_duplicate_json_keys,
+            )
+            if not isinstance(decoded_receipt, dict):
+                raise ValueError("notary_receipt_must_be_object")
+            notary_receipt = decoded_receipt
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            identity_failures.append(f"invalid_notary_receipt:{exc}")
+        else:
+            expected_receipt_fields = {
+                "schema",
+                "created_at_utc",
+                "version",
+                "source_commit",
+                "bundle_identifier",
+                "team_identifier",
+                "submission_id",
+                "submission_status",
+                "submitted_dmg_sha256",
+                "submitted_dmg_size_bytes",
+                "final_dmg_sha256",
+                "final_dmg_size_bytes",
+                "app_manifest_sha256",
+                "dmg_filename",
+            }
+            if set(notary_receipt) != expected_receipt_fields:
+                identity_failures.append("notary_receipt_field_set_mismatch")
+            if (
+                notary_receipt.get("schema")
+                != "totalsegmentator_wrapper_mac.notary_release_receipt.v1"
+            ):
+                identity_failures.append("notary_receipt_schema_mismatch")
+            if notary_receipt.get("version") != expected_app_version:
+                identity_failures.append("notary_receipt_version_mismatch")
+            if notary_receipt.get("submission_status") != "Accepted":
+                identity_failures.append("notary_receipt_submission_not_accepted")
+            for field, pattern in (
+                ("source_commit", r"[0-9a-f]{40}"),
+                ("team_identifier", r"[A-Z0-9]{10}"),
+                ("submission_id", r"[0-9A-Fa-f-]{36}"),
+                ("submitted_dmg_sha256", r"[0-9a-f]{64}"),
+                ("final_dmg_sha256", r"[0-9a-f]{64}"),
+                ("app_manifest_sha256", r"[0-9a-f]{64}"),
+            ):
+                value = notary_receipt.get(field)
+                if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+                    identity_failures.append(f"invalid_notary_receipt_{field}")
+            for field in ("submitted_dmg_size_bytes", "final_dmg_size_bytes"):
+                value = notary_receipt.get(field)
+                if type(value) is not int or value <= 0:
+                    identity_failures.append(f"invalid_notary_receipt_{field}")
+            bundle_identifier = notary_receipt.get("bundle_identifier")
+            if not isinstance(bundle_identifier, str) or not bundle_identifier.strip():
+                identity_failures.append("invalid_notary_receipt_bundle_identifier")
+            dmg_filename = notary_receipt.get("dmg_filename")
+            if (
+                not isinstance(dmg_filename, str)
+                or Path(dmg_filename).name != dmg_filename
+                or not dmg_filename.endswith(".dmg")
+            ):
+                identity_failures.append("invalid_notary_receipt_dmg_filename")
+            if (
+                valid_sha256(expected_dmg_sha256)
+                and notary_receipt.get("final_dmg_sha256") != expected_dmg_sha256
+            ):
+                identity_failures.append("expected_dmg_sha256_does_not_match_notary_receipt")
+
 try:
     max_evidence_age_seconds = int(
         os.environ.get(
@@ -325,8 +418,10 @@ required_checks = [
     "manifest_has_constraints_sha256",
     "manifest_has_requirements_lock_sha256",
     "manifest_has_dependency_lock_metadata_sha256",
+    "manifest_has_dependency_wheelhouse_manifest_sha256",
     "bundled_requirements_lock_sha256_matches_manifest",
     "bundled_dependency_lock_metadata_sha256_matches_manifest",
+    "bundled_dependency_wheelhouse_manifest_sha256_matches_manifest",
     "manifest_has_normalizer_input_sha256",
     "manifest_has_normalizer_sha256",
     "manifest_has_normalizer_sha256_scope",
@@ -362,6 +457,7 @@ required_checks = [
     "setup_state_installed_bundle_current",
     "installed_requirements_lock_sha256_matches_manifest",
     "installed_dependency_lock_metadata_sha256_matches_manifest",
+    "installed_dependency_wheelhouse_manifest_sha256_matches_manifest",
     "app_bundle_in_expected_install_location",
     "app_bundle_not_symlink",
     "manifest_release_identity_complete",
@@ -451,11 +547,22 @@ else:
     elif dmg_path is not None:
         if normalized_absolute_path(dmg_path) is None or not valid_sha256(dmg_sha256):
             identity_failures.append("invalid_dmg_identity")
-    expected_dmg_sha256 = os.environ.get(
-        "TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256", ""
-    ).strip()
-    if expected_dmg_sha256 and dmg_sha256 != expected_dmg_sha256:
-        identity_failures.append("dmg_sha256_does_not_match_expected")
+    if not development_preflight:
+        if dmg_path is None or dmg_sha256 is None:
+            identity_failures.append("final_evidence_dmg_identity_required")
+        if valid_sha256(expected_dmg_sha256) and dmg_sha256 != expected_dmg_sha256:
+            identity_failures.append("dmg_sha256_does_not_match_expected")
+        if notary_receipt:
+            if dmg_sha256 != notary_receipt.get("final_dmg_sha256"):
+                identity_failures.append("dmg_sha256_does_not_match_notary_receipt")
+            if identity.get("setup_manifest_sha256") != notary_receipt.get(
+                "app_manifest_sha256"
+            ):
+                identity_failures.append("app_manifest_sha256_does_not_match_notary_receipt")
+            if isinstance(dmg_path, str) and Path(dmg_path).name != notary_receipt.get(
+                "dmg_filename"
+            ):
+                identity_failures.append("dmg_filename_does_not_match_notary_receipt")
 
 if evidence_app_path is None or evidence_home is None:
     identity_failures.append("invalid_evidence_app_or_home_path")
@@ -488,6 +595,7 @@ passed = (
     and not home_failures
     and not malformed_evidence
     and not identity_failures
+    and not development_preflight
 )
 
 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -512,6 +620,12 @@ verdict = {
     "identity_failures": sorted(set(identity_failures)),
     "home_failures": home_failures,
     "allow_zero_env_evidence": allow_zero_env,
+    "development_preflight": development_preflight,
+    "notary_receipt": str(notary_receipt_path) if notary_receipt_path else None,
+    "notary_receipt_sha256": sha256(notary_receipt_bytes)
+    if notary_receipt_bytes is not None
+    else None,
+    "expected_dmg_sha256": expected_dmg_sha256 or None,
     "expected_app_version": expected_app_version or None,
     "project_version": project_version,
     "max_evidence_age_seconds": max_evidence_age_seconds,

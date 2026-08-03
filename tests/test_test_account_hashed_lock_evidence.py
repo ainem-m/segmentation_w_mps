@@ -23,10 +23,13 @@ HASHED_LOCK_CHECKS = {
     "pip_check_step_success",
     "manifest_has_requirements_lock_sha256",
     "manifest_has_dependency_lock_metadata_sha256",
+    "manifest_has_dependency_wheelhouse_manifest_sha256",
     "bundled_requirements_lock_sha256_matches_manifest",
     "bundled_dependency_lock_metadata_sha256_matches_manifest",
+    "bundled_dependency_wheelhouse_manifest_sha256_matches_manifest",
     "installed_requirements_lock_sha256_matches_manifest",
     "installed_dependency_lock_metadata_sha256_matches_manifest",
+    "installed_dependency_wheelhouse_manifest_sha256_matches_manifest",
 }
 
 NATIVE_RELEASE_EVIDENCE_CHECKS = {
@@ -61,6 +64,7 @@ class TestAccountHashedLockEvidenceTests(unittest.TestCase):
         source_as_symlink: bool = False,
         source_missing: bool = False,
         raw_evidence: str | None = None,
+        release_binding: str = "valid",
     ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "fixture-root"
@@ -91,8 +95,8 @@ class TestAccountHashedLockEvidenceTests(unittest.TestCase):
                     "dependency_set_id": "fixture-dependencies",
                     "setup_manifest_sha256": "a" * 64,
                     "info_plist_sha256": "b" * 64,
-                    "dmg_path": None,
-                    "dmg_sha256": None,
+                    "dmg_path": "/Users/separate-release-test-account/Downloads/TotalSegmentator Wrapper for Mac-0.4.1-release-arm64.dmg",
+                    "dmg_sha256": "c" * 64,
                 },
                 "checks": check_entries
                 if check_entries is not None
@@ -119,6 +123,51 @@ class TestAccountHashedLockEvidenceTests(unittest.TestCase):
                 shutil.copy2(target, evidence)
             environment = dict(os.environ)
             environment["PYTHON_BIN"] = sys.executable
+            for name in (
+                "TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_RECEIPT",
+                "TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256",
+                "TOTALSEGMENTATOR_WRAPPER_MAC_TEST_ACCOUNT_DEVELOPMENT_PREFLIGHT",
+            ):
+                environment.pop(name, None)
+            if release_binding in {"valid", "receipt_mismatch"}:
+                receipt = root / "notary-release-receipt.json"
+                receipt.write_text(
+                    json.dumps(
+                        {
+                            "schema": "totalsegmentator_wrapper_mac.notary_release_receipt.v1",
+                            "created_at_utc": datetime.now(timezone.utc)
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                            "version": "0.4.1",
+                            "source_commit": "d" * 40,
+                            "bundle_identifier": "jp.chino.totalsegmentator.wrapper.mac",
+                            "team_identifier": "TEAMID1234",
+                            "submission_id": "00000000-0000-0000-0000-000000000000",
+                            "submission_status": "Accepted",
+                            "submitted_dmg_sha256": "e" * 64,
+                            "submitted_dmg_size_bytes": 1,
+                            "final_dmg_sha256": (
+                                "f" * 64 if release_binding == "receipt_mismatch" else "c" * 64
+                            ),
+                            "final_dmg_size_bytes": 2,
+                            "app_manifest_sha256": "a" * 64,
+                            "dmg_filename": "TotalSegmentator Wrapper for Mac-0.4.1-release-arm64.dmg",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                environment["TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_RECEIPT"] = str(
+                    receipt
+                )
+                environment["TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256"] = (
+                    "c" * 64
+                )
+            elif release_binding == "development":
+                environment[
+                    "TOTALSEGMENTATOR_WRAPPER_MAC_TEST_ACCOUNT_DEVELOPMENT_PREFLIGHT"
+                ] = "1"
+            elif release_binding != "missing":
+                raise AssertionError(f"unknown release binding: {release_binding}")
             completed = subprocess.run(
                 ["/bin/bash", str(copied_importer), str(evidence)],
                 cwd=root,
@@ -135,6 +184,58 @@ class TestAccountHashedLockEvidenceTests(unittest.TestCase):
             self.assertEqual(len(verdicts), 1, completed.stderr + completed.stdout)
             verdict = json.loads(verdicts[0].read_text(encoding="utf-8"))
             return completed, verdict
+
+    def test_final_import_requires_notary_receipt_and_expected_digest(self) -> None:
+        checks = {
+            name: True
+            for name in importer_required_checks(IMPORTER.read_text(encoding="utf-8"))
+        }
+
+        completed, verdict = self._run_importer(checks, release_binding="missing")
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIs(verdict["passed"], False)
+        self.assertIn(
+            "notary_receipt_required_for_final_import", verdict["identity_failures"]
+        )
+        self.assertIn(
+            "expected_dmg_sha256_required_for_final_import",
+            verdict["identity_failures"],
+        )
+
+    def test_final_import_rejects_receipt_digest_mismatch(self) -> None:
+        checks = {
+            name: True
+            for name in importer_required_checks(IMPORTER.read_text(encoding="utf-8"))
+        }
+
+        completed, verdict = self._run_importer(
+            checks, release_binding="receipt_mismatch"
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIs(verdict["passed"], False)
+        self.assertIn(
+            "expected_dmg_sha256_does_not_match_notary_receipt",
+            verdict["identity_failures"],
+        )
+
+    def test_explicit_development_preflight_cannot_be_a_final_pass(self) -> None:
+        checks = {
+            name: True
+            for name in importer_required_checks(IMPORTER.read_text(encoding="utf-8"))
+        }
+
+        completed, verdict = self._run_importer(
+            checks, release_binding="development"
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIs(verdict["passed"], False)
+        self.assertIs(verdict["development_preflight"], True)
+        self.assertIn(
+            "development_preflight_not_release_evidence", verdict["identity_failures"]
+        )
 
     def test_hashed_lock_release_evidence_is_accepted(self) -> None:
         checks = {
@@ -332,6 +433,12 @@ class TestAccountHashedLockEvidenceTests(unittest.TestCase):
         self.assertIn("write_json_atomically", collector)
         self.assertIn("collected_at_utc", collector)
         self.assertIn("app_identity", collector)
+        self.assertIn('state.get("wheel_install_mode") == "offline_require_hashes_wheelhouse"', collector)
+        self.assertIn('state.get("wheel_install_mode") == "offline_local_no_deps"', collector)
+        self.assertNotIn('state.get("wheel_install_mode") == "network_require_hashes_lock"', collector)
+        self.assertNotIn('state.get("wheel_install_mode") == "network_constraints_binary_only"', collector)
+        self.assertIn('"dependency_wheelhouse_manifest_sha256"', collector)
+        self.assertIn('bundled.get("dependency_wheelhouse_manifest")', collector)
         self.assertNotIn('mkdir -p "${SHARED_EVIDENCE_DIR}" || true', collector)
         self.assertNotIn('cp "${EVIDENCE_JSON}" "${SHARED_EVIDENCE_JSON}" || true', collector)
 

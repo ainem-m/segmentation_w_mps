@@ -767,6 +767,7 @@ for manifest_field in (
     "constraints_sha256",
     "requirements_lock_sha256",
     "dependency_lock_metadata_sha256",
+    "dependency_wheelhouse_manifest_sha256",
     "normalizer_input_sha256",
     "normalizer_sha256",
     "normalizer_sha256_scope",
@@ -785,14 +786,20 @@ for manifest_field in (
 
 requirements_lock_sha256 = manifest.get("requirements_lock_sha256")
 dependency_lock_metadata_sha256 = manifest.get("dependency_lock_metadata_sha256")
+dependency_wheelhouse_manifest_sha256 = manifest.get(
+    "dependency_wheelhouse_manifest_sha256"
+)
 requirements_lock = bundled_regular_file(bundled.get("requirements_lock"))
 dependency_lock_metadata = bundled_regular_file(
     bundled.get("dependency_lock_metadata")
 )
+dependency_wheelhouse_manifest = bundled_regular_file(
+    bundled.get("dependency_wheelhouse_manifest")
+)
 if release_requires_hashed_lock:
     check(
         "wheel_install_hashed_lock",
-        state.get("wheel_install_mode") == "network_require_hashes_lock",
+        state.get("wheel_install_mode") == "offline_require_hashes_wheelhouse",
         state.get("wheel_install_mode"),
     )
     check(
@@ -815,6 +822,13 @@ if release_requires_hashed_lock:
         isinstance(dependency_lock_metadata_sha256, str)
         and re.fullmatch(r"[0-9a-f]{64}", dependency_lock_metadata_sha256) is not None,
         dependency_lock_metadata_sha256,
+    )
+    check(
+        "manifest_has_dependency_wheelhouse_manifest_sha256",
+        isinstance(dependency_wheelhouse_manifest_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", dependency_wheelhouse_manifest_sha256)
+        is not None,
+        dependency_wheelhouse_manifest_sha256,
     )
     check(
         "bundled_requirements_lock_sha256_matches_manifest",
@@ -844,12 +858,28 @@ if release_requires_hashed_lock:
             else None,
         },
     )
+    check(
+        "bundled_dependency_wheelhouse_manifest_sha256_matches_manifest",
+        dependency_wheelhouse_manifest is not None
+        and isinstance(dependency_wheelhouse_manifest_sha256, str)
+        and sha256_file(dependency_wheelhouse_manifest)
+        == dependency_wheelhouse_manifest_sha256,
+        {
+            "path": str(dependency_wheelhouse_manifest)
+            if dependency_wheelhouse_manifest is not None
+            else None,
+            "manifest_sha256": dependency_wheelhouse_manifest_sha256,
+            "actual_sha256": sha256_file(dependency_wheelhouse_manifest)
+            if dependency_wheelhouse_manifest is not None
+            else None,
+        },
+    )
 else:
     # The development-only no-lock route remains useful for local smoke tests,
     # but its evidence cannot satisfy the release importer contract below.
     check(
         "development_no_lock_wheel_install",
-        state.get("wheel_install_mode") == "network_constraints_binary_only",
+        state.get("wheel_install_mode") == "offline_local_no_deps",
         state.get("wheel_install_mode"),
     )
 native_input_scope = "build-input-before-copy-and-code-sign-v1"
@@ -978,6 +1008,9 @@ current_bundle = {
     "constraints_sha256": manifest.get("constraints_sha256"),
     "requirements_lock_sha256": manifest.get("requirements_lock_sha256"),
     "dependency_lock_metadata_sha256": manifest.get("dependency_lock_metadata_sha256"),
+    "dependency_wheelhouse_manifest_sha256": manifest.get(
+        "dependency_wheelhouse_manifest_sha256"
+    ),
     "normalizer_sha256": manifest.get("normalizer_sha256"),
     "dcm2niix_sha256": manifest.get("dcm2niix_sha256"),
     "sample1_manifest_sha256": manifest.get("sample1_manifest_sha256"),
@@ -1001,6 +1034,17 @@ if release_requires_hashed_lock:
         {
             "installed": installed_bundle.get("dependency_lock_metadata_sha256"),
             "manifest": dependency_lock_metadata_sha256,
+        },
+    )
+    check(
+        "installed_dependency_wheelhouse_manifest_sha256_matches_manifest",
+        installed_bundle.get("dependency_wheelhouse_manifest_sha256")
+        == dependency_wheelhouse_manifest_sha256,
+        {
+            "installed": installed_bundle.get(
+                "dependency_wheelhouse_manifest_sha256"
+            ),
+            "manifest": dependency_wheelhouse_manifest_sha256,
         },
     )
 

@@ -111,15 +111,18 @@ Required evidence:
 - `passed: true`
 - `setup_state_success`
 - `install_wheel_step_success`
-- `wheel_install_hashed_lock`（`network_require_hashes_lock`）
+- `wheel_install_hashed_lock`（`offline_require_hashes_wheelhouse`）
 - `install_bundled_wheels_step_success`
 - `install_locked_dependencies_step_success`
 - `pip_check_step_success`
-- `manifest_has_requirements_lock_sha256` / `manifest_has_dependency_lock_metadata_sha256`
+- `manifest_has_requirements_lock_sha256` / `manifest_has_dependency_lock_metadata_sha256` /
+  `manifest_has_dependency_wheelhouse_manifest_sha256`
 - `bundled_requirements_lock_sha256_matches_manifest` /
-  `bundled_dependency_lock_metadata_sha256_matches_manifest`
+  `bundled_dependency_lock_metadata_sha256_matches_manifest` /
+  `bundled_dependency_wheelhouse_manifest_sha256_matches_manifest`
 - `installed_requirements_lock_sha256_matches_manifest` /
-  `installed_dependency_lock_metadata_sha256_matches_manifest`
+  `installed_dependency_lock_metadata_sha256_matches_manifest` /
+  `installed_dependency_wheelhouse_manifest_sha256_matches_manifest`
 - `installed_fpsample_version` / `installed_fpsample_import_sample`
 - `installed_acvl_utils_version` / `installed_acvl_utils_import`
 - `manifest_has_fpsample_wheel_sha256` / `bundled_fpsample_wheel_sha256_matches_manifest`
@@ -152,7 +155,7 @@ Required evidence:
 - `manifest_bundled_python312`
 - `bundled_python_has_no_absolute_symlinks`
 
-`network_constraints_binary_only` は、lockを同梱しない開発用smoke testだけの経路です。
+`offline_local_no_deps` は、lockを同梱しない開発用smoke testだけの経路です。
 その証跡は最終release evidenceとしてimportできません。release DMGでは、上記の
 hashed-lock / bundled-wheel / `pip check` のすべてが成功している必要があります。
 
@@ -186,9 +189,19 @@ its diagnostic fields are well formed. It rejects symlinked evidence files,
 stale evidence (seven days by default), and evidence whose app version does not
 match the current checkout's `pyproject.toml`. The collector records the installed app's version,
 build/dependency IDs, `setup_manifest.json` and `Info.plist` hashes, and, when
-the DMG was supplied for stapler validation, its SHA-256. A release operator can
-also bind that DMG hash explicitly with
-`TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256`.
+the DMG was supplied for stapler validation, its SHA-256. Final release import
+requires both `TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_RECEIPT` and
+`TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256`. The expected SHA must equal
+the receipt's `final_dmg_sha256`, the evidence's DMG SHA, and the DMG filename
+recorded by the receipt. The receipt's app-manifest SHA must also equal the
+evidence's `setup_manifest.json` SHA. Missing or inconsistent receipt binding is
+a failed final verdict, not a warning.
+
+```bash
+TOTALSEGMENTATOR_WRAPPER_MAC_NOTARY_RECEIPT=dist/notary/notary-release-receipt.json \
+TOTALSEGMENTATOR_WRAPPER_MAC_EXPECTED_DMG_SHA256=<final_dmg_sha256> \
+  scripts/import_test_account_evidence.sh /path/to/test_account_install_evidence.json
+```
 
 This is an operational test-account record, not a cryptographic remote
 attestation. Keep the original DMG and imported verdict together, review the
@@ -197,11 +210,14 @@ release.
 
 The import script rejects evidence from `/tmp` clean-home simulations and from
 the current development account by default. For automated preflight evidence
-only, use:
+only, use the explicit development mode:
 
 ```bash
 TOTALSEGMENTATOR_WRAPPER_MAC_ALLOW_ZERO_ENV_EVIDENCE=1 \
+TOTALSEGMENTATOR_WRAPPER_MAC_TEST_ACCOUNT_DEVELOPMENT_PREFLIGHT=1 \
   scripts/import_test_account_evidence.sh /path/to/test_account_install_evidence.json
 ```
 
-Do not use that override for the final release-gate verdict.
+Development preflight always writes `passed: false` with
+`development_preflight_not_release_evidence`; it can never satisfy the final
+release-gate verdict.
