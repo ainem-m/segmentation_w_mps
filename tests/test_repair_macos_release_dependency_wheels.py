@@ -19,6 +19,11 @@ class RepairMacOSReleaseDependencyWheelsTests(unittest.TestCase):
             "0.4.1-exact-open3d-0.19.0-v1",
         )
         self.assertEqual(
+            repair.SIGNED_REPAIR_POLICY,
+            "0.4.1-exact-open3d-0.19.0-developer-id-v1",
+        )
+        self.assertEqual(repair.RELEASE_TEAM_IDENTIFIER, "8632JF4773")
+        self.assertEqual(
             repair.OPEN3D_SPEC,
             repair.WheelSpec(
                 "open3d",
@@ -34,6 +39,14 @@ class RepairMacOSReleaseDependencyWheelsTests(unittest.TestCase):
                 "open3d/cpu/open3d_tf_ops.dylib",
                 "open3d/cpu/open3d_torch_ops.dylib",
             },
+        )
+        self.assertEqual(
+            repair.OPEN3D_RETAINED_MACHOS,
+            (
+                "open3d/cpu/pybind.cpython-312-darwin.so",
+                "open3d/libomp.dylib",
+                "open3d/libtbb.12.dylib",
+            ),
         )
 
     def test_safe_member_rejects_traversal_and_symlink(self) -> None:

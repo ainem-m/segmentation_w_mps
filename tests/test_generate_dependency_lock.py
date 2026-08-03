@@ -64,18 +64,23 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 ),
             }
             manifest = {
-                "schema": lock_generator.REPAIR_SCHEMA,
-                "policy": lock_generator.REPAIR_POLICY,
+                "schema": lock_generator.SIGNED_REPAIR_SCHEMA,
+                "policy": lock_generator.SIGNED_REPAIR_POLICY,
                 "target": lock_generator.APPROVED_REPAIR_TARGET,
                 "wheel": {
                     "distribution": "open3d",
                     "input": {
                         "filename": specs["open3d"][0].filename,
-                        "sha256": specs["open3d"][0].sha256,
+                        "sha256": specs["open3d"][0].repaired_sha256,
+                        "repair_manifest_sha256": "c" * 64,
                     },
-                    "operations": lock_generator.APPROVED_REPAIR_OPERATIONS[
-                        "open3d"
-                    ],
+                    "operations": {
+                        "developer_id_signatures": 3,
+                        "codesign_identity": "Developer ID Application",
+                        "codesign_team_identifier": lock_generator.RELEASE_TEAM_IDENTIFIER,
+                        "codesign_timestamp": "secure",
+                        "codesign_options": "runtime",
+                    },
                     "output": {
                         "filename": specs["open3d"][0].filename,
                         "macho_count": specs["open3d"][2],
@@ -91,6 +96,9 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 lock_generator.APPROVED_REPAIRED_WHEEL_SPECS,
                 specs,
                 clear=True,
+            ), patch(
+                "scripts.generate_macos_arm64_py312_lock.verify_rewritten_open3d_wheel",
+                return_value=manifest,
             ):
                 approved = load_approved_repaired_wheels(root)
                 self.assertEqual(approved["open3d"].sha256, open3d_sha)

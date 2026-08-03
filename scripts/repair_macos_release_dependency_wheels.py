@@ -55,6 +55,9 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
 ROOT = Path(__file__).resolve().parents[1]
 REPAIR_SCHEMA = "totalsegmentator_wrapper_mac.open3d_wheel_rewrite.v1"
 REPAIR_POLICY = "0.4.1-exact-open3d-0.19.0-v1"
+SIGNED_REPAIR_SCHEMA = "totalsegmentator_wrapper_mac.open3d_wheel_developer_id.v1"
+SIGNED_REPAIR_POLICY = "0.4.1-exact-open3d-0.19.0-developer-id-v1"
+RELEASE_TEAM_IDENTIFIER = "8632JF4773"
 FIXED_ZIP_TIMESTAMP = (2024, 1, 1, 0, 0, 0)
 INSTALL_NAME_TOOL = Path("/usr/bin/install_name_tool")
 CODESIGN = Path("/usr/bin/codesign")
@@ -802,7 +805,9 @@ def rewrite_open3d_release_wheel(
     return manifest
 
 
-def verify_rewritten_open3d_wheel(output_directory: Path) -> dict[str, object]:
+def _verify_ad_hoc_rewritten_open3d_wheel(
+    output_directory: Path,
+) -> dict[str, object]:
     """Read-only verification of a completed Open3D rewrite artifact."""
 
     output_directory = output_directory.expanduser().absolute()
@@ -880,6 +885,245 @@ def verify_rewritten_open3d_wheel(output_directory: Path) -> dict[str, object]:
     return manifest
 
 
+def _developer_id_signature_details(path: Path, *, team_identifier: str) -> None:
+    verification = subprocess.run(
+        [str(CODESIGN), "--verify", "--strict", "--verbose=2", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if verification.returncode != 0:
+        raise WheelRepairError(
+            f"Developer ID signature verification failed: {path}: "
+            + (verification.stderr.strip() or verification.stdout.strip())
+        )
+    details = subprocess.run(
+        [str(CODESIGN), "-dv", "--verbose=4", str(path)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    signature = details.stdout + details.stderr
+    if (
+        "Authority=Developer ID Application:" not in signature
+        or f"TeamIdentifier={team_identifier}" not in signature
+        or "Timestamp=" not in signature
+        or "flags=0x10000(runtime)" not in signature
+    ):
+        raise WheelRepairError(
+            f"Open3D Mach-O lacks the required Developer ID/timestamp/runtime identity: {path}"
+        )
+
+
+def _verify_signed_open3d_wheel_payload(
+    wheel: Path, *, team_identifier: str
+) -> None:
+    with tempfile.TemporaryDirectory(prefix=".open3d-wheel-signature-verify-") as temporary:
+        root = Path(temporary) / "wheel"
+        _extract_wheel(wheel, root)
+        machos = tuple(path.relative_to(root).as_posix() for path in _macho_paths(root))
+        if machos != OPEN3D_RETAINED_MACHOS:
+            raise WheelRepairError(
+                "signed Open3D Mach-O inventory differs: "
+                f"expected {OPEN3D_RETAINED_MACHOS!r}, found {machos!r}"
+            )
+        for relative in OPEN3D_RETAINED_MACHOS:
+            _developer_id_signature_details(
+                root.joinpath(*PurePosixPath(relative).parts),
+                team_identifier=team_identifier,
+            )
+
+
+def sign_rewritten_open3d_wheel(
+    *,
+    rewritten_input_directory: Path,
+    output_directory: Path,
+    identity: str,
+    team_identifier: str,
+) -> dict[str, object]:
+    if team_identifier != RELEASE_TEAM_IDENTIFIER:
+        raise WheelRepairError(
+            f"Open3D release signing requires Team ID {RELEASE_TEAM_IDENTIFIER}"
+        )
+    if not identity.startswith("Developer ID Application:"):
+        raise WheelRepairError("Open3D release signing requires a Developer ID Application identity")
+    rewritten_input_directory = rewritten_input_directory.expanduser().absolute()
+    base_manifest = _verify_ad_hoc_rewritten_open3d_wheel(rewritten_input_directory)
+    base_manifest_path = rewritten_input_directory / "repair-manifest.json"
+    base_wheel = rewritten_input_directory / "wheels" / OPEN3D_FILENAME
+    output_directory = output_directory.expanduser().absolute()
+    if output_directory.exists() or output_directory.is_symlink():
+        raise WheelRepairError(
+            f"signed Open3D output directory must be absent: {output_directory}"
+        )
+    parent = output_directory.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise WheelRepairError(
+            f"signed Open3D output parent must be a regular directory: {parent}"
+        )
+    output_directory.mkdir(mode=0o700)
+    (output_directory / "wheels").mkdir(mode=0o700)
+    output_wheel = output_directory / "wheels" / OPEN3D_FILENAME
+    with tempfile.TemporaryDirectory(
+        prefix=".open3d-wheel-developer-id-", dir=parent
+    ) as temporary:
+        root = Path(temporary) / "wheel"
+        _extract_wheel(base_wheel, root)
+        machos = tuple(path.relative_to(root).as_posix() for path in _macho_paths(root))
+        if machos != OPEN3D_RETAINED_MACHOS:
+            raise WheelRepairError("rewritten Open3D Mach-O inventory changed before signing")
+        for relative in OPEN3D_RETAINED_MACHOS:
+            macho = root.joinpath(*PurePosixPath(relative).parts)
+            subprocess.run(
+                [
+                    str(CODESIGN),
+                    "--force",
+                    "--timestamp",
+                    "--options",
+                    "runtime",
+                    "--sign",
+                    identity,
+                    str(macho),
+                ],
+                check=True,
+            )
+            _developer_id_signature_details(macho, team_identifier=team_identifier)
+        _regenerate_record(root, OPEN3D_DIST_INFO)
+        _repack_wheel(root, output_wheel)
+    _verify_record(output_wheel, OPEN3D_DIST_INFO)
+    linked = verify_wheel_self_contained_macos_linkage(output_wheel)
+    deployed = verify_wheel_machos(
+        output_wheel,
+        maximum_macos="14.0",
+        require_arm64=True,
+    )
+    if len(linked) != 3 or len(deployed) != 3:
+        raise WheelRepairError("signed Open3D validator inventories differ")
+    _verify_signed_open3d_wheel_payload(
+        output_wheel, team_identifier=team_identifier
+    )
+    output_sha256 = _sha256_file(output_wheel)
+    manifest: dict[str, object] = {
+        "schema": SIGNED_REPAIR_SCHEMA,
+        "policy": SIGNED_REPAIR_POLICY,
+        "target": base_manifest["target"],
+        "wheel": {
+            "distribution": "open3d",
+            "input": {
+                "filename": OPEN3D_FILENAME,
+                "sha256": OPEN3D_REPAIRED_SHA256,
+                "repair_manifest_sha256": _sha256_file(base_manifest_path),
+            },
+            "output": {
+                "filename": OPEN3D_FILENAME,
+                "sha256": output_sha256,
+                "size_bytes": output_wheel.stat().st_size,
+                "macho_count": 3,
+            },
+            "operations": {
+                "developer_id_signatures": 3,
+                "codesign_identity": "Developer ID Application",
+                "codesign_team_identifier": team_identifier,
+                "codesign_timestamp": "secure",
+                "codesign_options": "runtime",
+            },
+        },
+    }
+    manifest_path = output_directory / "repair-manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return manifest
+
+
+def _verify_developer_id_signed_open3d_wheel(
+    output_directory: Path, *, team_identifier: str
+) -> dict[str, object]:
+    output_directory = output_directory.expanduser().absolute()
+    manifest_path = output_directory / "repair-manifest.json"
+    wheel_directory = output_directory / "wheels"
+    _require_regular_non_symlink(manifest_path, "signed Open3D manifest")
+    if not wheel_directory.is_dir() or wheel_directory.is_symlink():
+        raise WheelRepairError("signed Open3D wheel directory is invalid")
+    if {path.name for path in output_directory.iterdir()} != {
+        "repair-manifest.json",
+        "wheels",
+    } or {path.name for path in wheel_directory.iterdir()} != {OPEN3D_FILENAME}:
+        raise WheelRepairError("signed Open3D output inventory is invalid")
+    wheel = wheel_directory / OPEN3D_FILENAME
+    _require_regular_non_symlink(wheel, "signed Open3D wheel")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise WheelRepairError("signed Open3D manifest is invalid") from exc
+    entry = manifest.get("wheel") if isinstance(manifest, dict) else None
+    output = entry.get("output") if isinstance(entry, dict) else None
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "policy", "target", "wheel"}
+        or manifest.get("schema") != SIGNED_REPAIR_SCHEMA
+        or manifest.get("policy") != SIGNED_REPAIR_POLICY
+        or manifest.get("target")
+        != {"architecture": "arm64", "maximum_macos": "14.0", "python": "3.12"}
+        or not isinstance(entry, dict)
+        or set(entry) != {"distribution", "input", "operations", "output"}
+        or entry.get("distribution") != "open3d"
+        or entry.get("operations")
+        != {
+            "developer_id_signatures": 3,
+            "codesign_identity": "Developer ID Application",
+            "codesign_team_identifier": team_identifier,
+            "codesign_timestamp": "secure",
+            "codesign_options": "runtime",
+        }
+        or not isinstance(entry.get("input"), dict)
+        or entry["input"].get("filename") != OPEN3D_FILENAME
+        or entry["input"].get("sha256") != OPEN3D_REPAIRED_SHA256
+        or not isinstance(entry["input"].get("repair_manifest_sha256"), str)
+        or not isinstance(output, dict)
+        or set(output) != {"filename", "sha256", "size_bytes", "macho_count"}
+        or output.get("filename") != OPEN3D_FILENAME
+        or output.get("macho_count") != 3
+        or type(output.get("size_bytes")) is not int
+        or output.get("size_bytes") != wheel.stat().st_size
+        or not isinstance(output.get("sha256"), str)
+        or output.get("sha256") != _sha256_file(wheel)
+    ):
+        raise WheelRepairError("signed Open3D manifest identity mismatch")
+    _verify_record(wheel, OPEN3D_DIST_INFO)
+    linked = verify_wheel_self_contained_macos_linkage(wheel)
+    deployed = verify_wheel_machos(
+        wheel, maximum_macos="14.0", require_arm64=True
+    )
+    if len(linked) != 3 or len(deployed) != 3:
+        raise WheelRepairError("signed Open3D Mach-O inventory mismatch")
+    _verify_signed_open3d_wheel_payload(wheel, team_identifier=team_identifier)
+    return manifest
+
+
+def verify_rewritten_open3d_wheel(
+    output_directory: Path,
+    *,
+    require_developer_id: bool = False,
+    team_identifier: str = RELEASE_TEAM_IDENTIFIER,
+) -> dict[str, object]:
+    manifest_path = output_directory.expanduser().absolute() / "repair-manifest.json"
+    try:
+        schema = json.loads(manifest_path.read_text(encoding="utf-8")).get("schema")
+    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError) as exc:
+        raise WheelRepairError("Open3D release manifest is invalid") from exc
+    if schema == SIGNED_REPAIR_SCHEMA:
+        return _verify_developer_id_signed_open3d_wheel(
+            output_directory, team_identifier=team_identifier
+        )
+    if require_developer_id:
+        raise WheelRepairError("Developer ID build requires the signed Open3D wheel artifact")
+    return _verify_ad_hoc_rewritten_open3d_wheel(output_directory)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -888,6 +1132,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument("--open3d-wheel", type=Path)
+    parser.add_argument("--sign-rewritten-input-directory", type=Path)
+    parser.add_argument("--identity")
+    parser.add_argument("--team-identifier", default=RELEASE_TEAM_IDENTIFIER)
+    parser.add_argument("--require-developer-id", action="store_true")
     parser.add_argument("--verify-existing", action="store_true")
     parser.add_argument("--output-directory", type=Path, required=True)
     return parser.parse_args(argv)
@@ -897,13 +1145,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.verify_existing:
-            if args.open3d_wheel is not None:
+            if args.open3d_wheel is not None or args.sign_rewritten_input_directory is not None:
                 raise WheelRepairError(
-                    "--verify-existing does not accept --open3d-wheel"
+                    "--verify-existing does not accept wheel production inputs"
                 )
-            verify_rewritten_open3d_wheel(args.output_directory)
+            verify_rewritten_open3d_wheel(
+                args.output_directory,
+                require_developer_id=args.require_developer_id,
+                team_identifier=args.team_identifier,
+            )
+        elif args.sign_rewritten_input_directory is not None:
+            if args.open3d_wheel is not None or not args.identity:
+                raise WheelRepairError(
+                    "Developer ID signing requires --sign-rewritten-input-directory and --identity only"
+                )
+            sign_rewritten_open3d_wheel(
+                rewritten_input_directory=args.sign_rewritten_input_directory,
+                output_directory=args.output_directory,
+                identity=args.identity,
+                team_identifier=args.team_identifier,
+            )
         else:
-            if args.open3d_wheel is None:
+            if args.open3d_wheel is None or args.identity is not None:
                 raise WheelRepairError("--open3d-wheel is required for a rewrite")
             rewrite_open3d_release_wheel(
                 open3d_wheel=args.open3d_wheel,

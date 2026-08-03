@@ -298,6 +298,17 @@ run_isolated_inventory_pip() {
   run_isolated_inventory_python "${python_executable}" -m pip --isolated "$@"
 }
 
+verify_open3d_release_wheel() {
+  local arguments=(
+    --verify-existing
+    --output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}"
+  )
+  if [[ "${SIGNING_MODE}" == "developer-id" || "${TOTALSEGMENTATOR_WRAPPER_MAC_NOTARIZED:-0}" == "1" ]]; then
+    arguments+=(--require-developer-id --team-identifier "${TEAM_IDENTIFIER}")
+  fi
+  "${PYTHON_BIN}" "${OPEN3D_WHEEL_REWRITE_SCRIPT}" "${arguments[@]}" >/dev/null
+}
+
 verify_and_copy_open3d_release_wheel() {
   local destination_directory="$1"
   local source="${OPEN3D_WHEEL_DIRECTORY}/${OPEN3D_WHEEL_FILENAME}"
@@ -310,9 +321,7 @@ verify_and_copy_open3d_release_wheel() {
     echo "Open3D wheel destination already exists: ${target}" >&2
     exit 2
   fi
-  "${PYTHON_BIN}" "${OPEN3D_WHEEL_REWRITE_SCRIPT}" \
-    --verify-existing \
-    --output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}" >/dev/null
+  verify_open3d_release_wheel
   local source_sha256
   source_sha256="$(sha256_file "${source}")"
   cp "${source}" "${target}"
@@ -712,9 +721,7 @@ if [[ "${RELEASE_INPUTS_REQUIRED}" == "1" ]]; then
     echo "Open3D wheel rewrite verifier is missing or unsafe: ${OPEN3D_WHEEL_REWRITE_SCRIPT}" >&2
     exit 2
   fi
-  "${PYTHON_BIN}" "${OPEN3D_WHEEL_REWRITE_SCRIPT}" \
-    --verify-existing \
-    --output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}" >/dev/null
+  verify_open3d_release_wheel
   DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256="$(sha256_file "${OPEN3D_WHEEL_REWRITE_MANIFEST_PATH}")"
   require_sha256_digest "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}" "Open3D wheel rewrite manifest SHA-256"
   DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256_JSON="$(json_string "${DEPENDENCY_WHEELHOUSE_MANIFEST_SHA256}")"

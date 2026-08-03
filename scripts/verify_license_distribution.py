@@ -1642,58 +1642,64 @@ def verify_app_version_identity(
     return version
 
 
-def verify_bundled_wheel_code_signing(wheel: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="tswm-fpsample-signature-") as tmp:
+def verify_bundled_wheel_code_signing(
+    wheel: Path,
+    *,
+    expected_native_members: tuple[str, ...],
+    team_identifier: str,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="tswm-wheel-signature-") as tmp:
         extract_root = Path(tmp)
         with zipfile.ZipFile(wheel) as archive:
-            native_members = [
-                info
+            by_name = {
+                info.filename: info
                 for info in archive.infolist()
-                if not info.is_dir()
-                and Path(info.filename).name == "_fpsample.cpython-312-darwin.so"
-            ]
+                if not info.is_dir() and info.filename in expected_native_members
+            }
             require(
-                len(native_members) == 1,
-                "bundled fpsample wheel must contain exactly one CPython 3.12 native extension",
+                set(by_name) == set(expected_native_members),
+                "bundled wheel Developer ID native inventory is incomplete or ambiguous",
             )
-            member = native_members[0]
-            target = (extract_root / member.filename).resolve()
-            require(
-                target.is_relative_to(extract_root.resolve()),
-                "bundled fpsample wheel has an unsafe native extension path",
-            )
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(member) as source, target.open("wb") as destination:
-                while chunk := source.read(1024 * 1024):
-                    destination.write(chunk)
+            for member_name in expected_native_members:
+                member = by_name[member_name]
+                target = (extract_root / member.filename).resolve()
+                require(
+                    target.is_relative_to(extract_root.resolve()),
+                    "bundled wheel has an unsafe native extension path",
+                )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, target.open("wb") as destination:
+                    while chunk := source.read(1024 * 1024):
+                        destination.write(chunk)
 
-        verification = subprocess.run(
-            ["codesign", "--verify", "--strict", "--verbose=2", str(target)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        require(
-            verification.returncode == 0,
-            "bundled fpsample native extension has an invalid code signature: "
-            + (verification.stderr.strip() or verification.stdout.strip()),
-        )
-        details = subprocess.run(
-            ["codesign", "-dv", "--verbose=4", str(target)],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        signature = details.stdout + details.stderr
-        require(
-            "Authority=Developer ID Application:" in signature,
-            "bundled fpsample native extension is not signed with Developer ID Application",
-        )
-        require(
-            "Timestamp=" in signature,
-            "bundled fpsample native extension signature has no secure timestamp",
-        )
+                verification = subprocess.run(
+                    ["codesign", "--verify", "--strict", "--verbose=2", str(target)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                require(
+                    verification.returncode == 0,
+                    "bundled wheel native binary has an invalid code signature: "
+                    + (verification.stderr.strip() or verification.stdout.strip()),
+                )
+                details = subprocess.run(
+                    ["codesign", "-dv", "--verbose=4", str(target)],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                signature = details.stdout + details.stderr
+                require(
+                    "Authority=Developer ID Application:" in signature
+                    and f"TeamIdentifier={team_identifier}" in signature,
+                    "bundled wheel native binary has the wrong Developer ID identity",
+                )
+                require(
+                    "Timestamp=" in signature and "flags=0x10000(runtime)" in signature,
+                    "bundled wheel native binary lacks secure timestamp or hardened runtime",
+                )
 
 
 def verify_bundled_acvl_utils_wheel(wheel: Path) -> None:
@@ -1899,6 +1905,12 @@ def verify_app(
         "app must contain exactly one pinned pure-Python acvl-utils wheel",
     )
     verify_bundled_acvl_utils_wheel(acvl_utils_wheels[0])
+    open3d_wheels = list(
+        (resources / "wheels").glob(
+            "open3d-0.19.0-cp312-cp312-macosx_10_15_universal2.whl"
+        )
+    )
+    require(len(open3d_wheels) == 1, "app must contain exactly one pinned Open3D wheel")
 
     dental = text(resources / "licenses" / "DentalSegmentator-NOTICE.txt")
     require("10.5281/zenodo.10829675" in dental, "DentalSegmentator DOI missing")
@@ -2340,7 +2352,26 @@ def verify_app(
                 f"release app bundled override hash boundary is invalid: {exc}"
             ) from exc
     if manifest.get("signing_mode") == "developer-id":
-        verify_bundled_wheel_code_signing(fpsample_wheels[0])
+        team_identifier = manifest.get("team_identifier")
+        require(
+            isinstance(team_identifier, str),
+            "Developer ID app Team ID is missing before wheel signature verification",
+        )
+        assert isinstance(team_identifier, str)
+        verify_bundled_wheel_code_signing(
+            fpsample_wheels[0],
+            expected_native_members=("fpsample/_fpsample.cpython-312-darwin.so",),
+            team_identifier=team_identifier,
+        )
+        verify_bundled_wheel_code_signing(
+            open3d_wheels[0],
+            expected_native_members=(
+                "open3d/cpu/pybind.cpython-312-darwin.so",
+                "open3d/libomp.dylib",
+                "open3d/libtbb.12.dylib",
+            ),
+            team_identifier=team_identifier,
+        )
 
     inventory_text = text(resources / "licenses" / "third_party_license_inventory.json")
     inventory = json.loads(inventory_text)

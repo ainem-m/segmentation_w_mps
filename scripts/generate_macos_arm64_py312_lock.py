@@ -36,9 +36,11 @@ from uuid import uuid4
 try:
     from scripts.repair_macos_release_dependency_wheels import (
         OPEN3D_SPEC,
-        REPAIR_POLICY,
-        REPAIR_SCHEMA,
+        RELEASE_TEAM_IDENTIFIER,
+        SIGNED_REPAIR_POLICY,
+        SIGNED_REPAIR_SCHEMA,
         WheelSpec as RepairedWheelSpec,
+        verify_rewritten_open3d_wheel,
     )
     from scripts.verify_release_input_readiness import (
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
@@ -63,9 +65,11 @@ try:
 except ModuleNotFoundError:  # Direct execution from scripts/.
     from repair_macos_release_dependency_wheels import (  # type: ignore[no-redef]
         OPEN3D_SPEC,
-        REPAIR_POLICY,
-        REPAIR_SCHEMA,
+        RELEASE_TEAM_IDENTIFIER,
+        SIGNED_REPAIR_POLICY,
+        SIGNED_REPAIR_SCHEMA,
         WheelSpec as RepairedWheelSpec,
+        verify_rewritten_open3d_wheel,
     )
     from verify_release_input_readiness import (  # type: ignore[no-redef]
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
@@ -225,7 +229,7 @@ def _normalize_distribution_name(value: str) -> str:
 def load_approved_repaired_wheels(
     repair_directory: Path | None,
 ) -> dict[str, ApprovedRepairedWheelInput]:
-    """Validate the exact deterministic Open3D rewrite and its manifest."""
+    """Validate the exact Developer ID-signed Open3D release wheel."""
 
     if repair_directory is None:
         raise LockGenerationError(
@@ -238,96 +242,46 @@ def load_approved_repaired_wheels(
     _require_regular_non_symlink(manifest_path, "approved wheel repair manifest")
     _require_clean_directory(wheel_directory, "approved repaired-wheel payload directory")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise LockGenerationError(f"approved wheel repair manifest is invalid: {exc}") from exc
-    if not isinstance(manifest, dict) or set(manifest) != {
-        "schema",
-        "policy",
-        "target",
-        "wheel",
-    }:
-        raise LockGenerationError("approved wheel repair manifest field set mismatch")
-    if manifest.get("schema") != REPAIR_SCHEMA or manifest.get("policy") != REPAIR_POLICY:
+        manifest = verify_rewritten_open3d_wheel(
+            repair_directory,
+            require_developer_id=True,
+            team_identifier=RELEASE_TEAM_IDENTIFIER,
+        )
+    except Exception as exc:
+        raise LockGenerationError(
+            f"approved Developer ID Open3D wheel is invalid: {exc}"
+        ) from exc
+    if (
+        manifest.get("schema") != SIGNED_REPAIR_SCHEMA
+        or manifest.get("policy") != SIGNED_REPAIR_POLICY
+        or manifest.get("target") != APPROVED_REPAIR_TARGET
+    ):
         raise LockGenerationError("approved wheel repair manifest identity mismatch")
-    if manifest.get("target") != APPROVED_REPAIR_TARGET:
-        raise LockGenerationError("approved wheel repair target mismatch")
     wheel_entry = manifest.get("wheel")
-    if not isinstance(wheel_entry, dict):
+    output_entry = wheel_entry.get("output") if isinstance(wheel_entry, dict) else None
+    if (
+        not isinstance(wheel_entry, dict)
+        or wheel_entry.get("distribution") != "open3d"
+        or not isinstance(output_entry, dict)
+        or not isinstance(output_entry.get("sha256"), str)
+    ):
         raise LockGenerationError("approved wheel repair manifest inventory mismatch")
-
-    result: dict[str, ApprovedRepairedWheelInput] = {}
-    for entry in (wheel_entry,):
-        if not isinstance(entry, dict) or set(entry) != {
-            "distribution",
-            "input",
-            "operations",
-            "output",
-        }:
-            raise LockGenerationError("approved wheel repair entry field set mismatch")
-        distribution = entry.get("distribution")
-        if not isinstance(distribution, str) or distribution in result:
-            raise LockGenerationError(
-                "approved wheel repair distribution is invalid or duplicated"
-            )
-        expected = APPROVED_REPAIRED_WHEEL_SPECS.get(distribution)
-        if expected is None:
-            raise LockGenerationError(
-                f"approved wheel repair contains an unexpected distribution: {distribution}"
-            )
-        spec, version, macho_count = expected
-        input_entry = entry.get("input")
-        output_entry = entry.get("output")
-        if not isinstance(input_entry, dict) or set(input_entry) != {"filename", "sha256"}:
-            raise LockGenerationError(
-                f"approved wheel repair input is invalid: {distribution}"
-            )
-        if input_entry != {"filename": spec.filename, "sha256": spec.sha256}:
-            raise LockGenerationError(
-                f"approved wheel repair input identity mismatch: {distribution}"
-            )
-        if entry.get("operations") != APPROVED_REPAIR_OPERATIONS[distribution]:
-            raise LockGenerationError(
-                f"approved wheel repair operations mismatch: {distribution}"
-            )
-        if not isinstance(output_entry, dict) or set(output_entry) != {
-            "filename",
-            "macho_count",
-            "sha256",
-            "size_bytes",
-        }:
-            raise LockGenerationError(
-                f"approved wheel repair output is invalid: {distribution}"
-            )
-        if (
-            output_entry.get("filename") != spec.filename
-            or output_entry.get("macho_count") != macho_count
-            or output_entry.get("sha256") != spec.repaired_sha256
-            or type(output_entry.get("size_bytes")) is not int
-            or int(output_entry["size_bytes"]) <= 0
-        ):
-            raise LockGenerationError(
-                f"approved wheel repair output identity mismatch: {distribution}"
-            )
-        wheel = wheel_directory / spec.filename
-        _require_regular_non_symlink(wheel, f"approved repaired wheel for {distribution}")
-        if wheel.stat().st_size != output_entry["size_bytes"]:
-            raise LockGenerationError(
-                f"approved repaired wheel size mismatch: {distribution}"
-            )
-        if _sha256_file(wheel) != spec.repaired_sha256:
-            raise LockGenerationError(
-                f"approved repaired wheel SHA-256 mismatch: {distribution}"
-            )
-        result[distribution] = ApprovedRepairedWheelInput(
-            distribution=distribution,
+    spec, version, _macho_count = APPROVED_REPAIRED_WHEEL_SPECS["open3d"]
+    wheel = wheel_directory / spec.filename
+    digest = output_entry["sha256"]
+    _require_regular_non_symlink(wheel, "approved repaired wheel for open3d")
+    if wheel.stat().st_size != output_entry.get("size_bytes"):
+        raise LockGenerationError("approved repaired wheel size mismatch: open3d")
+    if _sha256_file(wheel) != digest:
+        raise LockGenerationError("approved repaired wheel SHA-256 mismatch: open3d")
+    result = {
+        "open3d": ApprovedRepairedWheelInput(
+            distribution="open3d",
             version=version,
             path=wheel,
-            sha256=spec.repaired_sha256,
+            sha256=digest,
         )
-
-    if set(result) != set(APPROVED_REPAIRED_WHEEL_SPECS):
-        raise LockGenerationError("approved wheel repair distribution set mismatch")
+    }
     try:
         wheel_children = list(wheel_directory.iterdir())
     except OSError as exc:

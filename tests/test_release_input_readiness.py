@@ -156,7 +156,7 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 "imagecodecs==2026.6.26 --hash=sha256:"
                 "2d3298028a74d748e5b7a00bd736d41cdf2372861376e4af916818e853ca5fc6\n"
                 "open3d==0.19.0 --hash=sha256:"
-                "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d\n",
+                "ed7199bcaa817d699603346711b30978aa9e2a478e45bda6ca11948f32a45536\n",
                 encoding="utf-8",
             )
             verify_approved_repaired_requirement_hashes(path)

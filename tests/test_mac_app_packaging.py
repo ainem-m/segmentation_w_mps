@@ -692,6 +692,8 @@ class MacAppPackagingTests(unittest.TestCase):
         for required in (
             "--verify-existing",
             '--output-directory "${OPEN3D_WHEEL_REWRITE_ROOT}"',
+            "--require-developer-id",
+            '--team-identifier "${TEAM_IDENTIFIER}"',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, app_text)

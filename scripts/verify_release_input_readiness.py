@@ -136,7 +136,7 @@ MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(
 APPROVED_REPAIRED_REQUIREMENTS = {
     "open3d": (
         "0.19.0",
-        "b71b3ffd13427a01a6d1caab8af98d6dc9d1eb3c60ce2b32cbe4ce602168153d",
+        "ed7199bcaa817d699603346711b30978aa9e2a478e45bda6ca11948f32a45536",
     ),
 }
 

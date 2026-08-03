@@ -22,7 +22,7 @@
       "version": "1.0.2"
     }
   },
-  "generation_id": "1e0cba1a-1f5a-4d79-bb3b-76f7ae4f0ee6",
+  "generation_id": "667b8904-3a9f-42d9-8a67-99f505cf0197",
   "install_distribution_names": [
     "addict",
     "annotated-types",
@@ -145,7 +145,7 @@
   "project_file": "pyproject.toml",
   "project_file_sha256": "1e148720344c597b1f40e3ff95732747ba3140f169b7838d9c63a93ddbce799c",
   "requirements_lock": "macos-arm64-py312.requirements.lock",
-  "requirements_lock_sha256": "e2d3178e9504ad4a4bd6004595e1c81d5ec4dabcb04633186b2719c98c3d7d2d",
+  "requirements_lock_sha256": "a8bb837381cde3842e8d4f50220d47842cadba17faea9407dad26158f5e06348",
   "resolution_complete": true,
   "resolved_distribution_names": [
     "acvl-utils",
