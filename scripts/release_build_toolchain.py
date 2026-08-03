@@ -1972,8 +1972,11 @@ def verify_release_build_toolchain_inputs_metadata_only(
     """Validate lock/metadata shape for a bundled receipt without wheel files.
 
     The release artifact intentionally does not embed its build wheelhouse.
-    Hash/filename/role continuity is nevertheless checked against the copied
+    Hash/content/role continuity is nevertheless checked against the copied
     lock and metadata; the full wheelhouse check happened before the build.
+    The bundle has its own canonical resource name, so the original input
+    basename recorded by metadata is validated as portable but is not required
+    to equal the bundled lock basename.
     """
 
     lock_path = lock_path.expanduser().absolute()
@@ -1982,9 +1985,13 @@ def verify_release_build_toolchain_inputs_metadata_only(
     if metadata.get("schema") != RELEASE_BUILD_TOOLCHAIN_SCHEMA:
         raise ReleaseBuildToolchainError("release build toolchain metadata schema mismatch")
     bootstrap = _validated_bootstrap_binding(metadata.get("bootstrap"))
-    if metadata.get("lock_filename") != lock_path.name or metadata.get(
-        "lock_sha256"
-    ) != _sha256_file(lock_path):
+    recorded_lock_filename = metadata.get("lock_filename")
+    if (
+        not isinstance(recorded_lock_filename, str)
+        or not recorded_lock_filename
+        or Path(recorded_lock_filename).name != recorded_lock_filename
+        or metadata.get("lock_sha256") != _sha256_file(lock_path)
+    ):
         raise ReleaseBuildToolchainError("release build toolchain lock metadata mismatch")
     lock_entries = _parse_hashed_lock(lock_path)
     # A temporary empty directory is not needed: repeat only the structural

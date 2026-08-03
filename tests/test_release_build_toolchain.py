@@ -804,6 +804,50 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                 checked["toolchain"]["native_toolchain"], native_toolchain
             )
 
+            bundled_lock = root / "macos-arm64-py312.release-build-toolchain.lock"
+            bundled_lock.write_bytes(lock.read_bytes())
+            with self.assertRaisesRegex(
+                ReleaseBuildToolchainError, "names a different lock file"
+            ):
+                verify_release_build_toolchain_inputs(
+                    lock_path=bundled_lock,
+                    metadata_path=metadata,
+                    wheelhouse=wheelhouse,
+                )
+            renamed_checked = verify_release_build_toolchain_receipt(
+                receipt_path=receipt,
+                lock_path=bundled_lock,
+                metadata_path=metadata,
+            )
+            self.assertEqual(
+                renamed_checked["lock_sha256"], verified["lock_sha256"]
+            )
+
+            bundled_lock.write_bytes(lock.read_bytes() + b"# changed\n")
+            with self.assertRaisesRegex(
+                ReleaseBuildToolchainError, "lock metadata mismatch"
+            ):
+                verify_release_build_toolchain_receipt(
+                    receipt_path=receipt,
+                    lock_path=bundled_lock,
+                    metadata_path=metadata,
+                )
+            bundled_lock.write_bytes(lock.read_bytes())
+
+            original_receipt = receipt.read_bytes()
+            payload = json.loads(original_receipt)
+            payload["metadata_sha256"] = "0" * 64
+            receipt.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ReleaseBuildToolchainError, "does not match its locked input metadata"
+            ):
+                verify_release_build_toolchain_receipt(
+                    receipt_path=receipt,
+                    lock_path=bundled_lock,
+                    metadata_path=metadata,
+                )
+            receipt.write_bytes(original_receipt)
+
             payload = json.loads(receipt.read_text(encoding="utf-8"))
             payload["toolchain"]["native_toolchain"].pop("boundary")
             receipt.write_text(json.dumps(payload), encoding="utf-8")
