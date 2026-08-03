@@ -90,6 +90,7 @@ REQUIRED_COMPONENT_TOOL_NAMES: dict[str, set[str]] = {
 # an ordinary hash-bound wheel input and an installed, receipt-bound package.
 REQUIRED_TOOLCHAIN_DISTRIBUTION_NAMES = {
     "pip",
+    "pip-tools",
     *set().union(*REQUIRED_COMPONENT_TOOL_NAMES.values()),
 }
 
@@ -725,7 +726,9 @@ def _wheel_distribution_identity(wheel: Path, *, label: str) -> tuple[str, str]:
             metadata_members = [
                 info
                 for info in infos
-                if not info.is_dir() and info.filename.endswith(".dist-info/METADATA")
+                if not info.is_dir()
+                and len(PurePosixPath(info.filename).parts) == 2
+                and info.filename.endswith(".dist-info/METADATA")
             ]
             if len(metadata_members) != 1:
                 raise ReleaseBuildToolchainError(

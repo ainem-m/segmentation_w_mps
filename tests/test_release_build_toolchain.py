@@ -25,6 +25,7 @@ from scripts.release_build_toolchain import (
     verify_release_build_toolchain_inputs,
     verify_prepared_release_build_toolchain,
     verify_release_build_toolchain_receipt,
+    _wheel_distribution_identity,
 )
 from scripts.verify_release_input_readiness import (
     ReleaseInputReadinessError,
@@ -53,6 +54,31 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             archive.writestr(f"{dist_info}/RECORD", "")
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def test_wheel_identity_accepts_vendored_metadata_but_rejects_two_top_level_distributions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendored = root / "setuptools-77.0.3-py3-none-any.whl"
+            self._write_wheel(vendored, name="setuptools", version="77.0.3")
+            with zipfile.ZipFile(vendored, "a") as archive:
+                archive.writestr(
+                    "setuptools/_vendor/example-1.0.dist-info/METADATA",
+                    "Name: example\nVersion: 1.0\n",
+                )
+            self.assertEqual(
+                _wheel_distribution_identity(vendored, label="fixture"),
+                ("setuptools", "77.0.3"),
+            )
+
+            ambiguous = root / "ambiguous-1.0-py3-none-any.whl"
+            self._write_wheel(ambiguous, name="ambiguous", version="1.0")
+            with zipfile.ZipFile(ambiguous, "a") as archive:
+                archive.writestr(
+                    "other-1.0.dist-info/METADATA",
+                    "Name: other\nVersion: 1.0\n",
+                )
+            with self.assertRaisesRegex(ReleaseBuildToolchainError, "ambiguous METADATA"):
+                _wheel_distribution_identity(ambiguous, label="fixture")
+
     def _fixture(self, root: Path) -> tuple[Path, Path, Path]:
         project = root / "pyproject.toml"
         constraints = root / "constraints.txt"
@@ -79,6 +105,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
         wheelhouse.mkdir()
         packages = {
             "pip": "25.1.1",
+            "pip-tools": "7.5.0",
             "build": "1.2.2",
             "setuptools": "77.0.3",
             "wheel": "0.45.1",
@@ -211,6 +238,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             source_wheelhouse.mkdir()
             packages = {
                 "pip": "25.1.1",
+                "pip-tools": "7.5.0",
                 "build": "1.2.2",
                 "setuptools": "77.0.3",
                 "wheel": "0.45.1",
@@ -387,6 +415,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
             self.assertEqual(verified["lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest())
             self.assertEqual(set(verified["wheel_inputs"]), {
                 "pip",
+                "pip-tools",
                 "build",
                 "setuptools",
                 "wheel",
