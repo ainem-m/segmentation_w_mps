@@ -997,6 +997,14 @@ check(
 )
 
 installed_bundle = state.get("installed_bundle", {})
+declared_runtime_fingerprint = manifest.get("python_runtime_fingerprint")
+if not isinstance(declared_runtime_fingerprint, str) or not declared_runtime_fingerprint:
+    declared_runtime_fingerprint = runtime.get("fingerprint", "")
+runtime_executable = (
+    bundled_regular_file(runtime.get("python_executable"))
+    if runtime.get("bundled") is True
+    else None
+)
 current_bundle = {
     "schema": "totalsegmentator_wrapper_mac.installed_bundle.v1",
     "app_version": manifest.get("app_version") or manifest.get("version"),
@@ -1016,9 +1024,9 @@ current_bundle = {
     "sample1_manifest_sha256": manifest.get("sample1_manifest_sha256"),
     "setup_weights_manifest_sha256": manifest.get("setup_weights_manifest_sha256"),
     "update_manifest_url": manifest.get("update_manifest_url"),
-    "python_runtime_fingerprint": manifest.get("python_runtime_fingerprint"),
-    "python_runtime_executable_sha256": manifest.get(
-        "python_runtime_executable_sha256"
+    "python_runtime_fingerprint": declared_runtime_fingerprint,
+    "python_runtime_executable_sha256": (
+        sha256_file(runtime_executable) if runtime_executable is not None else ""
     ),
 }
 check("setup_state_installed_bundle_current", installed_bundle == current_bundle, installed_bundle)

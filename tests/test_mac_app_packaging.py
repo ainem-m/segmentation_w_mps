@@ -2317,6 +2317,8 @@ class MacAppPackagingTests(unittest.TestCase):
         self.assertIn("sample1_surface_preview_exists", text)
         self.assertIn("sample1_manifest_non_clinical", text)
         self.assertIn("setup_state_installed_bundle_current", text)
+        self.assertIn('bundled_regular_file(runtime.get("python_executable"))', text)
+        self.assertIn("sha256_file(runtime_executable)", text)
         self.assertIn('"fpsample_wheel_sha256": manifest.get("fpsample_wheel_sha256")', text)
         self.assertIn('"acvl_utils_wheel_sha256": manifest.get("acvl_utils_wheel_sha256")', text)
         for required_check in (
