@@ -16,7 +16,10 @@ from scripts.generate_macos_arm64_py312_lock import (
     _clean_pip_environment,
     generate_canonical_dependency_lock,
 )
-from scripts.verify_release_input_readiness import verify_canonical_dependency_lock
+from scripts.verify_release_input_readiness import (
+    CANONICAL_TARGET_COMPATIBILITY,
+    verify_canonical_dependency_lock,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -215,7 +218,12 @@ class DependencyLockGeneratorTests(unittest.TestCase):
         self.assertTrue(
             (wheelhouse / "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl").is_file()
         )
-        self.assertIn("--pip-args=--isolated --only-binary=:all:", command)
+        self.assertIn(
+            "--pip-args=--isolated --only-binary=:all: "
+            "--platform macosx_14_0_arm64 --implementation cp "
+            "--python-version 3.12 --abi cp312",
+            command,
+        )
         self.assertIn("--no-emit-options", command)
         self.assertIn("--no-emit-index-url", command)
         self.assertIn("--no-emit-trusted-host", command)
@@ -281,7 +289,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
         self.assertEqual(environment["PIP_NO_INPUT"], "1")
         self.assertEqual(environment["PIP_ONLY_BINARY"], ":all:")
 
-    def test_rejects_non_macos14_host_before_running_pip_compile(self) -> None:
+    def test_rejects_pre_macos14_host_before_running_pip_compile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             constraints, lock, metadata, project, setup_manager = self._fixture(Path(tmp))
             calls: list[list[str]] = []
@@ -298,8 +306,8 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                         machine="arm64",
                         python_implementation="CPython",
                         python_version=(3, 12, 11),
-                        macos_version="15.7.3",
-                        sysconfig_platform="macosx-15.0-arm64",
+                        macos_version="13.7.3",
+                        sysconfig_platform="macosx-13.0-arm64",
                     ),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -310,6 +318,37 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertFalse(lock.exists())
             self.assertFalse(metadata.exists())
+
+    def test_accepts_macos26_host_with_explicit_macos14_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraints, lock, metadata, project, setup_manager = self._fixture(root)
+            wheelhouse = self._resolution_wheel_directory(root)
+            pre_sign_receipt = self._pre_sign_wheel_receipt(root, wheelhouse)
+            result = generate_canonical_dependency_lock(
+                constraints=constraints,
+                requirements_lock=lock,
+                lock_metadata=metadata,
+                project_file=project,
+                setup_manager_source=setup_manager,
+                bundled_override_wheel_directory=wheelhouse,
+                pre_sign_wheel_receipt=pre_sign_receipt,
+                host=ResolverHost(
+                    system="Darwin",
+                    machine="arm64",
+                    python_implementation="CPython",
+                    python_version=(3, 12, 11),
+                    macos_version="26.6",
+                    sysconfig_platform="macosx-26.0-arm64",
+                ),
+                pip_tools_version="7.5.0",
+                pip_version="25.1.1",
+                runner=self._successful_runner,
+                directory_swap=self._fake_atomic_directory_swap,
+            )
+            self.assertEqual(result["resolver"]["macos_version"], "26.6")
+            self.assertEqual(result["resolver"]["sysconfig_platform"], "macosx-26.0-arm64")
+            self.assertEqual(result["resolver"]["target_compatibility"], CANONICAL_TARGET_COMPATIBILITY)
 
     def test_rejects_wrong_pip_compile_version_before_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -528,6 +567,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 "python_full_version": "3.12.11",
                 "macos_version": "14.7.8",
                 "sysconfig_platform": "macosx-14.0-arm64",
+                "target_compatibility": CANONICAL_TARGET_COMPATIBILITY,
             })
             self.assertRegex(payload["generation_id"], r"^[0-9a-f-]{36}$")
             self.assertIn(

@@ -162,6 +162,10 @@ class CloudflareDistributionTests(unittest.TestCase):
             "This release is distributed through the verified stable-v2 update manifest",
             notes,
         )
+        self.assertIn("Dependency lock resolution host: macOS 26.6", notes)
+        self.assertIn("macosx_14_0_arm64 target options", notes)
+        self.assertIn("macOS 14 runtime E2E is unverified", notes)
+        self.assertIn("macOS 15.7.3 and macOS 26", notes)
         self.assertNotIn("A future 0.4.1+ release", notes)
         self.assertNotIn("manually downloaded DMG", notes)
         self.assertNotIn("stable-v2 currently returns HTTP 404", notes)

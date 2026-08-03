@@ -41,14 +41,15 @@ try:
     )
     from scripts.verify_release_input_readiness import (
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
+        CANONICAL_TARGET_COMPATIBILITY,
         BUNDLED_OVERRIDE_DISTRIBUTION_PINS,
         BUNDLED_OVERRIDE_RELEASE_HASH_BINDING,
         BUNDLED_OVERRIDE_ROLE,
         BUNDLED_OVERRIDE_SPECS,
         DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX,
         DEPENDENCY_LOCK_SCHEMA,
-        MACOS_ARM64_SYSCONFIG_PLATFORM,
-        MACOS_14_FULL_VERSION,
+        MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM,
+        MACOS_14_OR_LATER_FULL_VERSION,
         PIP_VERSION,
         ReleaseInputReadinessError,
         _logical_requirement_lines,
@@ -66,14 +67,15 @@ except ModuleNotFoundError:  # Direct execution from scripts/.
     )
     from verify_release_input_readiness import (  # type: ignore[no-redef]
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
+        CANONICAL_TARGET_COMPATIBILITY,
         BUNDLED_OVERRIDE_DISTRIBUTION_PINS,
         BUNDLED_OVERRIDE_RELEASE_HASH_BINDING,
         BUNDLED_OVERRIDE_ROLE,
         BUNDLED_OVERRIDE_SPECS,
         DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX,
         DEPENDENCY_LOCK_SCHEMA,
-        MACOS_ARM64_SYSCONFIG_PLATFORM,
-        MACOS_14_FULL_VERSION,
+        MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM,
+        MACOS_14_OR_LATER_FULL_VERSION,
         PIP_VERSION,
         ReleaseInputReadinessError,
         _logical_requirement_lines,
@@ -394,7 +396,7 @@ def current_resolver_host() -> ResolverHost:
 
 
 def validate_resolver_host(host: ResolverHost) -> None:
-    """Reject host/ABI combinations that pip-compile cannot cross-resolve."""
+    """Require a native arm64 CPython host capable of target-14 resolution."""
 
     failures: list[str] = []
     if host.system != "Darwin":
@@ -411,12 +413,12 @@ def validate_resolver_host(host: ResolverHost) -> None:
             "Python version is "
             f"{host.python_version[0]}.{host.python_version[1]}, not 3.12"
         )
-    if MACOS_14_FULL_VERSION.fullmatch(host.macos_version) is None:
+    if MACOS_14_OR_LATER_FULL_VERSION.fullmatch(host.macos_version) is None:
         failures.append(
             "host macOS version is "
-            f"{host.macos_version or 'unknown'}, not macOS 14"
+            f"{host.macos_version or 'unknown'}, not macOS 14 or later"
         )
-    if MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(
+    if MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(
         host.sysconfig_platform.lower()
     ) is None:
         failures.append(
@@ -425,12 +427,11 @@ def validate_resolver_host(host: ResolverHost) -> None:
         )
     if failures:
         raise LockGenerationError(
-            "Refusing to generate the macOS 14 arm64 lock because pip-compile "
-            "cannot faithfully select this release's wheel tags from the current "
-            "host:\n- "
+            "Refusing to generate the macOS 14 arm64 target lock because the "
+            "current host cannot execute the target-compatible resolver:\n- "
             + "\n- ".join(failures)
             + "\nRun this command in CPython 3.12 on an Apple Silicon Mac running "
-            "macOS 14."
+            "macOS 14 or later."
         )
 
 
@@ -522,7 +523,12 @@ def build_pip_compile_command(
         "--no-emit-options",
         "--no-emit-index-url",
         "--no-emit-trusted-host",
-        "--pip-args=--isolated --only-binary=:all:",
+        "--pip-args="
+        "--isolated --only-binary=:all: "
+        f"--platform {CANONICAL_TARGET_COMPATIBILITY['platform']} "
+        f"--implementation {CANONICAL_TARGET_COMPATIBILITY['implementation']} "
+        f"--python-version {CANONICAL_TARGET_COMPATIBILITY['python_version']} "
+        f"--abi {CANONICAL_TARGET_COMPATIBILITY['abi']}",
         "--index-url",
         "https://pypi.org/simple",
         "--find-links",
@@ -856,6 +862,7 @@ def _metadata_for(
             "python_full_version": ".".join(map(str, host.python_version)),
             "macos_version": host.macos_version,
             "sysconfig_platform": host.sysconfig_platform,
+            "target_compatibility": CANONICAL_TARGET_COMPATIBILITY,
         },
         "pip_require_hashes": True,
         "setup_consumes_requirements_lock": True,

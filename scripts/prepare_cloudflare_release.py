@@ -1645,8 +1645,17 @@ def release_notes(
     title_version = release_id or version
     title_suffix = " public alpha" if channel == "alpha" else ""
     platform_requirement = ""
+    target_compatibility_note = ""
     if _version_tuple(version) >= (0, 4, 1):
         platform_requirement = "- Requires macOS 14 or later on Apple Silicon Macs.\n"
+        target_compatibility_note = (
+            "- Dependency lock resolution host: macOS 26.6 / Apple Silicon / "
+            "CPython 3.12. macOS 14 compatibility is enforced through pip's explicit "
+            "macosx_14_0_arm64 target options and an audited wheelhouse tag manifest.\n"
+            "- macOS 14 runtime E2E is unverified. The release evidence records the "
+            "actual test-account operating systems; macOS 15.7.3 and macOS 26 are "
+            "required verification targets.\n"
+        )
     if channel == ATOMIC_STABLE_CHANNEL:
         update_channel_status = (
             "- The legacy stable update manifest is permanently frozen and read-only "
@@ -1665,7 +1674,7 @@ def release_notes(
     return f"""TotalSegmentator Wrapper for Mac {title_version}{title_suffix}
 
 {distribution_status}
-{platform_requirement}- Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
+{platform_requirement}{target_compatibility_note}- Bundled Python 3.12 runtime for first-run setup without sudo or Homebrew.
 - Bundled dcm2niix and GDCM 3.2.7 DICOM normalizer for local CT intake.
 - Native JPEG, JPEG-LS, JPEG 2000, and RLE DICOM decoding with lossless transcoding before dcm2niix conversion.
 - Invalid compressed DICOM data now fails explicitly instead of silently falling back. Multi-frame Enhanced CT is rejected by the clean-conversion path and can proceed only through the explicit shape-confirmation rescue path.

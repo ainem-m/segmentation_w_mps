@@ -268,14 +268,32 @@ checkout copy or comments. This describes the required future lock artifact;
 it does not make the current broad constraints file a release-ready lock.
 
 The reproducible lock generator is
-`scripts/generate_macos_arm64_py312_lock.py`. It intentionally refuses to run
-unless its interpreter is **CPython 3.12 on an Apple Silicon Mac running macOS
-14.x** and its installed resolver is exactly `pip-tools 7.5.0`. This is stricter
-than the application's macOS 14-or-later support floor: `pip-compile` cannot
-faithfully cross-resolve wheel compatibility for a macOS 14 target from a
-macOS 15/26 host, so the generator refuses to label such a lock as macOS 14.
+`scripts/generate_macos_arm64_py312_lock.py`. It requires **CPython 3.12 on an
+Apple Silicon Mac running macOS 14 or later** and exactly `pip-tools 7.5.0`.
+The resolver host is recorded truthfully (for this release preparation, macOS
+26.6), but does not define the app's OS floor. `pip-compile` forwards pip's
+explicit `--platform macosx_14_0_arm64 --implementation cp --python-version
+3.12 --abi cp312` target selection. The subsequent wheelhouse builder repeats
+those target options and rejects every wheel whose declared tag requires macOS
+15 or later. Its manifest records the selected wheel tags. This paired evidence
+is the macOS 14 target-compatibility attestation; it is not a macOS 14 runtime
+test.
 
-On that dedicated macOS 14 resolver host, the first toolchain lock is an
+explicit, offline bootstrap rather than a guessed repository file. Generate a
+source-identity receipt, review a declaration containing normalized exact
+name/version choices for `pip`, `build`, `setuptools`, `wheel`,
+`scikit-build-core`, `pybind11`, `cmake`, `ninja`, and every required
+transitive, then place exactly one approved local wheel for each declaration
+entry in a private source wheelhouse. The bootstrap command only copies and
+hashes those local bytes; it never resolves or downloads.
+On that macOS 26.6 resolver host, the first toolchain lock is an explicit,
+offline bootstrap rather than a guessed repository file. Generate a
+source-identity receipt, review a declaration containing normalized exact
+name/version choices for `pip`, `build`, `setuptools`, `wheel`,
+`scikit-build-core`, `pybind11`, `cmake`, `ninja`, and every required
+transitive, then place exactly one approved local wheel for each declaration
+entry in a private source wheelhouse. The bootstrap command only copies and
+hashes those local bytes; it never resolves or downloads.
 explicit, offline bootstrap rather than a guessed repository file. Generate a
 source-identity receipt, review a declaration containing normalized exact
 name/version choices for `pip`, `build`, `setuptools`, `wheel`,
@@ -318,7 +336,7 @@ The declaration is an operator-reviewed artifact, not a fallback for missing
 hashes. If the approved versions, local wheel bytes, or their upstream
 provenance are unavailable, release preparation stops; do not invent a lock or
 consult an index. The resulting metadata is bound to the source identity and
-requires CPython 3.12/macOS 14/arm64. Prepare its sealed venv and receipt from
+requires CPython 3.12/macOS 14-or-later/arm64. Prepare its sealed venv and receipt from
 that copied wheelhouse, then run only `fpsample` and `acvl-utils` once with
 `scripts/run_release_component_build.sh --bootstrap-pre-sign`. The runner
 creates a short-lived authorization only after revalidating the identity,
@@ -386,11 +404,12 @@ match, so a mixed pair is rejected rather than used. It never falls back to a
 non-atomic two-file overwrite.
 
 The supported app/test-account target remains **Apple Silicon macOS 14 or
-later**. In particular, a macOS 15.7.3 clean-account install and runtime smoke
-is a valid distribution verification target. The separate 14.x-only condition
-above is solely for canonical lock generation: until a dedicated macOS-14
-targeted wheel-resolution attestation exists, generating on a newer host could
-select a macOS-15-only artifact and falsely label it compatible with macOS 14.
+later**. Release evidence records the resolver host (macOS 26.6), the explicit
+macOS 14 / arm64 target arguments, the audited wheelhouse tags, and actual
+test-account OS versions. macOS 15.7.3 and macOS 26 are the required runtime
+tests for this release. A macOS 14 runtime E2E remains **unverified**: the
+target-compatible lock, wheels, and Mach-O minimum versions must never be
+described as a macOS 14 device test.
 
 The canonical dependency lock/metadata and the reviewed bootstrap declaration,
 local toolchain wheelhouse, sealed toolchain receipt, and pre-sign wheel

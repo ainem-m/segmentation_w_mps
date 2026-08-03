@@ -328,6 +328,7 @@ class OfflineDependencyWheelhouseTests(unittest.TestCase):
         for tag, label in (
             ("cp311-cp311-macosx_14_0_arm64", "Python"),
             ("cp312-cp312-macosx_14_0_x86_64", "platform"),
+            ("cp312-cp312-macosx_15_0_arm64", "not compatible"),
         ):
             with self.subTest(tag=tag):
                 with tempfile.TemporaryDirectory() as temporary:

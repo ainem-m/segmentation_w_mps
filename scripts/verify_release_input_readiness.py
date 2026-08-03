@@ -52,6 +52,13 @@ CANONICAL_DEPENDENCY_LOCK_RESOLVER = {
     "platform": "macos-14-arm64",
     "python": "3.12",
 }
+CANONICAL_TARGET_COMPATIBILITY = {
+    "platform": "macosx_14_0_arm64",
+    "python_version": "3.12",
+    "implementation": "cp",
+    "abi": "cp312",
+    "selection": "pip-cross-target-options-and-wheelhouse-tag-audit-v1",
+}
 DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v4"
 DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA = (
     "totalsegmentator_wrapper_mac.dependency_lock_bootstrap_binding.v1"
@@ -94,6 +101,7 @@ DEPENDENCY_LOCK_RESOLVER_OBSERVED_FIELDS = {
     "python_full_version",
     "macos_version",
     "sysconfig_platform",
+    "target_compatibility",
 }
 BUNDLED_OVERRIDE_DISTRIBUTION_PINS = {
     "acvl-utils": "0.2.6",
@@ -130,12 +138,15 @@ PINNED_REQUIREMENT = re.compile(
 )
 PIP_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+(?:[A-Za-z0-9.+-]+)?$")
 PYTHON_312_FULL_VERSION = re.compile(r"^3\.12\.(?:0|[1-9][0-9]*)$")
-MACOS_14_FULL_VERSION = re.compile(r"^14\.(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
-# The release resolver is intentionally run on macOS 14, rather than merely
-# on a newer machine that can emit a higher minimum platform tag.  Keep the
-# recorded sysconfig tag tied to that resolver host; the resulting app itself
-# has a separate ``minimum_macos_version: 14.0`` user-target contract.
-MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(r"^macosx-14(?:\.[0-9]+)*-arm64$")
+# The resolver host can be newer than the distributed OS floor. The metadata
+# records that host truthfully, while the explicit target selection below and
+# the separately audited wheelhouse establish macOS 14 compatibility.
+MACOS_14_OR_LATER_FULL_VERSION = re.compile(
+    r"^(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+){1,2}$"
+)
+MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM = re.compile(
+    r"^macosx-(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+)*-arm64$"
+)
 
 
 class ReleaseInputReadinessError(RuntimeError):
@@ -493,12 +504,13 @@ def _validate_resolver_provenance(resolver: object) -> None:
         or not isinstance(resolver.get("python_full_version"), str)
         or PYTHON_312_FULL_VERSION.fullmatch(str(resolver["python_full_version"])) is None
         or not isinstance(resolver.get("macos_version"), str)
-        or MACOS_14_FULL_VERSION.fullmatch(str(resolver["macos_version"])) is None
+        or MACOS_14_OR_LATER_FULL_VERSION.fullmatch(str(resolver["macos_version"])) is None
         or not isinstance(resolver.get("sysconfig_platform"), str)
-        or MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(
+        or MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(
             str(resolver["sysconfig_platform"]).lower()
         )
         is None
+        or resolver.get("target_compatibility") != CANONICAL_TARGET_COMPATIBILITY
     ):
         raise ReleaseInputReadinessError("dependency lock resolver provenance is invalid")
 

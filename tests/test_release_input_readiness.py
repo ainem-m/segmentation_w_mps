@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scripts.verify_release_input_readiness import (
+    CANONICAL_TARGET_COMPATIBILITY,
     ReleaseInputReadinessError,
     verify_canonical_dependency_lock,
     verify_hashed_requirement_entries,
@@ -116,6 +117,7 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 "python_full_version": "3.12.11",
                 "macos_version": "14.7.8",
                 "sysconfig_platform": "macosx-14.0-arm64",
+                "target_compatibility": CANONICAL_TARGET_COMPATIBILITY,
             },
             "pip_require_hashes": True,
             "setup_consumes_requirements_lock": True,
@@ -450,8 +452,9 @@ class ReleaseInputReadinessTests(unittest.TestCase):
             for field, invalid_value in (
                 ("pip_version", "not-a-version"),
                 ("python_full_version", "3.11.11"),
-                ("macos_version", "15.0"),
+                ("macos_version", "13.0"),
                 ("sysconfig_platform", "linux-aarch64"),
+                ("target_compatibility", {"platform": "macosx_15_0_arm64"}),
             ):
                 with self.subTest(resolver_field=field):
                     mutated = json.loads(metadata_path.read_text(encoding="utf-8"))
