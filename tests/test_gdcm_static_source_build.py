@@ -134,6 +134,26 @@ class GDCMStaticSourceBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(GDCMLicenseError, "marker is missing"):
                 collect_gdcm_source_licenses(source, root / "invalid-licenses")
 
+    def test_license_collector_accepts_the_pinned_openjpeg_license_marker(self) -> None:
+        """The v3.2.7 archive says ``BSD License, included below``.
+
+        This guards the real release input rather than a marker inferred from
+        the output filename (``OpenJPEG-BSD-2-Clause.txt``).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "GDCM-3.2.7"
+            for spec in LICENSE_SPECS:
+                path = source / spec.source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                marker = spec.marker
+                if spec.component == "GDCM embedded OpenJPEG":
+                    marker = "BSD License, included below"
+                path.write_text(f"{marker}\nfixture {spec.component}\n", encoding="utf-8")
+
+            manifest = collect_gdcm_source_licenses(source, root / "licenses")
+            self.assertTrue(manifest.is_file())
+
     def test_build_contract_is_pinned_static_arm64_macos14_and_not_homebrew(self) -> None:
         gdcm = (ROOT / "scripts" / "build_gdcm_macos14_arm64.sh").read_text(
             encoding="utf-8"

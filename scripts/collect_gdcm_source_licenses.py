@@ -46,7 +46,7 @@ LICENSE_SPECS = (
         "GDCM embedded OpenJPEG",
         "Utilities/gdcmopenjpeg/LICENSE",
         "OpenJPEG-BSD-2-Clause.txt",
-        "2-clauses BSD License",
+        "BSD License, included below",
     ),
     LicenseSpec(
         "GDCM embedded CharLS",

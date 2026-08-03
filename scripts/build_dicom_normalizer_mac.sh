@@ -15,6 +15,7 @@ GDCM_ARTIFACT_VERIFY_SCRIPT="${ROOT_DIR}/scripts/verify_gdcm_source_artifact.py"
 ARTIFACT_VERIFY_SCRIPT="${ROOT_DIR}/scripts/verify_dicom_normalizer_artifact.py"
 MACHO_VERIFY_SCRIPT="${ROOT_DIR}/scripts/verify_macos_deployment_target.py"
 LINKAGE_VERIFY_SCRIPT="${ROOT_DIR}/scripts/verify_macos_binary_linkage.py"
+DISCOVERY_CACHE_VERIFY_SCRIPT="${ROOT_DIR}/scripts/validate_cmake_package_discovery.py"
 BUILD_WORK=""
 ARTIFACT_STAGING=""
 TOOLCHAIN_JSON=""
@@ -97,7 +98,7 @@ assert_toolchain_unchanged() {
 for command_name in cmake xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || die "required command is unavailable: ${command_name}"
 done
-for required_file in "${ARTIFACT_VERIFY_SCRIPT}" "${GDCM_ARTIFACT_VERIFY_SCRIPT}" "${MACHO_VERIFY_SCRIPT}" "${LINKAGE_VERIFY_SCRIPT}"; do
+for required_file in "${ARTIFACT_VERIFY_SCRIPT}" "${GDCM_ARTIFACT_VERIFY_SCRIPT}" "${MACHO_VERIFY_SCRIPT}" "${LINKAGE_VERIFY_SCRIPT}" "${DISCOVERY_CACHE_VERIFY_SCRIPT}"; do
   [[ -f "${required_file}" ]] || die "required release verifier is missing: ${required_file}"
 done
 
@@ -184,21 +185,8 @@ BINARY="${BUILD_WORK}/totalsegmentator-wrapper-dicom-normalizer"
 RECORDED_GDCM_DIR="$(awk -F= '$1 == "GDCM_DIR:PATH" || $1 == "GDCM_DIR:UNINITIALIZED" {print $2; exit}' "${BUILD_WORK}/CMakeCache.txt")"
 [[ "${RECORDED_GDCM_DIR}" == "${EXPECTED_GDCM_DIR}" ]] \
   || die "CMake did not use the pinned GDCM_DIR; found ${RECORDED_GDCM_DIR:-missing}"
-"${PYTHON_BIN}" -c '
-import sys
-from pathlib import Path
-allowed = {"CMAKE_IGNORE_PREFIX_PATH", "CMAKE_SYSTEM_IGNORE_PATH"}
-bad = []
-for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="strict").splitlines():
-    if not line or line.startswith(("#", "//")) or "=" not in line:
-        continue
-    key_type, value = line.split("=", 1)
-    key = key_type.split(":", 1)[0]
-    if key not in allowed and ("/opt/homebrew" in value or "/usr/local" in value):
-        bad.append(f"{key}={value}")
-if bad:
-    raise SystemExit("forbidden package-discovery path in CMake cache: " + ", ".join(bad))
-' "${BUILD_WORK}/CMakeCache.txt" || die "CMake cache contains a forbidden Homebrew or /usr/local path"
+"${PYTHON_BIN}" "${DISCOVERY_CACHE_VERIFY_SCRIPT}" "${BUILD_WORK}/CMakeCache.txt" \
+  || die "CMake cache contains a forbidden Homebrew or /usr/local path"
 "${PYTHON_BIN}" "${MACHO_VERIFY_SCRIPT}" \
   --path "${BINARY}" \
   --max-macos "${DEPLOYMENT_TARGET}" \
