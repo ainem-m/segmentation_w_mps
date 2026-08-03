@@ -362,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument(
         "--allow-network",
         action="store_true",
-        help="Allow pip to download runtime dependencies during setup.",
+        help="Allow setup to download model weights; Python dependencies remain bundle-only.",
     )
     setup.add_argument("--dry-run", action="store_true")
     setup.add_argument("--skip-install", action="store_true", help="Build setup state without running venv/pip.")

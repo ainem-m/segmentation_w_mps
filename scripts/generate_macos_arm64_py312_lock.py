@@ -34,6 +34,11 @@ from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 try:
+    from scripts.release_build_toolchain import (
+        ReleaseBuildToolchainError,
+        load_release_pre_sign_wheel_receipt,
+        verify_release_pre_sign_wheel_receipt,
+    )
     from scripts.verify_release_input_readiness import (
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
         BUNDLED_OVERRIDE_DISTRIBUTION_PINS,
@@ -54,6 +59,11 @@ try:
         verify_hashed_requirement_entries,
     )
 except ModuleNotFoundError:  # Direct execution from scripts/.
+    from release_build_toolchain import (  # type: ignore[no-redef]
+        ReleaseBuildToolchainError,
+        load_release_pre_sign_wheel_receipt,
+        verify_release_pre_sign_wheel_receipt,
+    )
     from verify_release_input_readiness import (  # type: ignore[no-redef]
         CANONICAL_DEPENDENCY_LOCK_RESOLVER,
         BUNDLED_OVERRIDE_DISTRIBUTION_PINS,
@@ -260,8 +270,13 @@ def _validate_bundled_override_resolution_wheel(
 
 def resolve_bundled_override_resolution_wheels(
     wheel_directory: Path | None,
-) -> dict[str, BundledOverrideResolutionInput]:
-    """Require an explicit local wheel directory for the two resolver overrides."""
+    pre_sign_wheel_receipt: Path | None,
+) -> tuple[dict[str, BundledOverrideResolutionInput], dict[str, object], str]:
+    """Require receipt-bound local wheels for the canonical resolver phase.
+
+    The wheel hashes originate after the explicit bootstrap component builds;
+    canonical lock metadata must never be asked to predict them first.
+    """
 
     if wheel_directory is None:
         raise LockGenerationError(
@@ -271,13 +286,46 @@ def resolve_bundled_override_resolution_wheels(
     _require_clean_directory(
         wheel_directory, "bundled override resolution wheel directory"
     )
-    return {
+    # Validate the two concrete local artifacts before looking at their
+    # receipt.  This keeps a missing/unsafe/wrong wheel a direct, actionable
+    # error rather than masking it behind a later handoff artifact, while the
+    # receipt remains mandatory before any resolver can be invoked.
+    resolution_inputs = {
         name: _validate_bundled_override_resolution_wheel(
             name,
             wheel_directory / str(spec["filename"]),
         )
         for name, spec in sorted(BUNDLED_OVERRIDE_SPECS.items())
     }
+    if pre_sign_wheel_receipt is None:
+        raise LockGenerationError(
+            "a sealed pre-sign wheel receipt is required before canonical dependency resolution"
+        )
+    try:
+        receipt, receipt_sha256 = load_release_pre_sign_wheel_receipt(
+            pre_sign_wheel_receipt
+        )
+        verified_receipt = verify_release_pre_sign_wheel_receipt(
+            pre_sign_wheel_receipt_path=pre_sign_wheel_receipt,
+            wheel_directory=wheel_directory,
+        )
+    except ReleaseBuildToolchainError as exc:
+        raise LockGenerationError(f"pre-sign wheel receipt is invalid: {exc}") from exc
+    if receipt != {key: value for key, value in verified_receipt.items() if key != "pre_sign_wheel_receipt_sha256"}:
+        raise LockGenerationError("pre-sign wheel receipt verification is inconsistent")
+    wheels = receipt.get("wheels")
+    assert isinstance(wheels, dict)
+    for name, item in resolution_inputs.items():
+        expected = wheels.get(name)
+        if not isinstance(expected, dict) or (
+            item.sha256 != expected.get("sha256")
+            or item.metadata_sha256 != expected.get("metadata_sha256")
+            or item.wheel_metadata_sha256 != expected.get("wheel_metadata_sha256")
+        ):
+            raise LockGenerationError(
+                f"pre-sign wheel receipt does not bind the local resolver wheel: {name}"
+            )
+    return resolution_inputs, receipt, receipt_sha256
 
 
 def _stage_bundled_override_resolution_wheels(
@@ -773,12 +821,22 @@ def _metadata_for(
     resolved_distribution_names: list[str],
     install_distribution_names: list[str],
     resolution_inputs: Mapping[str, BundledOverrideResolutionInput],
+    pre_sign_wheel_receipt: Mapping[str, object],
+    pre_sign_wheel_receipt_sha256: str,
     generation_id: str,
     host: ResolverHost,
     pip_version: str,
 ) -> dict[str, Any]:
     return {
         "schema": LOCK_SCHEMA,
+        "bootstrap": {
+            "schema": "totalsegmentator_wrapper_mac.dependency_lock_bootstrap_binding.v1",
+            "source_identity_sha256": pre_sign_wheel_receipt[
+                "source_identity_sha256"
+            ],
+            "sealed_toolchain": pre_sign_wheel_receipt["sealed_toolchain"],
+            "pre_sign_wheel_receipt_sha256": pre_sign_wheel_receipt_sha256,
+        },
         "generation_id": generation_id,
         "constraints_sha256": _sha256_file(constraints),
         "project_file": project_file.name,
@@ -1007,6 +1065,7 @@ def generate_canonical_dependency_lock(
     project_file: Path = DEFAULT_PROJECT_FILE,
     setup_manager_source: Path = DEFAULT_SETUP_MANAGER_SOURCE,
     bundled_override_wheel_directory: Path | None = None,
+    pre_sign_wheel_receipt: Path | None = None,
     host: ResolverHost | None = None,
     pip_tools_version: str | None = None,
     pip_version: str | None = None,
@@ -1058,8 +1117,12 @@ def generate_canonical_dependency_lock(
         project_file=project_file,
         setup_manager_source=setup_manager_source,
     )
-    resolution_inputs = resolve_bundled_override_resolution_wheels(
-        bundled_override_wheel_directory
+    (
+        resolution_inputs,
+        verified_pre_sign_wheel_receipt,
+        pre_sign_wheel_receipt_sha256,
+    ) = resolve_bundled_override_resolution_wheels(
+        bundled_override_wheel_directory, pre_sign_wheel_receipt
     )
     source_constraints_sha256 = _sha256_file(constraints)
     source_project_file_sha256 = _sha256_file(project_file)
@@ -1131,6 +1194,8 @@ def generate_canonical_dependency_lock(
             resolved_distribution_names=resolved_distribution_names,
             install_distribution_names=install_distribution_names,
             resolution_inputs=resolution_inputs,
+            pre_sign_wheel_receipt=verified_pre_sign_wheel_receipt,
+            pre_sign_wheel_receipt_sha256=pre_sign_wheel_receipt_sha256,
             generation_id=generation_id,
             host=resolver_host,
             pip_version=actual_pip_version,
@@ -1143,6 +1208,7 @@ def generate_canonical_dependency_lock(
                 lock_metadata=generated_metadata,
                 project_file=project_file,
                 setup_manager_source=setup_manager_source,
+                pre_sign_wheel_receipt=pre_sign_wheel_receipt,
             )
         except ReleaseInputReadinessError as exc:
             raise LockGenerationError(
@@ -1184,6 +1250,15 @@ def _parser() -> argparse.ArgumentParser:
             "resolver wheels; these are not copied into the lock"
         ),
     )
+    parser.add_argument(
+        "--pre-sign-wheel-receipt",
+        type=Path,
+        required=True,
+        help=(
+            "sealed receipt emitted after the fpsample and acvl-utils bootstrap "
+            "builds; binds their pre-sign wheel bytes before lock generation"
+        ),
+    )
     return parser
 
 
@@ -1197,6 +1272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_file=args.project_file,
             setup_manager_source=args.setup_manager_source,
             bundled_override_wheel_directory=args.bundled_override_wheel_directory,
+            pre_sign_wheel_receipt=args.pre_sign_wheel_receipt,
         )
     except LockGenerationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

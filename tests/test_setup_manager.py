@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,7 @@ from totalsegmentator_wrapper_mac.setup_manager import (
     build_bundled_wheels_install_command,
     build_installed_doctor_command,
     build_locked_dependencies_install_command,
+    build_pip_check_command,
     build_setup_environment,
     build_totalseg_privacy_command,
     build_totalseg_weights_command,
@@ -372,22 +374,20 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.reason, "runtime_install_failed")
             self.assertTrue(result.paths.state_json.exists())
 
-    def test_dependency_build_failure_is_classified_and_logged(self) -> None:
+    def test_wrapper_install_never_requests_a_source_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             wheel = home / "totalsegmentator_wrapper_mac-0.4.1-cp312-cp312-macosx_11_0_arm64.whl"
             constraints = home / "constraints.txt"
             wheel.write_bytes(b"fake")
             constraints.write_text("fpsample==1.0.2\n", encoding="utf-8")
+            pip_installs: list[list[str]] = []
 
-            def failing_build_runner(command: list[str], cwd: Path | None, env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
                 if "pip" in command and "install" in command:
-                    return subprocess.CompletedProcess(
-                        command,
-                        1,
-                        "Building wheel for fpsample (pyproject.toml): finished with status 'error'",
-                        "ERROR: Failed building wheel for fpsample\nCMake or a C++17 compiler is required",
-                    )
+                    pip_installs.append(command)
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             result = run_setup(
@@ -397,19 +397,72 @@ class SetupManagerTests(unittest.TestCase):
                 constraints=constraints,
                 allow_network=True,
                 skip_mps_check=True,
-                runner=failing_build_runner,
+                runner=recording_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(result.wheel_install_mode, "offline_local_no_deps")
+            self.assertTrue(pip_installs)
+            self.assertTrue(all("--no-index" in command for command in pip_installs))
+            self.assertTrue(all("--no-deps" in command for command in pip_installs))
+            self.assertFalse(any("--use-pep517" in command for command in pip_installs))
+
+    def test_locked_dependency_failure_keeps_pip_detail_in_local_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _configure_fixture_hashed_wheelhouse(fixture)
+            _write_fixture_manifest(fixture)
+            stdout_marker = "pip stdout fixture"
+            stderr_marker = "/private/diagnostics/pip-stderr-fixture"
+
+            def failing_locked_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                if "--require-hashes" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        73,
+                        stdout_marker,
+                        f"ERROR: local wheel verification failed at {stderr_marker}",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=fixture["wheel"],  # type: ignore[arg-type]
+                constraints=fixture["constraints"],  # type: ignore[arg-type]
+                bundle_manifest=fixture["manifest"],  # type: ignore[arg-type]
+                allow_network=True,
+                skip_mps_check=True,
+                skip_dentalseg_model=True,
+                runner=failing_locked_runner,
                 normalizer_inspector=_normalizer_ok,
                 python_inspector=_python312,
             )
 
             self.assertEqual(result.status, "failed")
-            self.assertEqual(result.reason, "dependency_build_failed")
-            install_step = next(step for step in result.steps if step.name == "install_wheel")
-            self.assertIsNotNone(install_step.diagnostic_log)
-            assert install_step.diagnostic_log is not None
-            diagnostic_text = Path(install_step.diagnostic_log).read_text(encoding="utf-8")
-            self.assertIn("Failed building wheel for fpsample", diagnostic_text)
-            self.assertIn("Building wheel for fpsample", diagnostic_text)
+            locked_step = next(
+                step for step in result.steps if step.name == "install_locked_dependencies"
+            )
+            self.assertEqual(locked_step.returncode, 73)
+            self.assertEqual(
+                locked_step.error,
+                "Hash-locked bundled dependency installation failed.",
+            )
+            self.assertIsNotNone(locked_step.diagnostic_log)
+            assert locked_step.diagnostic_log is not None
+            diagnostic = Path(locked_step.diagnostic_log).read_text(encoding="utf-8")
+            self.assertIn("phase=install_locked_dependencies", diagnostic)
+            self.assertIn("returncode=73", diagnostic)
+            self.assertIn(stdout_marker, diagnostic)
+            self.assertIn(stderr_marker, diagnostic)
+            state = read_setup_state(result.paths.state_json)
+            assert state is not None
+            self.assertNotIn(stderr_marker, json.dumps(state, ensure_ascii=False))
 
     def test_wheel_missing_fails_before_runtime_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -479,23 +532,40 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.reason, "python_version_unsupported")
             self.assertEqual(result.python_version, "3.14.4")
 
-    def test_allow_network_requires_constraints(self) -> None:
+    def test_allow_network_only_permits_model_downloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             wheel = home / "totalsegmentator_wrapper_mac-0.1.0-cp312-cp312-macosx_11_0_arm64.whl"
             wheel.write_bytes(b"fake")
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
 
             result = run_setup(
                 home=home,
                 python_executable=home / "python3.12",
                 wheel=wheel,
                 allow_network=True,
-                runner=_successful_runner,
+                skip_mps_check=True,
+                runner=recording_runner,
                 python_inspector=_python312,
             )
 
-            self.assertEqual(result.status, "failed")
-            self.assertEqual(result.reason, "constraints_missing")
+            self.assertEqual(result.status, "success")
+            pip_installs = [
+                command
+                for command in commands
+                if "pip" in command and "install" in command
+            ]
+            self.assertTrue(pip_installs)
+            self.assertTrue(all("--no-index" in command for command in pip_installs))
+            self.assertTrue(
+                any("totalseg_weights_setup" in " ".join(command) for command in commands)
+            )
 
     def test_existing_venv_is_reused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -537,7 +607,7 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.reason, "runtime_install_failed")
 
-    def test_network_install_command_uses_constraints(self) -> None:
+    def test_wrapper_install_command_is_offline_even_when_model_network_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             command = build_wheel_install_command(
@@ -547,11 +617,8 @@ class SetupManagerTests(unittest.TestCase):
                 constraints=root / "constraints.txt",
             )
 
-            self.assertIn("-c", command)
-            self.assertIn(str(root / "constraints.txt"), command)
-            self.assertIn("--find-links", command)
-            self.assertIn(str(root), command)
-            self.assertIn("--only-binary", command)
+            self.assertIn("--no-index", command)
+            self.assertIn("--no-deps", command)
             self.assertIn("--isolated", command)
             self.assertEqual(command[:5], [
                 str(root / "env" / "bin" / "python"),
@@ -560,14 +627,9 @@ class SetupManagerTests(unittest.TestCase):
                 "pip",
                 "--isolated",
             ])
-            binary_index = command.index("--only-binary")
-            self.assertEqual(command[binary_index + 1], ":all:")
-            self.assertNotIn("fpsample", command)
-            self.assertIn(
-                str(root / "app.whl")
-                + "[dicom,mps,dentalseg,toothseg,ios-meshsegnet]",
-                command,
-            )
+            self.assertNotIn("--find-links", command)
+            self.assertNotIn("--only-binary", command)
+            self.assertEqual(command[-1], str(root / "app.whl"))
 
     def test_locked_dependency_command_requires_hashes_without_broad_root_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -579,12 +641,92 @@ class SetupManagerTests(unittest.TestCase):
                 wheel_directory=root / "wheels",
             )
             self.assertIn("--require-hashes", command)
+            self.assertIn("--no-index", command)
             self.assertIn("--no-deps", command)
             self.assertIn("-r", command)
             self.assertEqual(command[command.index("-r") + 1], str(lock))
             self.assertIn("--only-binary", command)
             self.assertIn("--isolated", command)
             self.assertNotIn("totalsegmentator-wrapper-mac", " ".join(command))
+
+    def test_fixture_wheelhouse_installs_without_an_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheels"
+            wheelhouse.mkdir()
+            dependency = wheelhouse / "offline_dep-1.0.0-py3-none-any.whl"
+            wrapper = wheelhouse / "offline_wrapper-1.0.0-py3-none-any.whl"
+            _write_test_wheel(
+                dependency,
+                name="offline-dep",
+                version="1.0.0",
+                module="offline_dep",
+            )
+            _write_test_wheel(
+                wrapper,
+                name="offline-wrapper",
+                version="1.0.0",
+                module="offline_wrapper",
+                requires=("offline-dep == 1.0.0",),
+            )
+            lock = root / "requirements.lock"
+            lock.write_text(
+                "offline-dep==1.0.0 --hash=sha256:"
+                + hashlib.sha256(dependency.read_bytes()).hexdigest()
+                + "\n",
+                encoding="utf-8",
+            )
+            venv = root / "venv"
+            created = subprocess.run(
+                [sys.executable, "-I", "-m", "venv", str(venv)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+            venv_python = venv / "bin" / "python"
+            offline_environment = os.environ.copy()
+            offline_environment["PIP_INDEX_URL"] = "https://127.0.0.1:9/simple"
+            offline_environment["PIP_NO_INDEX"] = "1"
+
+            for command in (
+                build_locked_dependencies_install_command(
+                    venv_python,
+                    requirements_lock=lock,
+                    wheel_directory=wheelhouse,
+                ),
+                build_wheel_install_command(
+                    venv_python,
+                    wrapper,
+                    allow_network=True,
+                ),
+                build_pip_check_command(venv_python),
+            ):
+                if "install" in command:
+                    self.assertIn("--no-index", command)
+                completed = subprocess.run(
+                    command,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=offline_environment,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            imported = subprocess.run(
+                [
+                    str(venv_python),
+                    "-I",
+                    "-c",
+                    "import offline_dep, offline_wrapper; "
+                    "assert offline_dep.VALUE == offline_wrapper.VALUE == 'offline-wheelhouse'",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=offline_environment,
+            )
+            self.assertEqual(imported.returncode, 0, imported.stderr)
 
     def test_bundled_wheel_install_command_force_reinstalls_exact_local_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -606,6 +748,7 @@ class SetupManagerTests(unittest.TestCase):
                     "pip",
                     "--isolated",
                     "install",
+                    "--no-index",
                     "--force-reinstall",
                     "--no-deps",
                     str(fpsample),
@@ -716,51 +859,15 @@ class SetupManagerTests(unittest.TestCase):
             home = Path(tmp)
             fixture = _packaged_setup_fixture(home)
             _promote_fixture_wrapper_to_release_identity(fixture)
-            resources = fixture["resources"]
-            assert isinstance(resources, Path)
-            lock = resources / "constraints" / "macos-arm64-py312.requirements.lock"
-            lock.write_text(
-                "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
-                "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3\n"
-                "numpy==2.3.3 --hash=sha256:" + "c" * 64 + "\n",
-                encoding="utf-8",
-            )
+            _configure_fixture_hashed_wheelhouse(fixture)
+            lock = fixture["lock"]
+            metadata = fixture["lock_metadata"]
+            assert isinstance(lock, Path)
+            assert isinstance(metadata, Path)
             lock_sha256 = hashlib.sha256(lock.read_bytes()).hexdigest()
-            metadata = resources / "constraints" / "macos-arm64-py312.lock.json"
-            metadata.write_text(
-                json.dumps(
-                    _release_lock_metadata(
-                        constraints=fixture["constraints"],
-                        project_file=fixture["project_file"],
-                        requirements_lock=lock,
-                        requirements_lock_sha256=lock_sha256,
-                    )
-                ),
-                encoding="utf-8",
-            )
             payload = fixture["payload"]
             assert isinstance(payload, dict)
-            bundled = payload["bundled"]
-            assert isinstance(bundled, dict)
-            payload.update(
-                {
-                    "signing_mode": "developer-id",
-                    "requirements_lock_sha256": lock_sha256,
-                    "dependency_lock_metadata_sha256": hashlib.sha256(
-                        metadata.read_bytes()
-                    ).hexdigest(),
-                    "project_file_sha256": hashlib.sha256(
-                        fixture["project_file"].read_bytes()  # type: ignore[union-attr]
-                    ).hexdigest(),
-                }
-            )
-            bundled.update(
-                {
-                    "requirements_lock": "constraints/macos-arm64-py312.requirements.lock",
-                    "dependency_lock_metadata": "constraints/macos-arm64-py312.lock.json",
-                    "project_file": "constraints/pyproject.toml",
-                }
-            )
+            payload["signing_mode"] = "developer-id"
             _write_fixture_manifest(fixture)
 
             result, commands = _run_packaged_setup(home, fixture)
@@ -768,6 +875,7 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             locked = next(command for command in commands if "--require-hashes" in command)
             self.assertEqual(locked[locked.index("-r") + 1], str(lock))
+            self.assertIn("--no-index", locked)
             self.assertIn("--no-deps", locked)
             wrapper = next(
                 command
@@ -776,8 +884,12 @@ class SetupManagerTests(unittest.TestCase):
                 and str(fixture["wheel"]) in command
             )
             self.assertNotIn("--require-hashes", wrapper)
-            self.assertEqual(result.wheel_install_mode, "network_require_hashes_lock")
+            self.assertEqual(result.wheel_install_mode, "offline_require_hashes_wheelhouse")
             self.assertEqual(result.requirements_lock, str(lock))
+            self.assertEqual(
+                result.installed_bundle["dependency_wheelhouse_manifest_sha256"],
+                payload["dependency_wheelhouse_manifest_sha256"],
+            )
 
             for field, invalid_value in (
                 ("schema", "wrong-schema"),
@@ -864,6 +976,88 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(rejected.reason, "bundle_manifest_invalid")
             self.assertEqual(rejected_commands, [])
 
+    def test_release_bundle_rejects_tampered_dependency_wheelhouse_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _promote_fixture_wrapper_to_release_identity(fixture)
+            _configure_fixture_hashed_wheelhouse(fixture)
+            payload = fixture["payload"]
+            wheelhouse_manifest = fixture["wheelhouse_manifest"]
+            assert isinstance(payload, dict)
+            assert isinstance(wheelhouse_manifest, Path)
+            payload["signing_mode"] = "developer-id"
+            _write_fixture_manifest(fixture)
+            wheelhouse_manifest.write_text('{"schema":"tampered"}\n', encoding="utf-8")
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundle_manifest_invalid")
+            self.assertEqual(commands, [])
+
+    def test_packaged_setup_rejects_incomplete_locked_wheelhouse_before_venv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _configure_fixture_hashed_wheelhouse(fixture)
+            dependency_wheel = fixture["dependency_wheel"]
+            assert isinstance(dependency_wheel, Path)
+            dependency_wheel.unlink()
+            _write_fixture_manifest(fixture)
+
+            result, commands = _run_packaged_setup(home, fixture)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "bundled_wheel_invalid")
+            self.assertEqual(commands, [])
+            validation = next(
+                step for step in result.steps if step.name == "validate_bundled_wheels"
+            )
+            self.assertIsNotNone(validation.diagnostic_log)
+            assert validation.diagnostic_log is not None
+            self.assertIn(
+                "bundle_wheelhouse_incomplete",
+                Path(validation.diagnostic_log).read_text(encoding="utf-8"),
+            )
+
+    def test_locked_wheelhouse_installs_before_model_network_is_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fixture = _packaged_setup_fixture(home)
+            _configure_fixture_hashed_wheelhouse(fixture)
+            _write_fixture_manifest(fixture)
+            commands: list[list[str]] = []
+
+            def recording_runner(
+                command: list[str], cwd: Path | None, env: dict[str, str] | None
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            result = run_setup(
+                home=home,
+                python_executable=home / "python3.12",
+                wheel=fixture["wheel"],  # type: ignore[arg-type]
+                constraints=fixture["constraints"],  # type: ignore[arg-type]
+                bundle_manifest=fixture["manifest"],  # type: ignore[arg-type]
+                allow_network=False,
+                skip_mps_check=True,
+                skip_dentalseg_model=True,
+                runner=recording_runner,
+                normalizer_inspector=_normalizer_ok,
+                python_inspector=_python312,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "needs_network")
+            locked = next(command for command in commands if "--require-hashes" in command)
+            self.assertIn("--no-index", locked)
+            self.assertEqual(result.wheel_install_mode, "offline_require_hashes_wheelhouse")
+            self.assertFalse(
+                any("totalseg_weights_setup" in " ".join(command) for command in commands)
+            )
+
     def test_setup_rejects_extra_wrapper_wheel_before_any_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -913,6 +1107,8 @@ class SetupManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             fixture = _packaged_setup_fixture(home)
+            _configure_fixture_hashed_wheelhouse(fixture)
+            _write_fixture_manifest(fixture)
             commands: list[list[str]] = []
             stderr_marker = "/private/diagnostics/untrusted-pip-output"
 
@@ -950,7 +1146,10 @@ class SetupManagerTests(unittest.TestCase):
             self.assertNotIn(stderr_marker, check_step.error or "")
             self.assertIsNotNone(check_step.diagnostic_log)
             assert check_step.diagnostic_log is not None
-            self.assertIn(stderr_marker, Path(check_step.diagnostic_log).read_text(encoding="utf-8"))
+            diagnostic = Path(check_step.diagnostic_log).read_text(encoding="utf-8")
+            self.assertIn("phase=verify_dependencies", diagnostic)
+            self.assertIn("returncode=1", diagnostic)
+            self.assertIn(stderr_marker, diagnostic)
             wrapper_install_index = next(
                 index for index, command in enumerate(commands) if "--only-binary" in command
             )
@@ -1046,11 +1245,13 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(bundled_step.status, "success")
             self.assertIn("--force-reinstall", bundled_step.command)
             self.assertIn("--no-deps", bundled_step.command)
+            self.assertIn("--no-index", bundled_step.command)
             self.assertIn(str(fpsample.resolve()), bundled_step.command)
             self.assertIn(str(acvl_utils.resolve()), bundled_step.command)
+            wrapper_step = next(step for step in result.steps if step.name == "install_wheel")
             self.assertLess(
                 commands.index(bundled_step.command),
-                next(index for index, command in enumerate(commands) if "--only-binary" in command),
+                commands.index(wrapper_step.command),
             )
 
     def test_progress_log_records_user_visible_setup_steps(self) -> None:
@@ -1080,7 +1281,8 @@ class SetupManagerTests(unittest.TestCase):
             self.assertIn("SETUP_PROGRESS step=validate_python_312 status=running", log_text)
             self.assertIn("SETUP_PROGRESS step=create_venv", log_text)
             self.assertIn("SETUP_PROGRESS step=install_wheel status=running", log_text)
-            self.assertIn("依存パッケージを取得中です。数分かかることがあります。", log_text)
+            self.assertIn("同梱アプリ本体を導入しています。", log_text)
+            self.assertIn("同梱アプリ本体の導入が完了しました。", log_text)
             self.assertIn("SETUP_PROGRESS step=configure_totalseg_privacy", log_text)
             self.assertIn("SETUP_PROGRESS step=download_totalseg_weights", log_text)
             self.assertIn("初回実行に必要なモデルを取得しています。数分かかることがあります。", log_text)
@@ -1432,6 +1634,7 @@ class SetupManagerTests(unittest.TestCase):
             self.assertEqual(env["XDG_CACHE_HOME"], str(paths.cache_dir))
             self.assertEqual(env["PIP_CACHE_DIR"], str(paths.cache_dir / "pip"))
             self.assertEqual(env["PIP_DISABLE_PIP_VERSION_CHECK"], "1")
+            self.assertEqual(env["PIP_NO_INDEX"], "1")
             self.assertEqual(env["PYTHONPYCACHEPREFIX"], str(paths.cache_dir / "pycache"))
             self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
             self.assertTrue(env["TOTALSEG_HOME_DIR"].startswith(str(paths.app_support)))
@@ -1458,6 +1661,7 @@ class SetupManagerTests(unittest.TestCase):
                 continue
             self.assertNotIn(key, env)
         self.assertEqual(env["PIP_CONFIG_FILE"], os.devnull)
+        self.assertEqual(env["PIP_NO_INDEX"], "1")
         self.assertEqual(env["PYTHONNOUSERSITE"], "1")
 
 
@@ -1551,6 +1755,125 @@ def _release_lock_metadata(
         "pip_require_hashes": True,
         "resolution_complete": True,
     }
+
+
+def _write_test_wheel(
+    path: Path,
+    *,
+    name: str,
+    version: str,
+    module: str | None = None,
+    requires: tuple[str, ...] = (),
+) -> None:
+    """Create a small installable wheel for local-only setup tests."""
+
+    normalized = name.replace("-", "_")
+    dist_info = f"{normalized}-{version}.dist-info"
+    members: dict[str, str] = {
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {name}\n"
+            f"Version: {version}\n"
+            + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires)
+        ),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: test-suite\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    if module is not None:
+        members[f"{module}/__init__.py"] = "VALUE = 'offline-wheelhouse'\n"
+    members[f"{dist_info}/RECORD"] = "".join(
+        f"{member},,\n" for member in sorted(members)
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        for member, text in members.items():
+            archive.writestr(member, text)
+
+
+def _configure_fixture_hashed_wheelhouse(fixture: dict[str, object]) -> None:
+    """Add the minimal hash-bound wheelhouse used by packaged setup tests."""
+
+    resources = fixture["resources"]
+    wheels = fixture["wheels"]
+    constraints = fixture["constraints"]
+    project_file = fixture["project_file"]
+    payload = fixture["payload"]
+    assert isinstance(resources, Path)
+    assert isinstance(wheels, Path)
+    assert isinstance(constraints, Path)
+    assert isinstance(project_file, Path)
+    assert isinstance(payload, dict)
+
+    dependency_wheel = wheels / "numpy-2.3.3-py3-none-any.whl"
+    _write_test_wheel(dependency_wheel, name="numpy", version="2.3.3")
+    dependency_sha256 = hashlib.sha256(dependency_wheel.read_bytes()).hexdigest()
+    lock = resources / "constraints" / "macos-arm64-py312.requirements.lock"
+    lock.write_text(
+        "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
+        "2b03e2ef-8d40-4a02-9ad3-0d2d8f6bd0d3\n"
+        f"numpy==2.3.3 --hash=sha256:{dependency_sha256}\n",
+        encoding="utf-8",
+    )
+    lock_sha256 = hashlib.sha256(lock.read_bytes()).hexdigest()
+    metadata = resources / "constraints" / "macos-arm64-py312.lock.json"
+    metadata.write_text(
+        json.dumps(
+            _release_lock_metadata(
+                constraints=constraints,
+                project_file=project_file,
+                requirements_lock=lock,
+                requirements_lock_sha256=lock_sha256,
+            )
+        ),
+        encoding="utf-8",
+    )
+    wheelhouse_manifest = (
+        resources / "constraints" / "macos-arm64-py312.wheelhouse.json"
+    )
+    wheelhouse_manifest.write_text(
+        json.dumps(
+            {
+                "schema": "totalsegmentator_wrapper_mac.offline_dependency_wheelhouse.v1",
+                "canonical_lock": {
+                    "requirements_lock_sha256": lock_sha256,
+                },
+                "wheels": [],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wheelhouse_manifest_sha256 = hashlib.sha256(
+        wheelhouse_manifest.read_bytes()
+    ).hexdigest()
+    bundled = payload["bundled"]
+    assert isinstance(bundled, dict)
+    bundled.update(
+        {
+            "requirements_lock": "constraints/macos-arm64-py312.requirements.lock",
+            "dependency_lock_metadata": "constraints/macos-arm64-py312.lock.json",
+            "project_file": "constraints/pyproject.toml",
+            "dependency_wheelhouse_manifest": "constraints/macos-arm64-py312.wheelhouse.json",
+        }
+    )
+    payload.update(
+        {
+            "requirements_lock_sha256": lock_sha256,
+            "dependency_lock_metadata_sha256": hashlib.sha256(
+                metadata.read_bytes()
+            ).hexdigest(),
+            "project_file_sha256": hashlib.sha256(project_file.read_bytes()).hexdigest(),
+            "dependency_wheelhouse_manifest_sha256": wheelhouse_manifest_sha256,
+        }
+    )
+    fixture["lock"] = lock
+    fixture["lock_metadata"] = metadata
+    fixture["dependency_wheel"] = dependency_wheel
+    fixture["wheelhouse_manifest"] = wheelhouse_manifest
 
 
 def _packaged_setup_fixture(root: Path) -> dict[str, object]:

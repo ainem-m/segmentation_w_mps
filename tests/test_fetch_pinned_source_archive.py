@@ -257,16 +257,19 @@ class PinnedSourceArchiveTests(unittest.TestCase):
                 (extracted / PROVENANCE_NAME).read_text(encoding="utf-8")
             )
             self.assertEqual(provenance["sha256"], digest)
-            self.assertEqual(
+            (extracted / "CMakeLists.txt").write_text(
+                "mutated source tree\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                PinnedSourceError, "will not be reused"
+            ):
                 extract_pinned_tar_gz(
                     archive=archive,
                     output_parent=root / "sources",
                     expected_root="Source-1.0",
                     url=url,
                     expected_sha256=digest,
-                ),
-                extracted,
-            )
+                )
 
             unsafe = root / "unsafe.tar.gz"
             with tarfile.open(unsafe, "w:gz") as tar:
@@ -359,6 +362,33 @@ class PinnedSourceArchiveTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(list(outside.iterdir()), [])
+
+    def test_cli_accepts_an_explicitly_scoped_official_python_host(self) -> None:
+        url = "https://www.python.org/ftp/python/3.12.13/Python-3.12.13.tar.xz"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "Python-3.12.13.tar.xz"
+            with tarfile.open(archive, "w:xz") as tar:
+                content = b"fixture"
+                info = tarfile.TarInfo("Python-3.12.13/README.rst")
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            main(
+                [
+                    "--url", url,
+                    "--sha256", digest,
+                    "--archive", str(archive),
+                    "--output-parent", str(root / "source"),
+                    "--expected-root", "Python-3.12.13",
+                    "--allowed-host", "www.python.org",
+                ]
+            )
+
+            self.assertTrue(
+                (root / "source" / "Python-3.12.13" / "README.rst").is_file()
+            )
 
 
 if __name__ == "__main__":

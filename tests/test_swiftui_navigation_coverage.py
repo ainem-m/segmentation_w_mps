@@ -586,9 +586,9 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
             'case installLockedDependencies = "install_locked_dependencies"',
             setup_step,
         )
-        self.assertIn('case .installLockedDependencies: return "固定済み依存取得"', setup_step)
-        self.assertIn("SHA-256で固定された依存パッケージ", setup_step)
-        self.assertIn("数分かかることがあります", setup_step)
+        self.assertIn('case .installLockedDependencies: return "固定済み依存導入"', setup_step)
+        self.assertIn("SHA-256で固定された同梱依存パッケージ", setup_step)
+        self.assertNotIn("通信状況", setup_step)
 
     def test_dependency_lock_identity_changes_recreate_the_managed_venv(self):
         current_record = body(PROCESS, "func currentBundleRecord")
@@ -597,6 +597,7 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         for key in (
             "requirements_lock_sha256",
             "dependency_lock_metadata_sha256",
+            "dependency_wheelhouse_manifest_sha256",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, current_record)
@@ -1126,6 +1127,37 @@ class SwiftUINavigationCoverageTests(unittest.TestCase):
         self.assertLess(run_setup.index("let pythonRC"), run_setup.index("safelyRemoveManagedVenv"))
         self.assertIn("dependency_set_id_changed", PROCESS)
         self.assertIn("installed_bundled_dependency_missing_or_invalid", PROCESS)
+
+    def test_setup_pip_bootstrap_is_forced_offline(self):
+        launch_environment = body(COMMANDS, "static func launchEnvironment")
+        bootstrap = body(COMMANDS, "static func bootstrapInstallCommand")
+
+        self.assertIn('env["PIP_NO_INDEX"] = "1"', launch_environment)
+        self.assertIn('"--no-index"', bootstrap)
+        self.assertIn('"--no-deps"', bootstrap)
+        self.assertIn(
+            'onProgress(.installWheel, "同梱アプリ本体を導入しています。")',
+            PROCESS,
+        )
+
+    def test_public_setup_copy_says_only_model_weights_use_network(self):
+        surfaces = {
+            relative: (ROOT / relative).read_text(encoding="utf-8")
+            for relative in (
+                "docs/USER_MANUAL_JA.md",
+                "docs/34_ALPHA_DISTRIBUTION_SUPPORT_CARD.md",
+                "scripts/build_mac_dmg.sh",
+            )
+        }
+        for relative, surface in surfaces.items():
+            with self.subTest(relative=relative):
+                self.assertIn("Python依存はアプリに同梱", surface)
+                self.assertIn(
+                    "セットアップ中にネットワークを使用するのはモデルweightの取得だけ",
+                    surface,
+                )
+                self.assertNotIn("Pythonパッケージとモデルweight取得", surface)
+                self.assertNotIn("Python依存とモデルweightを取得", surface)
 
     def test_wheel_resync_uses_the_same_cross_process_setup_lock(self):
         resync = body(PROCESS, "static func resyncWheel")

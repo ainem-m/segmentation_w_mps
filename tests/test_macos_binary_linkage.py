@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -144,7 +145,7 @@ class MacOSBinaryLinkageTests(unittest.TestCase):
             app = Path(tmp) / "Fixture.app"
             executable = self._write_app_macho(app, "MacOS/Fixture")
             runner = self._bundle_runner(
-                {executable: ("/usr/lib/libSystem.B.dylib",)},
+                {executable: ("@rpath/libswiftCore.dylib",)},
                 {executable: ("/usr/lib/swift",)},
             )
 
@@ -157,25 +158,23 @@ class MacOSBinaryLinkageTests(unittest.TestCase):
                 (executable.resolve(),),
             )
 
-    def test_app_bundle_resolves_rpath_from_the_sealed_system_cache(self) -> None:
-        """An existing sealed system rpath may resolve a shared-cache dylib."""
+    def test_app_bundle_rejects_generic_system_rpath_resolution(self) -> None:
+        """A system directory alone cannot prove an arbitrary @rpath target exists."""
 
         with tempfile.TemporaryDirectory() as tmp:
             app = Path(tmp) / "Fixture.app"
             executable = self._write_app_macho(app, "MacOS/Fixture")
             runner = self._bundle_runner(
-                {executable: ("@rpath/libSystem.B.dylib",)},
+                {executable: ("@rpath/libmissing-or-evil.dylib",)},
                 {executable: ("/usr/lib",)},
             )
 
-            self.assertEqual(
+            with self.assertRaisesRegex(MacOSBinaryLinkageError, "could not resolve"):
                 verify_app_bundle_macos_linkage(
                     app,
                     executable_name="Fixture",
                     runner=runner,
-                ),
-                (executable.resolve(),),
-            )
+                )
 
     def test_app_bundle_resolves_nested_python_executable_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -930,6 +929,23 @@ class MacOSBinaryLinkageTests(unittest.TestCase):
 
         def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             commands.append(tuple(command))
+            if command[:2] == ["hdiutil", "attach"]:
+                mount = Path(command[5])
+                app = mount / "TotalSegmentator Wrapper for Mac.app"
+                resources = app / "Contents" / "Resources"
+                resources.mkdir(parents=True)
+                (resources / "setup_manifest.json").write_text(
+                    json.dumps({"python_runtime": {"bundled": False}}),
+                    encoding="utf-8",
+                )
+                (mount / "Applications").symlink_to(
+                    "/Applications", target_is_directory=True
+                )
+                for name in verify_license_distribution.DMG_ROOT_ALLOWLIST - {
+                    "Applications",
+                    "TotalSegmentator Wrapper for Mac.app",
+                }:
+                    (mount / name).write_text("fixture", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -944,6 +960,11 @@ class MacOSBinaryLinkageTests(unittest.TestCase):
                 patch.object(verify_license_distribution, "verify_apache_license"),
                 patch.object(verify_license_distribution, "verify_notice"),
                 patch.object(verify_license_distribution, "text", return_value=readme),
+                patch.object(
+                    verify_license_distribution,
+                    "verified_authorized_sample_nifti_paths",
+                    return_value=frozenset(),
+                ),
                 patch.object(verify_license_distribution, "verify_app") as verify_app,
             ):
                 verify_license_distribution.verify_dmg(

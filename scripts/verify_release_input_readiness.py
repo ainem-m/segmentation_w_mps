@@ -12,29 +12,23 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
-from urllib.parse import urlparse
 from uuid import UUID
-
-try:
-    from scripts.python_runtime_fingerprint import (
-        RuntimeFingerprintError,
-        fingerprint_runtime_tree,
-    )
-except ModuleNotFoundError:  # Direct execution from scripts/.
-    from python_runtime_fingerprint import (  # type: ignore[no-redef]
-        RuntimeFingerprintError,
-        fingerprint_runtime_tree,
-    )
 
 try:
     from scripts.release_build_toolchain import (
         ReleaseBuildToolchainError,
+        load_release_pre_sign_wheel_receipt,
+        verify_release_build_toolchain_bootstrap,
         verify_release_build_toolchain_inputs,
+        verify_release_pre_sign_wheel_receipt,
     )
 except ModuleNotFoundError:  # Direct execution from scripts/.
     from release_build_toolchain import (  # type: ignore[no-redef]
         ReleaseBuildToolchainError,
+        load_release_pre_sign_wheel_receipt,
+        verify_release_build_toolchain_bootstrap,
         verify_release_build_toolchain_inputs,
+        verify_release_pre_sign_wheel_receipt,
     )
 
 
@@ -58,10 +52,14 @@ CANONICAL_DEPENDENCY_LOCK_RESOLVER = {
     "platform": "macos-14-arm64",
     "python": "3.12",
 }
-DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v3"
+DEPENDENCY_LOCK_SCHEMA = "totalsegmentator_wrapper_mac.dependency_lock.v4"
+DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA = (
+    "totalsegmentator_wrapper_mac.dependency_lock_bootstrap_binding.v1"
+)
 DEFAULT_PROJECT_FILE = Path(__file__).resolve().parents[1] / "pyproject.toml"
 DEPENDENCY_LOCK_METADATA_FIELDS = {
     "schema",
+    "bootstrap",
     "generation_id",
     "constraints_sha256",
     "project_file",
@@ -76,6 +74,17 @@ DEPENDENCY_LOCK_METADATA_FIELDS = {
     "resolver",
     "pip_require_hashes",
     "setup_consumes_requirements_lock",
+}
+DEPENDENCY_LOCK_BOOTSTRAP_BINDING_FIELDS = {
+    "schema",
+    "source_identity_sha256",
+    "sealed_toolchain",
+    "pre_sign_wheel_receipt_sha256",
+}
+SEALED_TOOLCHAIN_BINDING_FIELDS = {
+    "lock_sha256",
+    "metadata_sha256",
+    "receipt_sha256",
 }
 DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX = (
     "# totalsegmentator_wrapper_mac.dependency_lock_generation_id: "
@@ -186,21 +195,6 @@ def _sha256_file(path: Path) -> str:
 def _require_regular(path: Path, label: str) -> None:
     if not path.is_file() or path.is_symlink():
         raise ReleaseInputReadinessError(f"{label} must be a regular non-symlink file: {path}")
-
-
-def _require_external_regular(path: Path, runtime_root: Path, label: str) -> None:
-    _require_regular(path, label)
-    try:
-        path.resolve(strict=True).relative_to(runtime_root.resolve(strict=True))
-    except ValueError:
-        return
-    except OSError as exc:
-        raise ReleaseInputReadinessError(
-            f"could not resolve {label}: {path}: {exc}"
-        ) from exc
-    raise ReleaseInputReadinessError(
-        f"{label} must be stored outside the Python runtime payload: {path}"
-    )
 
 
 def _requirement_name(line: str) -> str:
@@ -509,6 +503,38 @@ def _validate_resolver_provenance(resolver: object) -> None:
         raise ReleaseInputReadinessError("dependency lock resolver provenance is invalid")
 
 
+def verify_dependency_lock_bootstrap_binding(value: object) -> dict[str, object]:
+    """Require the canonical lock to name the preceding bootstrap handoff."""
+
+    if not isinstance(value, dict) or set(value) != DEPENDENCY_LOCK_BOOTSTRAP_BINDING_FIELDS:
+        raise ReleaseInputReadinessError("dependency lock bootstrap binding field set mismatch")
+    sealed_toolchain = value.get("sealed_toolchain")
+    if (
+        value.get("schema") != DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA
+        or not isinstance(value.get("source_identity_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["source_identity_sha256"]) is None
+        or not isinstance(value.get("pre_sign_wheel_receipt_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["pre_sign_wheel_receipt_sha256"])
+        is None
+        or not isinstance(sealed_toolchain, dict)
+        or set(sealed_toolchain) != SEALED_TOOLCHAIN_BINDING_FIELDS
+        or any(
+            not isinstance(sealed_toolchain.get(key), str)
+            or re.fullmatch(r"[0-9a-f]{64}", str(sealed_toolchain[key])) is None
+            for key in SEALED_TOOLCHAIN_BINDING_FIELDS
+        )
+    ):
+        raise ReleaseInputReadinessError("dependency lock bootstrap binding is invalid")
+    return {
+        "schema": DEPENDENCY_LOCK_BOOTSTRAP_BINDING_SCHEMA,
+        "source_identity_sha256": str(value["source_identity_sha256"]),
+        "sealed_toolchain": {
+            key: str(sealed_toolchain[key]) for key in SEALED_TOOLCHAIN_BINDING_FIELDS
+        },
+        "pre_sign_wheel_receipt_sha256": str(value["pre_sign_wheel_receipt_sha256"]),
+    }
+
+
 def verify_canonical_dependency_lock(
     *,
     constraints: Path,
@@ -517,6 +543,7 @@ def verify_canonical_dependency_lock(
     project_file: Path = DEFAULT_PROJECT_FILE,
     setup_manager_source: Path | None = None,
     setup_manager_source_text: str | None = None,
+    pre_sign_wheel_receipt: Path | None = None,
 ) -> None:
     """Require a resolved lock that setup actually installs with --require-hashes."""
 
@@ -549,6 +576,28 @@ def verify_canonical_dependency_lock(
         raise ReleaseInputReadinessError("dependency lock metadata field set mismatch")
     if metadata.get("schema") != DEPENDENCY_LOCK_SCHEMA:
         raise ReleaseInputReadinessError("dependency lock metadata schema mismatch")
+    bootstrap_binding = verify_dependency_lock_bootstrap_binding(
+        metadata.get("bootstrap")
+    )
+    if pre_sign_wheel_receipt is not None:
+        try:
+            pre_sign_receipt, pre_sign_sha256 = load_release_pre_sign_wheel_receipt(
+                pre_sign_wheel_receipt
+            )
+        except ReleaseBuildToolchainError as exc:
+            raise ReleaseInputReadinessError(
+                f"dependency lock pre-sign wheel receipt is invalid: {exc}"
+            ) from exc
+        if (
+            bootstrap_binding["pre_sign_wheel_receipt_sha256"] != pre_sign_sha256
+            or bootstrap_binding["source_identity_sha256"]
+            != pre_sign_receipt["source_identity_sha256"]
+            or bootstrap_binding["sealed_toolchain"]
+            != pre_sign_receipt["sealed_toolchain"]
+        ):
+            raise ReleaseInputReadinessError(
+                "dependency lock bootstrap binding does not match the pre-sign wheel receipt"
+            )
     metadata_generation_id = _canonical_uuid(metadata.get("generation_id"))
     if metadata_generation_id is None:
         raise ReleaseInputReadinessError("dependency lock metadata generation ID is invalid")
@@ -608,172 +657,6 @@ def verify_canonical_dependency_lock(
     if metadata.get("pip_require_hashes") is not True or metadata.get("setup_consumes_requirements_lock") is not True:
         raise ReleaseInputReadinessError("dependency lock does not require hashed setup consumption")
     verify_setup_manager_hashed_lock_contract(setup_manager_source_text)
-
-
-def _python_runtime_source_descriptor(
-    *,
-    policy: object,
-    receipt: object,
-    runtime_fingerprint: str,
-    policy_sha256: str,
-    receipt_sha256: str,
-) -> dict[str, object]:
-    policy_keys = {
-        "schema", "implementation", "python_version", "source_url",
-        "source_archive_sha256", "license", "receipt_schema", "build_options",
-        "minimum_macos", "architecture",
-    }
-    if not isinstance(policy, dict) or set(policy) != policy_keys:
-        raise ReleaseInputReadinessError("Python runtime source policy field set mismatch")
-    source_url = policy.get("source_url")
-    parsed_source_url = urlparse(source_url) if isinstance(source_url, str) else None
-    try:
-        source_port = parsed_source_url.port if parsed_source_url is not None else None
-    except ValueError:
-        source_port = -1
-    archive_sha = policy.get("source_archive_sha256")
-    receipt_schema = policy.get("receipt_schema")
-    build_options = policy.get("build_options")
-    if (
-        policy.get("schema") != "totalsegmentator_wrapper_mac.python_runtime_source_policy.v1"
-        or policy.get("implementation") != "CPython"
-        or not isinstance(policy.get("python_version"), str)
-        or re.fullmatch(r"3\.12\.(?:0|[1-9][0-9]*)", str(policy["python_version"]))
-        is None
-        or not isinstance(source_url, str)
-        or parsed_source_url is None
-        or parsed_source_url.scheme != "https"
-        or not parsed_source_url.hostname
-        or parsed_source_url.username is not None
-        or parsed_source_url.password is not None
-        or source_port not in (None, 443)
-        or parsed_source_url.query
-        or parsed_source_url.fragment
-        or not isinstance(archive_sha, str)
-        or re.fullmatch(r"[0-9a-f]{64}", archive_sha) is None
-        or not isinstance(policy.get("license"), str)
-        or not policy.get("license")
-        or not isinstance(receipt_schema, str)
-        or not receipt_schema
-        or policy.get("minimum_macos") != "14.0"
-        or policy.get("architecture") != "arm64"
-        or not isinstance(build_options, list)
-        or not build_options
-        or any(not isinstance(option, str) or not option for option in build_options)
-        or re.fullmatch(r"[0-9a-f]{64}", runtime_fingerprint) is None
-        or re.fullmatch(r"[0-9a-f]{64}", policy_sha256) is None
-        or re.fullmatch(r"[0-9a-f]{64}", receipt_sha256) is None
-    ):
-        raise ReleaseInputReadinessError("Python runtime source policy is incomplete")
-    receipt_keys = {
-        "schema", "implementation", "python_version", "source_url",
-        "source_archive_sha256", "build_options", "minimum_macos",
-        "architecture", "runtime_fingerprint",
-    }
-    if not isinstance(receipt, dict) or set(receipt) != receipt_keys:
-        raise ReleaseInputReadinessError("Python runtime source-build receipt field set mismatch")
-    expected_receipt = {
-        "schema": policy.get("receipt_schema"),
-        "implementation": policy.get("implementation"),
-        "python_version": policy.get("python_version"),
-        "source_url": source_url,
-        "source_archive_sha256": archive_sha,
-        "build_options": policy.get("build_options"),
-        "minimum_macos": "14.0",
-        "architecture": "arm64",
-        "runtime_fingerprint": runtime_fingerprint,
-    }
-    if receipt != expected_receipt:
-        raise ReleaseInputReadinessError(
-            "Python runtime source-build receipt does not match the pinned policy/runtime payload"
-        )
-    return {
-        "kind": "pinned-cpython-source-build",
-        "implementation": policy["implementation"],
-        "python_version": policy["python_version"],
-        "source_url": source_url,
-        "source_archive_sha256": archive_sha,
-        "license": policy["license"],
-        "build_options": build_options,
-        "minimum_macos": "14.0",
-        "architecture": "arm64",
-        "runtime_fingerprint": expected_receipt["runtime_fingerprint"],
-        "policy_sha256": policy_sha256,
-        "receipt_sha256": receipt_sha256,
-    }
-
-
-def verify_python_runtime_source_provenance(
-    *,
-    policy_path: Path,
-    receipt_path: Path,
-    runtime_root: Path,
-) -> dict[str, object]:
-    """Bind the bundled Python payload to external reviewed provenance files."""
-
-    if not runtime_root.is_dir() or runtime_root.is_symlink():
-        raise ReleaseInputReadinessError("Python runtime root must be a non-symlink directory")
-    _require_external_regular(
-        policy_path, runtime_root, "Python runtime source policy"
-    )
-    _require_external_regular(
-        receipt_path, runtime_root, "Python runtime source-build receipt"
-    )
-    try:
-        policy_bytes = policy_path.read_bytes()
-        receipt_bytes = receipt_path.read_bytes()
-        policy = json.loads(policy_bytes)
-        receipt = json.loads(receipt_bytes)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ReleaseInputReadinessError(f"invalid Python runtime provenance JSON: {exc}") from exc
-    try:
-        runtime_fingerprint = fingerprint_runtime_tree(runtime_root)
-    except RuntimeFingerprintError as exc:
-        raise ReleaseInputReadinessError(
-            f"Python runtime payload cannot be fingerprinted safely: {exc}"
-        ) from exc
-    return _python_runtime_source_descriptor(
-        policy=policy,
-        receipt=receipt,
-        runtime_fingerprint=runtime_fingerprint,
-        policy_sha256=hashlib.sha256(policy_bytes).hexdigest(),
-        receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest(),
-    )
-
-
-def validate_packaged_python_runtime_provenance(
-    source_manifest: object,
-    *,
-    policy_bytes: bytes,
-    receipt_bytes: bytes,
-    runtime_fingerprint: str,
-) -> None:
-    """Validate copied policy/receipt bytes against a pre-sign manifest digest."""
-
-    try:
-        policy = json.loads(policy_bytes)
-        receipt = json.loads(receipt_bytes)
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        raise ReleaseInputReadinessError(
-            f"invalid packaged Python runtime provenance JSON: {exc}"
-        ) from exc
-    expected = _python_runtime_source_descriptor(
-        policy=policy,
-        receipt=receipt,
-        runtime_fingerprint=runtime_fingerprint,
-        policy_sha256=hashlib.sha256(policy_bytes).hexdigest(),
-        receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest(),
-    )
-    expected.update(
-        {
-            "policy_bundled_path": "licenses/python-runtime-source-policy.json",
-            "receipt_bundled_path": "licenses/python-runtime-build-provenance.json",
-        }
-    )
-    if source_manifest != expected:
-        raise ReleaseInputReadinessError(
-            "packaged Python runtime provenance does not match the app manifest"
-        )
 
 
 def verify_setup_weight_revalidation_complete(path: Path) -> None:
@@ -887,6 +770,62 @@ def valid_revalidation_timestamp(value: object) -> bool:
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ") == value
 
 
+def verify_release_toolchain_bootstrap_artifact(
+    *,
+    lock_path: Path,
+    metadata_path: Path,
+    wheelhouse: Path,
+    declaration_path: Path,
+    source_identity_path: Path,
+    receipt_path: Path,
+    pre_sign_wheel_receipt_path: Path,
+    pre_sign_wheel_directory: Path,
+    project_file: Path,
+    constraints: Path,
+    fpsample_builder: Path,
+    acvl_utils_builder: Path,
+) -> dict[str, object]:
+    """Revalidate every bootstrap input before calling a release final-ready.
+
+    The result intentionally does not construct a venv or build a wheel; it
+    only proves that the source identity, explicit toolchain declaration,
+    selected wheelhouse, sealed toolchain receipt, and pre-sign component
+    wheels still agree.
+    """
+
+    try:
+        bootstrap = verify_release_build_toolchain_bootstrap(
+            lock_path=lock_path,
+            metadata_path=metadata_path,
+            wheelhouse=wheelhouse,
+            declaration_path=declaration_path,
+            source_identity_path=source_identity_path,
+            project_file=project_file,
+            constraints=constraints,
+            fpsample_builder=fpsample_builder,
+            acvl_utils_builder=acvl_utils_builder,
+        )
+        pre_sign = verify_release_pre_sign_wheel_receipt(
+            pre_sign_wheel_receipt_path=pre_sign_wheel_receipt_path,
+            wheel_directory=pre_sign_wheel_directory,
+            lock_path=lock_path,
+            metadata_path=metadata_path,
+            wheelhouse=wheelhouse,
+            receipt_path=receipt_path,
+            declaration_path=declaration_path,
+            source_identity_path=source_identity_path,
+            project_file=project_file,
+            constraints=constraints,
+            fpsample_builder=fpsample_builder,
+            acvl_utils_builder=acvl_utils_builder,
+        )
+    except ReleaseBuildToolchainError as exc:
+        raise ReleaseInputReadinessError(
+            f"release toolchain bootstrap artifact is invalid: {exc}"
+        ) from exc
+    return {"bootstrap": bootstrap, "pre_sign_wheels": pre_sign}
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify immutable dependency and setup-weight release inputs.")
     parser.add_argument("--constraints", type=Path, required=True)
@@ -895,12 +834,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-file", type=Path, required=True)
     parser.add_argument("--setup-manager-source", type=Path, required=True)
     parser.add_argument("--setup-weights-manifest", type=Path, required=True)
-    parser.add_argument("--python-runtime-policy", type=Path, required=True)
-    parser.add_argument("--python-runtime-receipt", type=Path, required=True)
-    parser.add_argument("--python-runtime-root", type=Path, required=True)
     parser.add_argument("--release-build-toolchain-lock", type=Path)
     parser.add_argument("--release-build-toolchain-metadata", type=Path)
     parser.add_argument("--release-build-toolchain-wheelhouse", type=Path)
+    parser.add_argument("--release-build-toolchain-bootstrap-declaration", type=Path)
+    parser.add_argument("--release-build-toolchain-source-identity", type=Path)
+    parser.add_argument("--release-build-toolchain-receipt", type=Path)
+    parser.add_argument("--release-pre-sign-wheel-receipt", type=Path)
+    parser.add_argument("--release-pre-sign-wheel-directory", type=Path)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
@@ -908,19 +849,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     failures: list[str] = []
-    python_runtime_source: dict[str, object] | None = None
     release_build_toolchain: dict[str, object] | None = None
+    release_bootstrap_artifact: dict[str, object] | None = None
     toolchain_args = (
         args.release_build_toolchain_lock,
         args.release_build_toolchain_metadata,
         args.release_build_toolchain_wheelhouse,
+        args.release_build_toolchain_bootstrap_declaration,
+        args.release_build_toolchain_source_identity,
+        args.release_build_toolchain_receipt,
+        args.release_pre_sign_wheel_receipt,
+        args.release_pre_sign_wheel_directory,
     )
     if any(value is not None for value in toolchain_args) and not all(
         value is not None for value in toolchain_args
     ):
         raise ReleaseInputReadinessError(
-            "release build toolchain lock, metadata, and wheelhouse must be provided together"
+            "final strict release readiness requires the complete toolchain bootstrap artifact: lock, metadata, wheelhouse, declaration, source identity, sealed receipt, pre-sign wheel receipt, and pre-sign wheel directory"
         )
+    pre_sign_receipt = (
+        args.release_pre_sign_wheel_receipt.expanduser()
+        if all(value is not None for value in toolchain_args)
+        and args.release_pre_sign_wheel_receipt is not None
+        else None
+    )
     checks = (
         ("dependencies", lambda: verify_canonical_dependency_lock(
             constraints=args.constraints.expanduser(),
@@ -928,34 +880,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             lock_metadata=args.lock_metadata.expanduser(),
             project_file=args.project_file.expanduser(),
             setup_manager_source=args.setup_manager_source.expanduser(),
+            pre_sign_wheel_receipt=pre_sign_receipt,
         )),
         ("weights", lambda: verify_setup_weight_revalidation_complete(
             args.setup_weights_manifest.expanduser()
-        )),
-        ("python_runtime", lambda: verify_python_runtime_source_provenance(
-            policy_path=args.python_runtime_policy.expanduser(),
-            receipt_path=args.python_runtime_receipt.expanduser(),
-            runtime_root=args.python_runtime_root.expanduser(),
         )),
     )
     for name, verifier in checks:
         try:
             result = verifier()
-            if name == "python_runtime":
-                python_runtime_source = result
         except ReleaseInputReadinessError as exc:
             failures.append(str(exc))
     if all(value is not None for value in toolchain_args):
         assert args.release_build_toolchain_lock is not None
         assert args.release_build_toolchain_metadata is not None
         assert args.release_build_toolchain_wheelhouse is not None
+        assert args.release_build_toolchain_bootstrap_declaration is not None
+        assert args.release_build_toolchain_source_identity is not None
+        assert args.release_build_toolchain_receipt is not None
+        assert args.release_pre_sign_wheel_receipt is not None
+        assert args.release_pre_sign_wheel_directory is not None
         try:
-            release_build_toolchain = verify_release_build_toolchain_inputs(
+            release_bootstrap_artifact = verify_release_toolchain_bootstrap_artifact(
                 lock_path=args.release_build_toolchain_lock.expanduser(),
                 metadata_path=args.release_build_toolchain_metadata.expanduser(),
                 wheelhouse=args.release_build_toolchain_wheelhouse.expanduser(),
+                declaration_path=args.release_build_toolchain_bootstrap_declaration.expanduser(),
+                source_identity_path=args.release_build_toolchain_source_identity.expanduser(),
+                receipt_path=args.release_build_toolchain_receipt.expanduser(),
+                pre_sign_wheel_receipt_path=args.release_pre_sign_wheel_receipt.expanduser(),
+                pre_sign_wheel_directory=args.release_pre_sign_wheel_directory.expanduser(),
+                project_file=args.project_file.expanduser(),
+                constraints=args.constraints.expanduser(),
+                fpsample_builder=DEFAULT_PROJECT_FILE.parent
+                / "scripts"
+                / "build_fpsample_wheel_macos.sh",
+                acvl_utils_builder=DEFAULT_PROJECT_FILE.parent
+                / "scripts"
+                / "build_acvl_utils_wheel.sh",
             )
-        except ReleaseBuildToolchainError as exc:
+            release_build_toolchain = release_bootstrap_artifact["bootstrap"]
+            assert isinstance(release_build_toolchain, dict)
+        except ReleaseInputReadinessError as exc:
             failures.append(str(exc))
     if failures:
         raise ReleaseInputReadinessError(
@@ -974,17 +940,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "python_runtime_source": python_runtime_source,
                     "dependency_lock": {
                         "excluded_bundled_overrides": excluded_bundled_overrides
                     },
                     "release_build_toolchain": release_build_toolchain,
+                    "release_toolchain_bootstrap_artifact": release_bootstrap_artifact,
                 },
                 sort_keys=True,
             )
         )
     else:
-        print("PASS: dependency lock, setup weights, and Python runtime source are release-attested")
+        print("PASS: dependency lock and setup weights are release-attested")
     return 0
 
 

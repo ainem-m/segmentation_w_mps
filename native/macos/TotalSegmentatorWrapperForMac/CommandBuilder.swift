@@ -44,8 +44,8 @@ enum SetupStep: String {
         case .bootstrapInstall: return "アプリ本体導入"
         case .syncBundle: return "アプリ更新反映"
         case .installBundledWheels: return "同梱依存導入"
-        case .installLockedDependencies: return "固定済み依存取得"
-        case .installWheel: return "依存パッケージ取得"
+        case .installLockedDependencies: return "固定済み依存導入"
+        case .installWheel: return "アプリ本体導入"
         case .verifyDependencies: return "依存関係確認"
         case .configureTotalsegPrivacy: return "プライバシー設定"
         case .downloadTotalsegWeights: return "TotalSegmentatorモデル準備"
@@ -77,9 +77,9 @@ enum SetupStep: String {
         case .installBundledWheels:
             return "検証済みの同梱依存パッケージを専用環境へ導入しています。"
         case .installLockedDependencies:
-            return "SHA-256で固定された依存パッケージを取得・導入しています。通信状況により数分かかることがあります。"
+            return "SHA-256で固定された同梱依存パッケージを導入しています。"
         case .installWheel:
-            return "依存パッケージを取得中です。数分かかることがあります。"
+            return "同梱されたアプリ本体を専用環境へ導入しています。"
         case .verifyDependencies:
             return "導入した依存パッケージの整合性を確認しています。"
         case .configureTotalsegPrivacy:
@@ -535,6 +535,7 @@ struct CommandBuilder {
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONNOUSERSITE"] = "1"
         env["PIP_CONFIG_FILE"] = "/dev/null"
+        env["PIP_NO_INDEX"] = "1"
         env["PIP_NO_INPUT"] = "1"
         env["PIP_CACHE_DIR"] = paths.cache.appendingPathComponent("pip", isDirectory: true).path
         env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
@@ -562,7 +563,7 @@ struct CommandBuilder {
     }
 
     static func bootstrapInstallCommand(python: URL, wheel: URL) -> [String] {
-        [python.path, "-I", "-m", "pip", "--isolated", "install", "--force-reinstall", "--no-deps", wheel.path]
+        [python.path, "-I", "-m", "pip", "--isolated", "install", "--no-index", "--force-reinstall", "--no-deps", wheel.path]
     }
 
     static func setupCommand(
@@ -1215,9 +1216,9 @@ func setupReasonToJapanese(_ reason: String?) -> String {
     case "dependency_build_failed": return "依存パッケージをこのMac上でビルドできませんでした。"
     case "dependency_resolution_failed": return "依存パッケージのバージョンを解決できませんでした。"
     case "dependency_distribution_unavailable": return "このMacに対応する依存パッケージが見つかりませんでした。"
-    case "dependency_network_failed": return "依存パッケージの取得中に通信エラーが発生しました。"
+    case "dependency_network_failed": return "以前のセットアップで依存パッケージの通信エラーが記録されています。"
     case "dependency_consistency_failed": return "導入した依存パッケージの整合性を確認できませんでした。"
-    case "dependency_set_id_changed", "constraints_sha256_changed", "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed", "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed": return "アプリの依存構成が更新されました。"
+    case "dependency_set_id_changed", "constraints_sha256_changed", "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed", "dependency_wheelhouse_manifest_sha256_changed", "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed": return "アプリの依存構成が更新されました。"
     case "insufficient_disk_space": return "セットアップに必要な空き容量が不足しています。"
     case "setup_busy": return "別のセットアップが実行中です。"
     case "setup_lock_failed": return "セットアップの排他制御を開始できませんでした。"
@@ -1253,7 +1254,7 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
     case "python312_missing", "wheel_missing", "constraints_missing", "bundle_manifest_invalid":
         return "アプリをDMGからもう一度コピーしてから起動してください。改善しない場合はログ回収コマンドを実行してください。"
     case "dependency_network_failed":
-        return "ネットワーク接続、VPN、プロキシ設定を確認してから再試行してください。"
+        return "現行版は同梱依存をオフライン導入します。セットアップを再実行し、改善しない場合はエラー報告フォームへ診断情報を貼り付けてください。"
     case "insufficient_disk_space":
         return "Macの空き容量を増やしてから、もう一度セットアップしてください。"
     case "setup_busy", "weights_setup_busy":
@@ -1262,7 +1263,7 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
         return "アプリの保存先を確認して再試行してください。改善しない場合はエラー報告フォームへ診断情報を貼り付けてください。"
     case "app_running_from_disk_image":
         return "DMGや外部ボリュームからアプリをApplicationsまたはホーム内のApplicationsへコピーし、コピー先から開き直してください。"
-    case "venv_missing", "venv_python_changed", "setup_weights_missing_or_invalid", "setup_weights_manifest_sha256_changed", "installed_package_missing_or_invalid", "installed_bundled_dependency_missing_or_invalid", "dependency_set_id_changed", "constraints_sha256_changed", "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed", "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed":
+    case "venv_missing", "venv_python_changed", "setup_weights_missing_or_invalid", "setup_weights_manifest_sha256_changed", "installed_package_missing_or_invalid", "installed_bundled_dependency_missing_or_invalid", "dependency_set_id_changed", "constraints_sha256_changed", "requirements_lock_sha256_changed", "dependency_lock_metadata_sha256_changed", "dependency_wheelhouse_manifest_sha256_changed", "fpsample_wheel_sha256_changed", "acvl_utils_wheel_sha256_changed":
         return "セットアップをもう一度実行してください。中断したモデル取得は可能な範囲で再開されます。"
     case "dependency_build_failed", "dependency_resolution_failed", "dependency_distribution_unavailable", "dependency_consistency_failed":
         return "アプリ側の依存パッケージ構成に問題がある可能性があります。エラー報告フォームへ診断情報を貼り付けてください。"
@@ -1272,7 +1273,9 @@ func setupRecoverySuggestion(_ reason: String?) -> String {
         return "アプリと同梱依存関係の組み合わせに問題があります。エラー報告フォームへ診断情報を貼り付けてください。"
     case "bundled_wheel_install_failed":
         return "セットアップをもう一度実行してください。改善しない場合はエラー報告フォームへ診断情報を貼り付けてください。"
-    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed", "weights_download_failed", "dentalseg_weights_download_failed":
+    case "runtime_install_failed", "setup_exception", "totalseg_privacy_config_failed":
+        return "アプリをDMGからもう一度コピーして再試行してください。改善しない場合はログ回収コマンドを実行してください。"
+    case "weights_download_failed", "dentalseg_weights_download_failed":
         return "ネットワークを確認して再試行してください。改善しない場合はDMG内のログ回収コマンドを実行してください。"
     case "normalizer_missing":
         return "CT確認用部品が見つかりません。アプリをDMGからもう一度コピーしてください。"

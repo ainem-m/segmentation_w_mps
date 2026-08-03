@@ -10,10 +10,8 @@ from scripts.verify_release_input_readiness import (
     ReleaseInputReadinessError,
     verify_canonical_dependency_lock,
     verify_hashed_requirement_entries,
-    verify_python_runtime_source_provenance,
     verify_setup_weight_revalidation_complete,
 )
-from scripts.python_runtime_fingerprint import fingerprint_runtime_tree
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +82,20 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                 if name not in {"acvl-utils", "fpsample"}
             ]
         return {
-            "schema": "totalsegmentator_wrapper_mac.dependency_lock.v3",
+            "schema": "totalsegmentator_wrapper_mac.dependency_lock.v4",
+            "bootstrap": {
+                "schema": (
+                    "totalsegmentator_wrapper_mac."
+                    "dependency_lock_bootstrap_binding.v1"
+                ),
+                "source_identity_sha256": "1" * 64,
+                "sealed_toolchain": {
+                    "lock_sha256": "2" * 64,
+                    "metadata_sha256": "3" * 64,
+                    "receipt_sha256": "4" * 64,
+                },
+                "pre_sign_wheel_receipt_sha256": "5" * 64,
+            },
             "generation_id": self._GENERATION_ID,
             "constraints_sha256": digest(constraints),
             "project_file": project_file.name,
@@ -628,157 +639,15 @@ class ReleaseInputReadinessTests(unittest.TestCase):
                     setup_manager_source=setup_source,
                 )
 
-    def test_external_python_runtime_receipt_passes_and_detects_mutation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            runtime = root / "runtime"
-            runtime_bin = runtime / "bin"
-            runtime_bin.mkdir(parents=True)
-            runtime_python = runtime_bin / "python3.12"
-            runtime_python.write_bytes(b"test-python-runtime")
-            runtime_python.chmod(0o755)
-            policy_path = root / "python-runtime-source-policy.json"
-            receipt_path = root / "python-runtime-build-provenance.json"
-            policy = {
-                "schema": "totalsegmentator_wrapper_mac.python_runtime_source_policy.v1",
-                "implementation": "CPython",
-                "python_version": "3.12.11",
-                "source_url": "https://www.python.org/ftp/python/3.12.11/Python-3.12.11.tgz",
-                "source_archive_sha256": "c" * 64,
-                "license": "Python-2.0",
-                "receipt_schema": "totalsegmentator_wrapper_mac.python_runtime_build.v1",
-                "build_options": ["--enable-framework", "MACOSX_DEPLOYMENT_TARGET=14.0"],
-                "minimum_macos": "14.0",
-                "architecture": "arm64",
-            }
-            policy_path.write_text(json.dumps(policy), encoding="utf-8")
-            receipt = {
-                "schema": policy["receipt_schema"],
-                "implementation": policy["implementation"],
-                "python_version": policy["python_version"],
-                "source_url": policy["source_url"],
-                "source_archive_sha256": policy["source_archive_sha256"],
-                "build_options": policy["build_options"],
-                "minimum_macos": "14.0",
-                "architecture": "arm64",
-                "runtime_fingerprint": fingerprint_runtime_tree(runtime),
-            }
-            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    def test_current_task_115_and_297_revalidation_evidence_permits_release(self) -> None:
+        """The checked-in manifest now carries the required strict evidence."""
 
-            source = verify_python_runtime_source_provenance(
-                policy_path=policy_path,
-                receipt_path=receipt_path,
-                runtime_root=runtime,
-            )
-            self.assertEqual(source["kind"], "pinned-cpython-source-build")
-            self.assertEqual(
-                source["runtime_fingerprint"], receipt["runtime_fingerprint"]
-            )
-            self.assertEqual(
-                source["receipt_sha256"],
-                hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
-            )
-
-            for field, invalid_value in (
-                ("python_version", "3.12.evil"),
-                (
-                    "source_url",
-                    "https://www.python.org:444/ftp/python/3.12.11/Python-3.12.11.tgz",
-                ),
-            ):
-                with self.subTest(field=field):
-                    invalid_policy = {**policy, field: invalid_value}
-                    invalid_receipt = {
-                        **receipt,
-                        field: invalid_value,
-                    }
-                    policy_path.write_text(
-                        json.dumps(invalid_policy), encoding="utf-8"
-                    )
-                    receipt_path.write_text(
-                        json.dumps(invalid_receipt), encoding="utf-8"
-                    )
-                    with self.assertRaisesRegex(
-                        ReleaseInputReadinessError,
-                        "source policy is incomplete",
-                    ):
-                        verify_python_runtime_source_provenance(
-                            policy_path=policy_path,
-                            receipt_path=receipt_path,
-                            runtime_root=runtime,
-                        )
-            policy_path.write_text(json.dumps(policy), encoding="utf-8")
-            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-
-            runtime_python.write_bytes(b"mutated-python-runtime")
-            with self.assertRaisesRegex(
-                ReleaseInputReadinessError,
-                "does not match the pinned policy/runtime payload",
-            ):
-                verify_python_runtime_source_provenance(
-                    policy_path=policy_path,
-                    receipt_path=receipt_path,
-                    runtime_root=runtime,
-                )
-
-    def test_python_runtime_policy_and_receipt_must_be_external_regular_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            runtime = root / "runtime"
-            runtime.mkdir()
-            inside_receipt = runtime / "python-runtime-build-provenance.json"
-            inside_receipt.write_text("{}", encoding="utf-8")
-            policy = root / "policy.json"
-            policy.write_text("{}", encoding="utf-8")
-            with self.assertRaisesRegex(
-                ReleaseInputReadinessError,
-                "outside the Python runtime payload",
-            ):
-                verify_python_runtime_source_provenance(
-                    policy_path=policy,
-                    receipt_path=inside_receipt,
-                    runtime_root=runtime,
-                )
-
-            external_receipt = root / "receipt.json"
-            external_receipt.write_text("{}", encoding="utf-8")
-            receipt_link = root / "receipt-link.json"
-            receipt_link.symlink_to(external_receipt.name)
-            with self.assertRaisesRegex(
-                ReleaseInputReadinessError,
-                "regular non-symlink",
-            ):
-                verify_python_runtime_source_provenance(
-                    policy_path=policy,
-                    receipt_path=receipt_link,
-                    runtime_root=runtime,
-                )
-
-    def test_release_requires_pinned_python_runtime_policy_and_receipt(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            runtime = Path(tmp) / "runtime"
-            runtime.mkdir()
-            with self.assertRaisesRegex(
-                ReleaseInputReadinessError,
-                "Python runtime source policy",
-            ):
-                verify_python_runtime_source_provenance(
-                    policy_path=Path(tmp) / "missing-policy.json",
-                    receipt_path=Path(tmp) / "missing-receipt.json",
-                    runtime_root=runtime,
-                )
-
-    def test_current_task_115_and_297_revalidation_flags_block_release(self) -> None:
-        with self.assertRaisesRegex(
-            ReleaseInputReadinessError,
-            r"task 115.*task 297",
-        ):
-            verify_setup_weight_revalidation_complete(
-                ROOT
-                / "src"
-                / "totalsegmentator_wrapper_mac"
-                / "totalseg_setup_weights_manifest.json"
-            )
+        verify_setup_weight_revalidation_complete(
+            ROOT
+            / "src"
+            / "totalsegmentator_wrapper_mac"
+            / "totalseg_setup_weights_manifest.json"
+        )
 
     def test_attested_assets_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

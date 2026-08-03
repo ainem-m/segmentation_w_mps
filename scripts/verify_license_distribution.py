@@ -7,8 +7,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import plistlib
 import re
+import stat
 import subprocess
 import tempfile
 import zipfile
@@ -80,7 +82,6 @@ try:
         BUNDLED_OVERRIDE_RELEASE_HASH_BINDING,
         BUNDLED_OVERRIDE_SPECS,
         ReleaseInputReadinessError,
-        validate_packaged_python_runtime_provenance,
         valid_revalidation_timestamp,
         verify_canonical_dependency_lock,
         verify_excluded_bundled_override_metadata,
@@ -90,7 +91,6 @@ except ModuleNotFoundError:  # Direct execution from the scripts directory.
         BUNDLED_OVERRIDE_RELEASE_HASH_BINDING,
         BUNDLED_OVERRIDE_SPECS,
         ReleaseInputReadinessError,
-        validate_packaged_python_runtime_provenance,
         valid_revalidation_timestamp,
         verify_canonical_dependency_lock,
         verify_excluded_bundled_override_metadata,
@@ -136,9 +136,46 @@ GDCM_STATIC_SOURCE_URL = (
 GDCM_STATIC_SOURCE_SHA256 = (
     "b7b17b70c009677cf244cc7837b88386441e097f8861fdeee83aa27d1bc1b090"
 )
-MODEL_PAYLOAD_SUFFIXES = {".ckpt", ".h5", ".pt", ".pth", ".tar"}
+MODEL_PAYLOAD_SUFFIXES = {
+    ".bin",
+    ".ckpt",
+    ".h5",
+    ".joblib",
+    ".npy",
+    ".npz",
+    ".onnx",
+    ".pb",
+    ".pickle",
+    ".pkl",
+    ".pt",
+    ".pth",
+    ".safetensors",
+    ".tar",
+}
+PRIVATE_MESH_SUFFIXES = {".3mf", ".glb", ".gltf", ".obj", ".off", ".ply", ".stl"}
+PRIVATE_MEDICAL_SUFFIXES = {".dcm", ".dicom", ".ima", ".nii"}
+FAIL_CLOSED_OPAQUE_ARCHIVE_ENDINGS = (
+    ".7z",
+    ".rar",
+    ".tar.bz2",
+    ".tar.gz",
+    ".tar.xz",
+    ".tbz",
+    ".tbz2",
+    ".tgz",
+    ".txz",
+)
+AUTHORIZED_SAMPLE_NIFTI = {
+    "sample1/input/owner_cbct_jawcrop_0p5mm.nii.gz": (
+        "69fc10771a9677a3b5f1f597a5f938d8b889633044cd8da7e6221fd123607824"
+    ),
+    "sample1/teeth_result/toothseg_fdi_multilabel_0p5mm.nii.gz": (
+        "57fa3cc887990b347cd13dc9a6ec1a43c88d89214eed1cd9ce553efda7465996"
+    ),
+}
 ZIP_ARCHIVE_SUFFIXES = {".zip", ".whl", ".pyz"}
 LARGE_MODEL_PAYLOAD_BYTES = 1024 * 1024
+MAX_BENIGN_PYTHON_PTH_BYTES = 64 * 1024
 MAX_ARCHIVE_MEMBERS = 10_000
 MAX_ARCHIVE_MEMBER_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
@@ -178,6 +215,16 @@ SETUP_WEIGHTS_SCHEMA = "totalsegmentator_wrapper_mac.setup_weights_manifest.v1"
 SETUP_WEIGHTS_TOTALSEGMENTATOR_VERSION = "2.14.0"
 SETUP_WEIGHTS_TASK_IDS = {113, 115, 297}
 SETUP_WEIGHTS_MANIFEST_NAME = "totalseg_setup_weights_manifest.json"
+DMG_ROOT_ALLOWLIST = {
+    "Applications",
+    "Collect TotalSegmentator Wrapper Logs.command",
+    "LICENSE.txt",
+    "NOTICE.txt",
+    "README.txt",
+    "TEST_ACCOUNT_INSTALL.txt",
+    "TotalSegmentator Wrapper for Mac.app",
+    "Verify Test Account Install.command",
+}
 SETUP_WEIGHTS_CHECKSUM_POLICY = (
     "Publisher-provided GitHub release digest where available; otherwise a locally "
     "observed SHA-256 value carried by this application for the pinned official "
@@ -486,10 +533,157 @@ def _suspicious_archive_name(name: str) -> bool:
     )
 
 
+def _opaque_archive_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(FAIL_CLOSED_OPAQUE_ARCHIVE_ENDINGS)
+
+
+def _medical_image_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(".nii.gz") or Path(lowered).suffix in PRIVATE_MEDICAL_SUFFIXES
+
+
+def _archive_member_has_dicom_magic(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+) -> bool:
+    if info.file_size < 132:
+        return False
+    with archive.open(info) as source:
+        return source.read(132)[128:132] == b"DICM"
+
+
+def _tree_file_has_dicom_magic(path: Path, size: int) -> bool:
+    if size < 132:
+        return False
+    try:
+        with path.open("rb") as source:
+            source.seek(128)
+            return source.read(4) == b"DICM"
+    except OSError:
+        return True
+
+
+def verified_authorized_sample_nifti_paths(resources: Path) -> frozenset[Path]:
+    """Validate and return the only medical images authorized for distribution."""
+
+    manifest_path = resources / "sample1" / "sample_manifest.json"
+    require(
+        manifest_path.is_file() and not manifest_path.is_symlink(),
+        "Sample 1 authorization manifest is missing or unsafe",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    require(
+        manifest.get("schema") == "totalsegmentator_wrapper_mac.sample.v1",
+        "Sample 1 authorization manifest schema mismatch",
+    )
+    source = manifest.get("source")
+    require(
+        isinstance(source, dict)
+        and source.get("raw_dicom_included") is False
+        and source.get("authorization_record")
+        == "docs/43_OPEN_SOURCE_PUBLICATION_DECISIONS.md",
+        "Sample 1 medical-image authorization is missing or invalid",
+    )
+    derived = manifest.get("derived_files")
+    require(isinstance(derived, dict), "Sample 1 derived file inventory is invalid")
+    observed_nifti = {name for name in derived if _medical_image_name(name)}
+    expected_manifest_nifti = {
+        relative.removeprefix("sample1/") for relative in AUTHORIZED_SAMPLE_NIFTI
+    }
+    require(
+        observed_nifti == expected_manifest_nifti,
+        "Sample 1 NIfTI path set differs from the authorized release set",
+    )
+    allowed: set[Path] = set()
+    for relative, expected_sha256 in AUTHORIZED_SAMPLE_NIFTI.items():
+        metadata = derived.get(relative.removeprefix("sample1/"))
+        require(
+            isinstance(metadata, dict)
+            and metadata.get("sha256") == expected_sha256,
+            f"Sample 1 authorized NIfTI manifest digest mismatch: {relative}",
+        )
+        candidate = resources / relative
+        require(
+            candidate.is_file()
+            and not candidate.is_symlink()
+            and sha256_file(candidate) == expected_sha256,
+            f"Sample 1 authorized NIfTI bytes mismatch: {relative}",
+        )
+        allowed.add(candidate)
+    return frozenset(allowed)
+
+
+def _benign_python_path_configuration(payload: bytes) -> bool:
+    """Distinguish small text ``.pth`` files from serialized PyTorch weights."""
+
+    if len(payload) > MAX_BENIGN_PYTHON_PTH_BYTES or b"\x00" in payload:
+        return False
+    try:
+        value = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("import "):
+            continue
+        if Path(line).is_absolute() or "\x00" in line:
+            return False
+    return True
+
+
+def _archive_pth_is_model(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    if info.file_size > MAX_BENIGN_PYTHON_PTH_BYTES:
+        return True
+    with archive.open(info) as source:
+        payload = source.read(MAX_BENIGN_PYTHON_PTH_BYTES + 1)
+    return not _benign_python_path_configuration(payload)
+
+
+def _tree_pth_is_model(path: Path, size: int) -> bool:
+    if size > MAX_BENIGN_PYTHON_PTH_BYTES:
+        return True
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return True
+    return not _benign_python_path_configuration(payload)
+
+
+def _exact_cpython_lib2to3_pickle(
+    path: Path,
+    verified_runtime_root: Path | None,
+) -> bool:
+    """Allow only CPython's versioned lib2to3 grammar caches.
+
+    ``pickle`` remains a fail-closed checkpoint suffix everywhere else.  The
+    caller may supply this root only after candidate-app validation has checked
+    the bundled-runtime manifest, safe relative paths, and the runtime root.
+    """
+
+    if verified_runtime_root is None:
+        return False
+    try:
+        relative = path.relative_to(verified_runtime_root)
+    except ValueError:
+        return False
+    if relative.parent != Path("lib/python3.12/lib2to3"):
+        return False
+    return (
+        re.fullmatch(
+            r"(?:Grammar|PatternGrammar)3\.12\.\d+\.final\.0\.pickle",
+            relative.name,
+        )
+        is not None
+    )
+
+
 def find_archive_model_payloads(
     archive: zipfile.ZipFile,
     *,
     reject_all_checkpoint_extensions: bool = False,
+    reject_private_meshes: bool = False,
+    reject_private_medical_images: bool = False,
     inspect_nested_zip: bool = True,
 ) -> list[str]:
     infos = archive.infolist()
@@ -502,12 +696,21 @@ def find_archive_model_payloads(
             continue
         member_path = Path(info.filename)
         member_name = member_path.name.lower()
-        suffix_candidate = (
-            member_path.suffix.lower() in MODEL_PAYLOAD_SUFFIXES
-            and (
+        suffix = member_path.suffix.lower()
+        opaque_archive_candidate = (
+            reject_all_checkpoint_extensions and _opaque_archive_name(info.filename)
+        )
+        suffix_candidate = suffix in MODEL_PAYLOAD_SUFFIXES and (
+            info.file_size >= LARGE_MODEL_PAYLOAD_BYTES
+            or (
                 reject_all_checkpoint_extensions
-                or info.file_size >= LARGE_MODEL_PAYLOAD_BYTES
+                and (suffix != ".pth" or _archive_pth_is_model(archive, info))
             )
+        )
+        private_mesh_candidate = reject_private_meshes and suffix in PRIVATE_MESH_SUFFIXES
+        private_medical_candidate = reject_private_medical_images and (
+            _medical_image_name(info.filename)
+            or _archive_member_has_dicom_magic(archive, info)
         )
         filename_candidate = member_name in KNOWN_NON_BUNDLED_CHECKPOINT_FILENAMES
         known_digests = KNOWN_NON_BUNDLED_CHECKPOINTS.get(info.file_size)
@@ -520,7 +723,14 @@ def find_archive_model_payloads(
             if digest is None:
                 digest = _sha256_archive_member(archive, info.filename)
             known_candidate = digest in KNOWN_NON_BUNDLED_CHECKPOINT_HASHES
-        if suffix_candidate or filename_candidate or known_candidate:
+        if (
+            opaque_archive_candidate
+            or suffix_candidate
+            or private_mesh_candidate
+            or private_medical_candidate
+            or filename_candidate
+            or known_candidate
+        ):
             found.append(info.filename)
             continue
         if member_path.suffix.lower() != ".zip":
@@ -529,6 +739,7 @@ def find_archive_model_payloads(
             found.append(info.filename)
             continue
         if not inspect_nested_zip:
+            found.append(f"{info.filename}!<nested ZIP depth limit>")
             continue
         if info.file_size > MAX_ARCHIVE_HASH_MEMBER_BYTES:
             found.append(f"{info.filename}!<nested ZIP exceeds inspection limit>")
@@ -543,6 +754,8 @@ def find_archive_model_payloads(
                 nested_payloads = find_archive_model_payloads(
                     nested,
                     reject_all_checkpoint_extensions=True,
+                    reject_private_meshes=reject_private_meshes,
+                    reject_private_medical_images=reject_private_medical_images,
                     inspect_nested_zip=False,
                 )
             found.extend(f"{info.filename}!{payload}" for payload in nested_payloads)
@@ -559,9 +772,32 @@ def _inspect_zip_path(path: Path) -> list[str]:
             return find_archive_model_payloads(
                 archive,
                 reject_all_checkpoint_extensions=True,
+                reject_private_meshes=True,
+                reject_private_medical_images=True,
             )
     except (OSError, zipfile.BadZipFile, RuntimeError):
         return [f"{path.name}!<invalid ZIP>"]
+
+
+def _safe_verified_runtime_symlink(
+    path: Path,
+    verified_runtime_root: Path | None,
+) -> bool:
+    if verified_runtime_root is None:
+        return False
+    try:
+        path.relative_to(verified_runtime_root)
+        target = os.readlink(path)
+    except (OSError, ValueError):
+        return False
+    if Path(target).is_absolute():
+        return False
+    try:
+        resolved_root = verified_runtime_root.resolve(strict=True)
+        (path.parent / target).resolve(strict=True).relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
 
 
 def find_tree_model_payloads(
@@ -569,25 +805,55 @@ def find_tree_model_payloads(
     paths: list[Path],
     *,
     reject_all_checkpoint_extensions: bool = False,
+    reject_private_meshes: bool = False,
+    reject_private_medical_images: bool = False,
+    verified_cpython_runtime_root: Path | None = None,
+    authorized_medical_image_paths: frozenset[Path] = frozenset(),
 ) -> list[str]:
     found: list[str] = []
     for path in paths:
+        if path.is_symlink():
+            if not _safe_verified_runtime_symlink(
+                path,
+                verified_cpython_runtime_root,
+            ):
+                found.append(str(path.relative_to(root)))
+            continue
         if not path.is_file():
             continue
         size = path.stat().st_size
-        suffix_candidate = (
-            path.suffix.lower() in MODEL_PAYLOAD_SUFFIXES
-            and (
+        suffix = path.suffix.lower()
+        opaque_archive_candidate = (
+            reject_all_checkpoint_extensions and _opaque_archive_name(path.name)
+        )
+        exact_cpython_pickle = suffix == ".pickle" and _exact_cpython_lib2to3_pickle(
+            path,
+            verified_cpython_runtime_root,
+        )
+        suffix_candidate = not exact_cpython_pickle and suffix in MODEL_PAYLOAD_SUFFIXES and (
+            size >= LARGE_MODEL_PAYLOAD_BYTES
+            or (
                 reject_all_checkpoint_extensions
-                or size >= LARGE_MODEL_PAYLOAD_BYTES
+                and (suffix != ".pth" or _tree_pth_is_model(path, size))
             )
         )
+        private_mesh_candidate = reject_private_meshes and suffix in PRIVATE_MESH_SUFFIXES
+        private_medical_candidate = reject_private_medical_images and (
+            _medical_image_name(path.name) or _tree_file_has_dicom_magic(path, size)
+        ) and path not in authorized_medical_image_paths
         filename_candidate = path.name.lower() in KNOWN_NON_BUNDLED_CHECKPOINT_FILENAMES
         known_digests = KNOWN_NON_BUNDLED_CHECKPOINTS.get(size)
         known_candidate = (
             known_digests is not None and sha256_file(path) in known_digests
         )
-        if suffix_candidate or filename_candidate or known_candidate:
+        if (
+            opaque_archive_candidate
+            or suffix_candidate
+            or private_mesh_candidate
+            or private_medical_candidate
+            or filename_candidate
+            or known_candidate
+        ):
             found.append(str(path.relative_to(root)))
             continue
         if path.suffix.lower() in ZIP_ARCHIVE_SUFFIXES:
@@ -869,14 +1135,23 @@ def verify_source(root: Path) -> None:
         for value in result.stdout.split(b"\0")
         if value
     ]
+    sample_manifest = root / "resources" / "sample1" / "sample_manifest.json"
+    authorized_medical_images = (
+        verified_authorized_sample_nifti_paths(root / "resources")
+        if sample_manifest.is_file()
+        else frozenset()
+    )
     payloads = find_tree_model_payloads(
         root,
         tracked,
         reject_all_checkpoint_extensions=True,
+        reject_private_meshes=True,
+        reject_private_medical_images=True,
+        authorized_medical_image_paths=authorized_medical_images,
     )
     require(
         not payloads,
-        "source tree tracks non-bundled model payloads: "
+        "source tree tracks non-bundled model, private mesh, medical-image, or opaque archive payloads: "
         + ", ".join(payloads),
     )
     validate_setup_weights_manifest(
@@ -953,10 +1228,16 @@ def verify_wheel(wheel: Path, expected_version: str | None = None) -> None:
     )
     verify_wheel_system_macos_linkage(wheel)
     with zipfile.ZipFile(wheel) as archive:
-        payloads = find_archive_model_payloads(archive)
+        payloads = find_archive_model_payloads(
+            archive,
+            reject_all_checkpoint_extensions=True,
+            reject_private_meshes=True,
+            reject_private_medical_images=True,
+        )
         require(
             not payloads,
-            "wheel contains non-bundled model payloads: " + ", ".join(payloads),
+            "wheel contains non-bundled model, private mesh, medical-image, or opaque archive payloads: "
+            + ", ".join(payloads),
         )
         names = archive.namelist()
         metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
@@ -1210,6 +1491,11 @@ def verify_app_version_identity(
                 == "copied-runtime-payload-pre-sign-v1",
                 "bundled app Python runtime fingerprint scope is missing or invalid",
             )
+            require(
+                runtime.get("required_major") == 3
+                and runtime.get("required_minor") == 12,
+                "bundled app Python runtime must declare Python 3.12",
+            )
             bundle_relative = safe_app_resource_relative_path(
                 runtime.get("bundle_path"),
                 "bundled app Python runtime bundle_path",
@@ -1231,8 +1517,10 @@ def verify_app_version_identity(
             )
             require(
                 executable_path.is_file()
+                and not executable_path.is_symlink()
+                and stat.S_ISREG(executable_path.stat().st_mode)
                 and bool(executable_path.stat().st_mode & 0o111),
-                "bundled app Python runtime executable is missing or not executable",
+                "bundled app Python 3.12 executable is missing, symlinked, or not executable",
             )
             try:
                 executable_path.resolve(strict=True).relative_to(
@@ -1526,6 +1814,27 @@ def verify_bundled_acvl_utils_wheel(wheel: Path) -> None:
             )
 
 
+def verified_bundled_cpython_runtime_root(resources: Path) -> Path | None:
+    """Return a safely located bundled runtime root for narrow scan exceptions."""
+
+    manifest_path = resources / "setup_manifest.json"
+    require(manifest_path.is_file(), "app setup manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    runtime = manifest.get("python_runtime")
+    if not isinstance(runtime, dict) or runtime.get("bundled") is not True:
+        return None
+    bundle_relative = safe_app_resource_relative_path(
+        runtime.get("bundle_path"),
+        "bundled app Python runtime bundle_path",
+    )
+    runtime_root = resources.joinpath(*bundle_relative.parts)
+    require(
+        runtime_root.is_dir() and not runtime_root.is_symlink(),
+        "app bundled Python runtime root is missing or unsafe",
+    )
+    return runtime_root
+
+
 def verify_app(
     app: Path,
     expected_version: str | None = None,
@@ -1540,6 +1849,8 @@ def verify_app(
         expected_version,
         expected_source_commit,
     )
+    verified_cpython_runtime_root = verified_bundled_cpython_runtime_root(resources)
+    authorized_medical_images = verified_authorized_sample_nifti_paths(resources)
     verify_app_machos(
         app,
         maximum_macos=MINIMUM_SUPPORTED_MACOS_VERSION,
@@ -1550,11 +1861,21 @@ def verify_app(
         verify_wheel_system_macos_linkage(bundled_wheel)
     payloads = find_tree_model_payloads(
         resources,
-        [path for path in resources.rglob("*") if path.is_file()],
+        [
+            path
+            for path in resources.rglob("*")
+            if path.is_file() or path.is_symlink()
+        ],
+        reject_all_checkpoint_extensions=True,
+        reject_private_meshes=True,
+        reject_private_medical_images=True,
+        verified_cpython_runtime_root=verified_cpython_runtime_root,
+        authorized_medical_image_paths=authorized_medical_images,
     )
     require(
         not payloads,
-        "app contains non-bundled model payloads: " + ", ".join(payloads),
+        "app contains non-bundled model, private mesh, medical-image, or opaque archive payloads: "
+        + ", ".join(payloads),
     )
     verify_apache_license(resources / "LICENSE")
     verify_notice(resources / "NOTICE")
@@ -1682,7 +2003,6 @@ def verify_app(
         "release_build_toolchain_receipt",
     ):
         require(key in bundled, f"app manifest bundled.{key} missing")
-    python_runtime_source = manifest.get("python_runtime_source")
     release_runtime_attestation_required = (
         manifest.get("signing_mode") == "developer-id"
         or manifest.get("notarized") is True
@@ -1704,49 +2024,6 @@ def verify_app(
             in {"development_constraints", "development_explicit_site_path"}
             and third_party_licenses.get("release_eligible") is False,
             "development app third-party license inventory must be explicitly marked non-release-eligible",
-        )
-    if release_runtime_attestation_required:
-        require(
-            bundled.get("python_runtime_source_policy")
-            == "licenses/python-runtime-source-policy.json",
-            "app manifest bundled Python runtime source policy path mismatch",
-        )
-        require(
-            bundled.get("python_runtime_build_provenance")
-            == "licenses/python-runtime-build-provenance.json",
-            "app manifest bundled Python runtime build receipt path mismatch",
-        )
-        runtime_policy_path = (
-            resources / "licenses" / "python-runtime-source-policy.json"
-        )
-        runtime_receipt_path = (
-            resources / "licenses" / "python-runtime-build-provenance.json"
-        )
-        require(
-            runtime_policy_path.is_file() and not runtime_policy_path.is_symlink(),
-            "app Python runtime source policy is missing",
-        )
-        require(
-            runtime_receipt_path.is_file() and not runtime_receipt_path.is_symlink(),
-            "app Python runtime source-build receipt is missing",
-        )
-        try:
-            validate_packaged_python_runtime_provenance(
-                python_runtime_source,
-                policy_bytes=runtime_policy_path.read_bytes(),
-                receipt_bytes=runtime_receipt_path.read_bytes(),
-                runtime_fingerprint=manifest["python_runtime_fingerprint"],
-            )
-        except (ReleaseInputReadinessError, KeyError) as exc:
-            raise RuntimeError(
-                f"invalid packaged Python runtime source provenance: {exc}"
-            ) from exc
-    else:
-        require(
-            python_runtime_source is None
-            and bundled.get("python_runtime_source_policy") is None
-            and bundled.get("python_runtime_build_provenance") is None,
-            "development app must not claim release-attested Python runtime provenance",
         )
     if release_runtime_attestation_required:
         require(
@@ -2119,6 +2396,49 @@ def verify_dmg(
             text=True,
         )
         try:
+            root_entries = {path.name: path for path in mount.iterdir()}
+            require(
+                set(root_entries) == DMG_ROOT_ALLOWLIST,
+                "DMG root entry set mismatch: expected "
+                + ", ".join(sorted(DMG_ROOT_ALLOWLIST))
+                + "; found "
+                + ", ".join(sorted(root_entries)),
+            )
+            applications = root_entries["Applications"]
+            require(
+                applications.is_symlink()
+                and os.readlink(applications) == "/Applications",
+                "DMG Applications link must point exactly to /Applications",
+            )
+            app_resources = (
+                root_entries["TotalSegmentator Wrapper for Mac.app"]
+                / "Contents"
+                / "Resources"
+            )
+            verified_cpython_runtime_root = verified_bundled_cpython_runtime_root(
+                app_resources
+            )
+            authorized_medical_images = verified_authorized_sample_nifti_paths(
+                app_resources
+            )
+            dmg_payloads = find_tree_model_payloads(
+                mount,
+                [
+                    path
+                    for path in mount.rglob("*")
+                    if (path.is_file() or path.is_symlink()) and path != applications
+                ],
+                reject_all_checkpoint_extensions=True,
+                reject_private_meshes=True,
+                reject_private_medical_images=True,
+                verified_cpython_runtime_root=verified_cpython_runtime_root,
+                authorized_medical_image_paths=authorized_medical_images,
+            )
+            require(
+                not dmg_payloads,
+                "DMG contains non-bundled model, private mesh, or medical-image payloads: "
+                + ", ".join(dmg_payloads),
+            )
             verify_apache_license(mount / "LICENSE.txt")
             verify_notice(mount / "NOTICE.txt")
             verify_app(

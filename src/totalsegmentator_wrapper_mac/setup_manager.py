@@ -11,8 +11,11 @@ import subprocess
 import stat
 import sys
 import time
+import zipfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from email.parser import BytesParser
+from email.policy import default as email_policy_default
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator
 from uuid import UUID, uuid4
@@ -382,27 +385,23 @@ def build_wheel_install_command(
     allow_network: bool,
     constraints: Path | None = None,
 ) -> list[str]:
-    target = str(wheel)
-    if allow_network:
-        target = f"{target}[dicom,mps,dentalseg,toothseg,ios-meshsegnet]"
-        command = [
-            *_isolated_pip_command(venv_python),
-            "install",
-            "--find-links",
-            str(wheel.parent),
-            "--only-binary",
-            ":all:",
-        ]
-        if constraints is not None:
-            command.extend(["-c", str(constraints)])
-        command.append(target)
-    else:
-        command = [
-            *_isolated_pip_command(venv_python),
-            "install",
-            "--no-deps",
-            str(wheel),
-        ]
+    """Install the already-selected wrapper wheel without contacting an index.
+
+    ``allow_network`` is retained in the public helper signature for callers
+    that use it to permit model-weight downloads later in setup.  It must not
+    enable a Python package resolver or index access on an end-user Mac.
+    ``constraints`` is validated as part of the bundle contract, not supplied
+    to this direct, dependency-free wheel installation.
+    """
+
+    _ = allow_network, constraints
+    command = [
+        *_isolated_pip_command(venv_python),
+        "install",
+        "--no-index",
+        "--no-deps",
+        str(wheel),
+    ]
     validate_safe_command(command)
     return command
 
@@ -416,6 +415,7 @@ def build_bundled_wheels_install_command(
     command = [
         *_isolated_pip_command(venv_python),
         "install",
+        "--no-index",
         "--force-reinstall",
         "--no-deps",
         *(str(path) for path in bundled_wheels),
@@ -433,6 +433,7 @@ def build_locked_dependencies_install_command(
     command = [
         *_isolated_pip_command(venv_python),
         "install",
+        "--no-index",
         "--require-hashes",
         "--no-deps",
         "--only-binary",
@@ -584,6 +585,10 @@ def resolve_bundled_setup_resources(
     metadata_sha256 = manifest.get("dependency_lock_metadata_sha256")
     project_relative = bundled.get("project_file")
     project_sha256 = manifest.get("project_file_sha256")
+    wheelhouse_manifest_relative = bundled.get("dependency_wheelhouse_manifest")
+    wheelhouse_manifest_sha256 = manifest.get(
+        "dependency_wheelhouse_manifest_sha256"
+    )
     lock_fields_absent = all(
         value is None
         for value in (
@@ -593,6 +598,8 @@ def resolve_bundled_setup_resources(
             metadata_sha256,
             project_relative,
             project_sha256,
+            wheelhouse_manifest_relative,
+            wheelhouse_manifest_sha256,
         )
     )
     if lock_fields_absent:
@@ -603,9 +610,12 @@ def resolve_bundled_setup_resources(
         lock_relative != "constraints/macos-arm64-py312.requirements.lock"
         or metadata_relative != "constraints/macos-arm64-py312.lock.json"
         or project_relative != "constraints/pyproject.toml"
+        or wheelhouse_manifest_relative
+        != "constraints/macos-arm64-py312.wheelhouse.json"
         or not _is_lowercase_sha256(lock_sha256)
         or not _is_lowercase_sha256(metadata_sha256)
         or not _is_lowercase_sha256(project_sha256)
+        or not _is_lowercase_sha256(wheelhouse_manifest_sha256)
     ):
         raise BundleResourceValidationError("bundle_requirements_lock_identity_invalid")
     expected_lock = _resolve_bundle_regular_file(
@@ -629,12 +639,23 @@ def resolve_bundled_setup_resources(
         field="bundled.project_file",
         error_type=BundleResourceValidationError,
     )
+    expected_wheelhouse_manifest = _resolve_bundle_regular_file(
+        resources,
+        resolved_resources,
+        wheelhouse_manifest_relative,
+        field="bundled.dependency_wheelhouse_manifest",
+        error_type=BundleResourceValidationError,
+    )
     if _sha256_file(expected_lock) != lock_sha256:
         raise BundleResourceValidationError("bundle_requirements_lock_sha256_mismatch")
     if _sha256_file(expected_metadata) != metadata_sha256:
         raise BundleResourceValidationError("bundle_dependency_lock_metadata_sha256_mismatch")
     if _sha256_file(expected_project_file) != project_sha256:
         raise BundleResourceValidationError("bundle_project_file_sha256_mismatch")
+    if _sha256_file(expected_wheelhouse_manifest) != wheelhouse_manifest_sha256:
+        raise BundleResourceValidationError(
+            "bundle_dependency_wheelhouse_manifest_sha256_mismatch"
+        )
     try:
         lock_metadata = _read_json(expected_metadata)
     except Exception as exc:  # noqa: BLE001
@@ -753,6 +774,85 @@ def _dependency_lock_distribution_pins(path: Path) -> dict[str, str]:
             raise ValueError("dependency lock has duplicate distribution entries")
         pins[name] = version
     return pins
+
+
+def validate_locked_wheelhouse(
+    requirements_lock: Path,
+    wheel_directory: Path,
+) -> None:
+    """Require a local wheel candidate for every hash-locked dependency.
+
+    This is an availability preflight, deliberately separate from integrity
+    validation: pip subsequently verifies the exact selected artifact against
+    the lock's SHA-256 hashes under ``--require-hashes``.  Checking metadata
+    here makes a partial app bundle fail before venv creation, rather than
+    presenting a misleading resolver/network failure to the user.
+    """
+
+    if not _is_directory_without_symlink(wheel_directory):
+        raise BundleResourceValidationError("bundle_wheelhouse_directory_invalid")
+    try:
+        pins = _dependency_lock_distribution_pins(requirements_lock)
+        # Validate the exact/hash syntax before accepting a wheel candidate.
+        _dependency_lock_distribution_names(requirements_lock, exact=True)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise BundleResourceValidationError("bundle_wheelhouse_lock_invalid") from exc
+
+    available: dict[str, set[str]] = {}
+    try:
+        candidates = sorted(wheel_directory.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise BundleResourceValidationError("bundle_wheelhouse_directory_unreadable") from exc
+    for candidate in candidates:
+        if candidate.suffix.lower() != ".whl" or not _is_regular_file_without_symlink(candidate):
+            continue
+        identity = _wheel_distribution_identity(candidate)
+        if identity is None:
+            continue
+        name, version = identity
+        available.setdefault(name, set()).add(version)
+
+    missing = sorted(
+        name
+        for name, version in pins.items()
+        if version not in available.get(name, set())
+    )
+    if missing:
+        raise BundleResourceValidationError("bundle_wheelhouse_incomplete")
+
+
+def _wheel_distribution_identity(path: Path) -> tuple[str, str] | None:
+    """Read just enough wheel metadata for the offline availability check."""
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            metadata_members = []
+            for member in archive.infolist():
+                parts = tuple(part for part in member.filename.split("/") if part)
+                if (
+                    len(parts) == 2
+                    and parts[0].endswith(".dist-info")
+                    and parts[1] == "METADATA"
+                    and not member.is_dir()
+                ):
+                    metadata_members.append(member)
+            if len(metadata_members) != 1:
+                return None
+            metadata = BytesParser(policy=email_policy_default).parsebytes(
+                archive.read(metadata_members[0])
+            )
+    except (OSError, UnicodeError, zipfile.BadZipFile):
+        return None
+
+    name = metadata.get("Name")
+    version = metadata.get("Version")
+    if not isinstance(name, str) or not isinstance(version, str) or not name or not version:
+        return None
+    try:
+        normalized_name = _dependency_requirement_name(name)
+    except ValueError:
+        return None
+    return normalized_name, version
 
 
 def _excluded_bundled_override_metadata_is_valid(value: object) -> bool:
@@ -1062,6 +1162,9 @@ def build_setup_environment(
     env["PYTHONNOUSERSITE"] = "1"
     env["PIP_CONFIG_FILE"] = os.devnull
     env["PIP_NO_INPUT"] = "1"
+    # Python packages are only installed from the app-bundled wheelhouse.
+    # Model preparation uses its own HTTPS download code and is unaffected.
+    env["PIP_NO_INDEX"] = "1"
     env["PIP_CACHE_DIR"] = str(paths.cache_dir / "pip")
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     env["PYTHONPYCACHEPREFIX"] = str(paths.cache_dir / "pycache")
@@ -1304,18 +1407,13 @@ def run_setup(
             result.reason = "wheel_missing"
             return _finalize_result(result, write_state=not dry_run)
 
-        if allow_network and constraints is None:
-            _write_progress(progress_log, "install_wheel", "failed", "依存固定ファイルが見つかりません。")
-            result.status = "failed"
-            result.reason = "constraints_missing"
-            return _finalize_result(result, write_state=not dry_run)
         if constraints is not None and not constraints.exists():
             _write_progress(progress_log, "install_wheel", "failed", "依存固定ファイルが見つかりません。")
             result.status = "failed"
             result.reason = "constraints_missing"
             return _finalize_result(result, write_state=not dry_run)
 
-        if allow_network and bundle_manifest is not None:
+        if bundle_manifest is not None:
             _write_progress(
                 progress_log,
                 "validate_bundled_wheels",
@@ -1325,6 +1423,8 @@ def run_setup(
             try:
                 assert bundle_payload is not None
                 bundled_wheels = resolve_bundled_wheels(bundle_manifest, bundle_payload)
+                if requirements_lock is not None:
+                    validate_locked_wheelhouse(requirements_lock, wheel.parent)
             except Exception as exc:  # noqa: BLE001
                 diagnostic_log = _write_local_diagnostic_log(
                     paths.logs_dir / "validate_bundled_wheels.log",
@@ -1418,12 +1518,12 @@ def run_setup(
                 "同梱依存パッケージの導入が完了しました。",
             )
 
-        if allow_network and requirements_lock is not None:
+        if requirements_lock is not None:
             _write_progress(
                 progress_log,
                 "install_locked_dependencies",
                 "running",
-                "SHA-256固定済みの依存パッケージを取得しています。",
+                "SHA-256固定済みの同梱依存パッケージを導入しています。",
             )
             locked_dependencies_step = _execute_step(
                 "install_locked_dependencies",
@@ -1439,35 +1539,42 @@ def run_setup(
             )
             steps.append(locked_dependencies_step)
             if locked_dependencies_step.status == "failed":
+                failure_reason = _classify_dependency_install_failure(
+                    locked_dependencies_step.error
+                )
+                # The exact pip output (including any local paths) stays in the
+                # diagnostic log; setup_state.json is consumed by the UI and
+                # error-report copy flow, so retain a stable safe summary.
+                locked_dependencies_step.error = (
+                    "Hash-locked bundled dependency installation failed."
+                )
                 _write_progress(
                     progress_log,
                     "install_locked_dependencies",
                     "failed",
-                    "固定済み依存パッケージの導入に失敗しました。",
+                    "固定済みの同梱依存パッケージの導入に失敗しました。",
                 )
                 result.status = "failed"
-                result.reason = _classify_dependency_install_failure(
-                    locked_dependencies_step.error
-                )
+                result.reason = failure_reason
                 return _finalize_result(result, write_state=not dry_run)
             _write_progress(
                 progress_log,
                 "install_locked_dependencies",
                 locked_dependencies_step.status,
-                "固定済み依存パッケージの導入が完了しました。",
+                "固定済みの同梱依存パッケージの導入が完了しました。",
             )
         result.wheel_install_mode = (
-            "network_require_hashes_lock"
-            if allow_network and requirements_lock is not None
-            else ("network_constraints_binary_only" if allow_network else "no_deps")
+            "offline_require_hashes_wheelhouse"
+            if requirements_lock is not None
+            else "offline_local_no_deps"
         )
-        _write_progress(progress_log, "install_wheel", "running", "依存パッケージを取得中です。数分かかることがあります。")
+        _write_progress(progress_log, "install_wheel", "running", "同梱アプリ本体を導入しています。")
         install_step = _execute_step(
             "install_wheel",
             build_wheel_install_command(
                 venv_python,
                 wheel,
-                allow_network=allow_network and requirements_lock is None,
+                allow_network=allow_network,
                 constraints=constraints,
             ),
             paths.logs_dir,
@@ -1477,13 +1584,13 @@ def run_setup(
         )
         steps.append(install_step)
         if install_step.status == "failed":
-            _write_progress(progress_log, "install_wheel", "failed", "依存パッケージの導入に失敗しました。")
+            _write_progress(progress_log, "install_wheel", "failed", "同梱アプリ本体の導入に失敗しました。")
             result.status = "failed"
             result.reason = _classify_dependency_install_failure(install_step.error)
             return _finalize_result(result, write_state=not dry_run)
-        _write_progress(progress_log, "install_wheel", "success", "依存パッケージの導入が完了しました。")
+        _write_progress(progress_log, "install_wheel", "success", "同梱アプリ本体の導入が完了しました。")
 
-        if allow_network:
+        if requirements_lock is not None:
             _write_progress(
                 progress_log,
                 "verify_dependencies",
@@ -1522,17 +1629,19 @@ def run_setup(
                 "依存パッケージの整合性を確認しました。",
             )
 
-        if not allow_network and not skip_mps_check:
-            result.dicom_normalizer = _annotate_normalizer_source(normalizer_inspector())
-            if result.dicom_normalizer.get("status") != "success":
-                _write_progress(progress_log, "doctor", "failed", "CT確認用部品の確認に失敗しました。")
+        if not allow_network:
+            if not skip_mps_check:
+                result.dicom_normalizer = _annotate_normalizer_source(normalizer_inspector())
+                if result.dicom_normalizer.get("status") != "success":
+                    _write_progress(progress_log, "doctor", "failed", "CT確認用部品の確認に失敗しました。")
+                    result.status = "failed"
+                    result.reason = "normalizer_missing"
+                    return _finalize_result(result, write_state=not dry_run)
+            if not dry_run:
+                _write_progress(progress_log, "download_totalseg_weights", "failed", "モデルの取得にはネットワーク接続が必要です。")
                 result.status = "failed"
-                result.reason = "normalizer_missing"
+                result.reason = "needs_network"
                 return _finalize_result(result, write_state=not dry_run)
-            _write_progress(progress_log, "install_wheel", "failed", "ネットワーク接続が必要です。")
-            result.status = "failed"
-            result.reason = "needs_network"
-            return _finalize_result(result, write_state=not dry_run)
 
         _write_progress(progress_log, "configure_totalseg_privacy", "running", "プライバシー設定を適用しています。")
         privacy_step = _execute_step(
@@ -1723,6 +1832,9 @@ def bundle_install_record(manifest: dict[str, Any]) -> dict[str, Any]:
         "dependency_lock_metadata_sha256": manifest.get(
             "dependency_lock_metadata_sha256"
         ),
+        "dependency_wheelhouse_manifest_sha256": manifest.get(
+            "dependency_wheelhouse_manifest_sha256"
+        ),
         "normalizer_sha256": manifest.get("normalizer_sha256"),
         "dcm2niix_sha256": manifest.get("dcm2niix_sha256"),
         "sample1_manifest_sha256": manifest.get("sample1_manifest_sha256"),
@@ -1750,10 +1862,12 @@ def _execute_step(
         return SetupStep(name=name, status="failed", command=command, error=repr(exc))
     elapsed = time.perf_counter() - started
     diagnostic_log: str | None = None
-    if cwd is not None and (proc.stdout or proc.stderr):
+    if cwd is not None and (proc.returncode != 0 or proc.stdout or proc.stderr):
         diagnostic_path = cwd / f"{name}.log"
         diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
         diagnostic_path.write_text(
+            f"phase={name}\n"
+            f"returncode={proc.returncode}\n"
             "STDOUT\n"
             + (proc.stdout or "")
             + "\nSTDERR\n"

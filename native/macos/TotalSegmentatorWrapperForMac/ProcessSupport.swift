@@ -322,6 +322,7 @@ struct SetupCoordinator {
         for key in [
             "requirements_lock_sha256",
             "dependency_lock_metadata_sha256",
+            "dependency_wheelhouse_manifest_sha256",
         ] {
             guard let currentFingerprint = optionalBundleFingerprint(current[key]) else {
                 continue
@@ -558,7 +559,7 @@ struct SetupCoordinator {
             return bootstrapRC
         }
 
-        onProgress(.installWheel, "依存パッケージを取得中です。数分かかることがあります。")
+        onProgress(.installWheel, "同梱アプリ本体を導入しています。")
         var setupEnvironment = environment
         setupEnvironment["TOTALSEGMENTATOR_WRAPPER_MAC_SETUP_SUPPRESS_STDOUT_JSON"] = "1"
         let setupRC = runner.run(
@@ -962,6 +963,7 @@ func currentBundleRecord(paths: AppPaths) -> [String: Any] {
     for key in [
         "requirements_lock_sha256",
         "dependency_lock_metadata_sha256",
+        "dependency_wheelhouse_manifest_sha256",
     ] {
         if let fingerprint = optionalBundleFingerprint(manifest[key]) {
             record[key] = fingerprint
@@ -1270,6 +1272,7 @@ func managedVenvRefreshDecision(
          "constraints_sha256_changed",
          "requirements_lock_sha256_changed",
          "dependency_lock_metadata_sha256_changed",
+         "dependency_wheelhouse_manifest_sha256_changed",
          "fpsample_wheel_sha256_changed",
          "acvl_utils_wheel_sha256_changed",
          "installed_bundled_dependency_missing_or_invalid":

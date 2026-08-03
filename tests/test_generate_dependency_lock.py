@@ -108,6 +108,63 @@ class DependencyLockGeneratorTests(unittest.TestCase):
         )
         return wheelhouse
 
+    def _pre_sign_wheel_receipt(self, root: Path, wheelhouse: Path) -> Path:
+        """Fixture equivalent of the sealed bootstrap handoff.
+
+        The canonical resolver must receive the two pre-sign wheel identities
+        from this artifact, rather than inventing a hash before either wheel
+        has been built.
+        """
+
+        receipt = root / "pre-sign-wheels.json"
+        wheels: dict[str, dict[str, str]] = {}
+        for name, filename, version, tag in (
+            ("acvl-utils", "acvl_utils-0.2.6-py3-none-any.whl", "0.2.6", "py3-none-any"),
+            (
+                "fpsample",
+                "fpsample-1.0.2-cp312-cp312-macosx_13_0_arm64.whl",
+                "1.0.2",
+                "cp312-cp312-macosx_13_0_arm64",
+            ),
+        ):
+            wheel = wheelhouse / filename
+            with zipfile.ZipFile(wheel) as archive:
+                dist_info = (
+                    "acvl_utils-0.2.6.dist-info"
+                    if name == "acvl-utils"
+                    else "fpsample-1.0.2.dist-info"
+                )
+                metadata = archive.read(f"{dist_info}/METADATA")
+                wheel_metadata = archive.read(f"{dist_info}/WHEEL")
+            wheels[name] = {
+                "filename": filename,
+                "version": version,
+                "wheel_tag": tag,
+                "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                "metadata_sha256": hashlib.sha256(metadata).hexdigest(),
+                "wheel_metadata_sha256": hashlib.sha256(wheel_metadata).hexdigest(),
+            }
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema": "totalsegmentator_wrapper_mac.release_pre_sign_wheel_receipt.v1",
+                    "source_identity_sha256": "1" * 64,
+                    "sealed_toolchain": {
+                        "lock_sha256": "2" * 64,
+                        "metadata_sha256": "3" * 64,
+                        "receipt_sha256": "4" * 64,
+                    },
+                    "component_receipt_sha256": {
+                        "acvl-utils": "5" * 64,
+                        "fpsample": "6" * 64,
+                    },
+                    "wheels": wheels,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return receipt
+
     @staticmethod
     def _macos14_host() -> ResolverHost:
         return ResolverHost(
@@ -301,6 +358,32 @@ class DependencyLockGeneratorTests(unittest.TestCase):
 
             self.assertEqual(calls, [])
 
+    def test_requires_pre_sign_wheel_receipt_before_canonical_resolution(self) -> None:
+        """The final lock cannot be used to predict the input wheel hashes."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraints, lock, metadata, project, setup_manager = self._fixture(root)
+            wheelhouse = self._resolution_wheel_directory(root)
+            calls: list[list[str]] = []
+
+            with self.assertRaisesRegex(LockGenerationError, "pre-sign wheel receipt"):
+                generate_canonical_dependency_lock(
+                    constraints=constraints,
+                    requirements_lock=lock,
+                    lock_metadata=metadata,
+                    project_file=project,
+                    setup_manager_source=setup_manager,
+                    bundled_override_wheel_directory=wheelhouse,
+                    host=self._macos14_host(),
+                    pip_tools_version="7.5.0",
+                    pip_version="25.1.1",
+                    runner=lambda command, **_: calls.append(command),
+                    directory_swap=self._fake_atomic_directory_swap,
+                )
+
+            self.assertEqual(calls, [])
+
     def test_explicit_local_override_constraints_bind_the_resolved_wheels(self) -> None:
         """Equal PyPI candidates must not be able to replace local overrides.
 
@@ -370,6 +453,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 project_file=project,
                 setup_manager_source=setup_manager,
                 bundled_override_wheel_directory=wheelhouse,
+                pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                 host=self._macos14_host(),
                 pip_tools_version="7.5.0",
                 pip_version="25.1.1",
@@ -397,6 +481,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             (wheelhouse / "unrelated-9.9.9-py3-none-any.whl").write_bytes(
                 b"not a resolver input"
             )
+            pre_sign_receipt = self._pre_sign_wheel_receipt(root, wheelhouse)
 
             result = generate_canonical_dependency_lock(
                 constraints=constraints,
@@ -405,6 +490,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 project_file=project,
                 setup_manager_source=setup_manager,
                 bundled_override_wheel_directory=wheelhouse,
+                pre_sign_wheel_receipt=pre_sign_receipt,
                 host=self._macos14_host(),
                 pip_tools_version="7.5.0",
                 pip_version="25.1.1",
@@ -421,6 +507,10 @@ class DependencyLockGeneratorTests(unittest.TestCase):
             )
             self.assertEqual(
                 payload["install_distribution_names"], ["demo", "dependency"]
+            )
+            self.assertEqual(
+                payload["bootstrap"]["pre_sign_wheel_receipt_sha256"],
+                hashlib.sha256(pre_sign_receipt.read_bytes()).hexdigest(),
             )
             self.assertEqual(set(payload["excluded_bundled_overrides"]), {
                 "acvl-utils",
@@ -452,6 +542,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 lock_metadata=metadata,
                 project_file=project,
                 setup_manager_source=setup_manager,
+                pre_sign_wheel_receipt=pre_sign_receipt,
             )
             self.assertEqual(list(root.glob(".constraints.lock-*")), [])
 
@@ -487,6 +578,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
+                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -500,12 +592,13 @@ class DependencyLockGeneratorTests(unittest.TestCase):
 
     def test_rejects_duplicate_generated_distribution_and_preserves_live_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            constraints, lock, metadata, project, setup_manager = self._fixture(Path(tmp))
+            root = Path(tmp)
+            constraints, lock, metadata, project, setup_manager = self._fixture(root)
             old_lock = "old==1 --hash=sha256:" + "d" * 64 + "\n"
             old_metadata = "{\"old\": true}\n"
             lock.write_text(old_lock, encoding="utf-8")
             metadata.write_text(old_metadata, encoding="utf-8")
-            wheelhouse = self._resolution_wheel_directory(Path(tmp))
+            wheelhouse = self._resolution_wheel_directory(root)
 
             def duplicate_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
                 direct_by_name = {
@@ -548,6 +641,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
+                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -560,12 +654,13 @@ class DependencyLockGeneratorTests(unittest.TestCase):
 
     def test_rejects_regular_override_pins_when_direct_references_are_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            constraints, lock, metadata, project, setup_manager = self._fixture(Path(tmp))
+            root = Path(tmp)
+            constraints, lock, metadata, project, setup_manager = self._fixture(root)
             old_lock = "old==1 --hash=sha256:" + "d" * 64 + "\n"
             old_metadata = "{\"old\": true}\n"
             lock.write_text(old_lock, encoding="utf-8")
             metadata.write_text(old_metadata, encoding="utf-8")
-            wheelhouse = self._resolution_wheel_directory(Path(tmp))
+            wheelhouse = self._resolution_wheel_directory(root)
 
             def mismatched_runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
                 output = Path(command[command.index("--output-file") + 1])
@@ -588,6 +683,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
+                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -616,6 +712,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
+                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",
@@ -739,6 +836,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     project_file=project,
                     setup_manager_source=setup_manager,
                     bundled_override_wheel_directory=wheelhouse,
+                    pre_sign_wheel_receipt=self._pre_sign_wheel_receipt(root, wheelhouse),
                     host=self._macos14_host(),
                     pip_tools_version="7.5.0",
                     pip_version="25.1.1",

@@ -53,8 +53,8 @@ struct SwiftProgressContractTests {
         )
         require(
             SetupStep.installLockedDependencies.hint.contains("SHA-256")
-                && SetupStep.installLockedDependencies.hint.contains("数分"),
-            "hashed dependency setup hint must explain verification and expected wait"
+                && SetupStep.installLockedDependencies.hint.contains("同梱"),
+            "hashed dependency setup hint must identify the bundled offline source"
         )
         let taillessSetup = setupExecutionStateFromLog(
             "SETUP_DOWNLOAD_PROGRESS {\"source\":\"totalsegmentator\",\"status\":\"downloading\",\"index\":3,\"task_total\":3,\"percent\":40}"
@@ -981,8 +981,9 @@ struct SwiftProgressContractTests {
         }
         require(
             isolatedSetupEnvironment["PIP_CONFIG_FILE"] == "/dev/null"
+                && isolatedSetupEnvironment["PIP_NO_INDEX"] == "1"
                 && isolatedSetupEnvironment["PYTHONNOUSERSITE"] == "1",
-            "setup launcher must force isolated pip configuration"
+            "setup launcher must force isolated offline pip configuration"
         )
         let bootstrapInstall = CommandBuilder.bootstrapInstallCommand(
             python: refreshPaths.venvPython,
@@ -990,8 +991,9 @@ struct SwiftProgressContractTests {
         )
         require(
             bootstrapInstall.contains("--isolated")
+                && bootstrapInstall.contains("--no-index")
                 && bootstrapInstall.contains("--no-deps"),
-            "bootstrap pip install must be isolated and dependency-free"
+            "bootstrap pip install must be isolated, offline, and dependency-free"
         )
         try! FileManager.default.createDirectory(
             at: refreshPaths.venvPython.deletingLastPathComponent(),

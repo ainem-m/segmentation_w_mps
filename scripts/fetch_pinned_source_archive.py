@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch and safely extract a pinned source archive with resumable caching."""
+"""Fetch and safely extract a pinned source tar archive with resumable caching."""
 
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ MAX_SOURCE_MEMBERS = 100_000
 MAX_SOURCE_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
 CONTENT_RANGE = re.compile(r"^bytes ([0-9]+)-([0-9]+)/([0-9]+)$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+HOSTNAME = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
 PROVENANCE_NAME = ".source-archive-provenance.json"
+DEFAULT_ALLOWED_SOURCE_HOSTS = frozenset({"github.com", "codeload.github.com"})
 
 
 class PinnedSourceError(RuntimeError):
@@ -124,7 +129,7 @@ def download_pinned_archive(
     url: str,
     expected_sha256: str,
     archive: Path,
-    allowed_hosts: frozenset[str] = frozenset({"github.com", "codeload.github.com"}),
+    allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_SOURCE_HOSTS,
     opener: Callable[..., object] = urllib.request.urlopen,
 ) -> Path:
     if SHA256.fullmatch(expected_sha256) is None:
@@ -289,7 +294,21 @@ def _safe_member_path(name: str, expected_root: str) -> PurePosixPath:
     return path
 
 
-def extract_pinned_tar_gz(
+def _source_tar_mode(archive: Path) -> str:
+    """Accept only the two compression formats used by reviewed source policies."""
+
+    name = archive.name
+    if name.endswith((".tar.gz", ".tgz")):
+        return "r:gz"
+    if name.endswith(".tar.xz"):
+        return "r:xz"
+    raise PinnedSourceError(
+        "source archive must use a supported .tar.gz, .tgz, or .tar.xz suffix: "
+        f"{archive}"
+    )
+
+
+def extract_pinned_tar_archive(
     *,
     archive: Path,
     output_parent: Path,
@@ -313,23 +332,17 @@ def extract_pinned_tar_gz(
     if target.is_symlink():
         raise PinnedSourceError(f"existing source tree must not be a symlink: {target}")
     if target.exists():
-        marker = target / PROVENANCE_NAME
-        try:
-            existing = json.loads(marker.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            existing = None
-        if target.is_dir() and not target.is_symlink() and existing == provenance:
-            return target
         raise PinnedSourceError(
-            f"existing source tree does not match pinned provenance: {target}"
+            "existing extracted source trees will not be reused because their "
+            f"contents are mutable: {target}"
         )
 
     output_parent.mkdir(parents=True, exist_ok=True)
     _validate_owned_directory(output_parent, "source extraction directory")
     try:
-        source = tarfile.open(archive, mode="r:gz")
+        source = tarfile.open(archive, mode=_source_tar_mode(archive))
     except (OSError, tarfile.TarError) as exc:
-        raise PinnedSourceError(f"invalid source tar.gz archive: {exc}") from exc
+        raise PinnedSourceError(f"invalid source tar archive: {exc}") from exc
     with source:
         members = source.getmembers()
         if not members or len(members) > MAX_SOURCE_MEMBERS:
@@ -391,24 +404,74 @@ def extract_pinned_tar_gz(
     return target
 
 
+def extract_pinned_tar_gz(
+    *,
+    archive: Path,
+    output_parent: Path,
+    expected_root: str,
+    url: str,
+    expected_sha256: str,
+) -> Path:
+    """Compatibility wrapper for existing gzip-only callers."""
+
+    if _source_tar_mode(archive) != "r:gz":
+        raise PinnedSourceError(
+            f"gzip source extraction requires a .tar.gz or .tgz archive: {archive}"
+        )
+    return extract_pinned_tar_archive(
+        archive=archive,
+        output_parent=output_parent,
+        expected_root=expected_root,
+        url=url,
+        expected_sha256=expected_sha256,
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch a pinned source tar.gz safely.")
+    parser = argparse.ArgumentParser(description="Fetch a pinned source tar archive safely.")
     parser.add_argument("--url", required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--archive", required=True, type=Path)
     parser.add_argument("--output-parent", required=True, type=Path)
     parser.add_argument("--expected-root", required=True)
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help=(
+            "approved HTTPS source host (repeatable); omitting this preserves "
+            "the default GitHub-only source policy"
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _cli_allowed_hosts(values: Sequence[object]) -> frozenset[str]:
+    if not values:
+        return DEFAULT_ALLOWED_SOURCE_HOSTS
+    hosts: list[str] = []
+    for value in values:
+        if (
+            not isinstance(value, str)
+            or HOSTNAME.fullmatch(value) is None
+            or value != value.lower()
+        ):
+            raise PinnedSourceError(f"invalid approved source host: {value!r}")
+        if value not in hosts:
+            hosts.append(value)
+    return frozenset(hosts)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    allowed_hosts = _cli_allowed_hosts(args.allowed_host)
     archive = download_pinned_archive(
         url=args.url,
         expected_sha256=args.sha256,
         archive=args.archive.expanduser(),
+        allowed_hosts=allowed_hosts,
     )
-    source = extract_pinned_tar_gz(
+    source = extract_pinned_tar_archive(
         archive=archive,
         output_parent=args.output_parent.expanduser(),
         expected_root=args.expected_root,

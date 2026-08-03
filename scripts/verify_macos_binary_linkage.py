@@ -48,6 +48,8 @@ MACHO_MAGICS = frozenset(
 )
 MAX_WHEEL_NATIVE_MEMBER_BYTES = 1024 * 1024 * 1024
 MAX_WHEEL_TOTAL_NATIVE_BYTES = 4 * 1024 * 1024 * 1024
+SWIFT_SYSTEM_RPATH = Path("/usr/lib/swift")
+SWIFT_SYSTEM_DYLIB = re.compile(r"^libswift[A-Za-z0-9_.+-]*\.dylib$")
 
 
 class MacOSBinaryLinkageError(RuntimeError):
@@ -616,10 +618,15 @@ def _resolve_bundle_dependency(
         )
     for rpath in rpaths:
         if rpath.kind == "system":
-            # The run-path directory itself was strictly validated as an existing
-            # sealed macOS directory.  Individual dylibs can reside in dyld's
-            # shared cache and therefore are not reliably materialized as files.
-            return None
+            # A sealed directory alone cannot prove that an arbitrary @rpath
+            # install name exists in dyld's shared cache.  The one evidence-
+            # backed exception is Apple's Swift runtime convention.
+            if (
+                rpath.path == SWIFT_SYSTEM_RPATH
+                and SWIFT_SYSTEM_DYLIB.fullmatch(rpath_suffix) is not None
+            ):
+                return None
+            continue
         resolved = _canonical_bundle_candidate(
             rpath.path / rpath_suffix,
             contents=contents,
