@@ -339,7 +339,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                     python_implementation="CPython",
                     python_version=(3, 12, 11),
                     macos_version="26.6",
-                    sysconfig_platform="macosx-26.0-arm64",
+                    sysconfig_platform="macosx-11.0-arm64",
                 ),
                 pip_tools_version="7.5.0",
                 pip_version="25.1.1",
@@ -347,7 +347,7 @@ class DependencyLockGeneratorTests(unittest.TestCase):
                 directory_swap=self._fake_atomic_directory_swap,
             )
             self.assertEqual(result["resolver"]["macos_version"], "26.6")
-            self.assertEqual(result["resolver"]["sysconfig_platform"], "macosx-26.0-arm64")
+            self.assertEqual(result["resolver"]["sysconfig_platform"], "macosx-11.0-arm64")
             self.assertEqual(result["resolver"]["target_compatibility"], CANONICAL_TARGET_COMPATIBILITY)
 
     def test_rejects_wrong_pip_compile_version_before_running(self) -> None:

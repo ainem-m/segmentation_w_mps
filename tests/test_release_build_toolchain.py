@@ -685,7 +685,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
                             "implementation": "CPython",
                             "full_version": "3.12.11",
                             "machine": "arm64",
-                            "sysconfig_platform": "macosx-26.0-arm64",
+                            "sysconfig_platform": "macosx-11.0-arm64",
                         }
                     )
                     + "\n",
@@ -709,7 +709,7 @@ class ReleaseBuildToolchainTests(unittest.TestCase):
 
             self.assertEqual(identity["uv"]["version"], "0.5.22")
             self.assertEqual(identity["python"]["full_version"], "3.12.11")
-            self.assertEqual(identity["python"]["sysconfig_platform"], "macosx-26.0-arm64")
+            self.assertEqual(identity["python"]["sysconfig_platform"], "macosx-11.0-arm64")
             self.assertEqual(len(environments), 2)
             for environment in environments:
                 self.assertEqual(environment["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")

@@ -48,7 +48,7 @@ try:
         BUNDLED_OVERRIDE_SPECS,
         DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX,
         DEPENDENCY_LOCK_SCHEMA,
-        MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM,
+        MACOS_ARM64_SYSCONFIG_PLATFORM,
         MACOS_14_OR_LATER_FULL_VERSION,
         PIP_VERSION,
         ReleaseInputReadinessError,
@@ -74,7 +74,7 @@ except ModuleNotFoundError:  # Direct execution from scripts/.
         BUNDLED_OVERRIDE_SPECS,
         DEPENDENCY_LOCK_GENERATION_COMMENT_PREFIX,
         DEPENDENCY_LOCK_SCHEMA,
-        MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM,
+        MACOS_ARM64_SYSCONFIG_PLATFORM,
         MACOS_14_OR_LATER_FULL_VERSION,
         PIP_VERSION,
         ReleaseInputReadinessError,
@@ -418,7 +418,7 @@ def validate_resolver_host(host: ResolverHost) -> None:
             "host macOS version is "
             f"{host.macos_version or 'unknown'}, not macOS 14 or later"
         )
-    if MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(
+    if MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(
         host.sysconfig_platform.lower()
     ) is None:
         failures.append(

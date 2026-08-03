@@ -144,8 +144,8 @@ PYTHON_312_FULL_VERSION = re.compile(r"^3\.12\.(?:0|[1-9][0-9]*)$")
 MACOS_14_OR_LATER_FULL_VERSION = re.compile(
     r"^(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+){1,2}$"
 )
-MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM = re.compile(
-    r"^macosx-(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+)*-arm64$"
+MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(
+    r"^macosx-[0-9]+(?:\.[0-9]+)*-arm64$"
 )
 
 
@@ -506,7 +506,7 @@ def _validate_resolver_provenance(resolver: object) -> None:
         or not isinstance(resolver.get("macos_version"), str)
         or MACOS_14_OR_LATER_FULL_VERSION.fullmatch(str(resolver["macos_version"])) is None
         or not isinstance(resolver.get("sysconfig_platform"), str)
-        or MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(
+        or MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(
             str(resolver["sysconfig_platform"]).lower()
         )
         is None

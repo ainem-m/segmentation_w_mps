@@ -271,7 +271,8 @@ The reproducible lock generator is
 `scripts/generate_macos_arm64_py312_lock.py`. It requires **CPython 3.12 on an
 Apple Silicon Mac running macOS 14 or later** and exactly `pip-tools 7.5.0`.
 The resolver host is recorded truthfully (for this release preparation, macOS
-26.6), but does not define the app's OS floor. `pip-compile` forwards pip's
+26.6); its CPython build may report an older compatible tag such as
+`macosx-11.0-arm64`, which does not define the app's OS floor. `pip-compile` forwards pip's
 explicit `--platform macosx_14_0_arm64 --implementation cp --python-version
 3.12 --abi cp312` target selection. The subsequent wheelhouse builder repeats
 those target options and rejects every wheel whose declared tag requires macOS

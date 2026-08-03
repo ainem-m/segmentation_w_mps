@@ -128,8 +128,8 @@ _EXACT_REQUIREMENT = re.compile(
 )
 _HASH = re.compile(r"--hash=sha256:([0-9a-f]{64})(?:\s|$)")
 _UV_VERSION = re.compile(r"^uv\s+([^\s]+)(?:\s|$)")
-_MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM = re.compile(
-    r"^macosx-(?:1[4-9]|[2-9][0-9]*)(?:\.[0-9]+)*-arm64$"
+_MACOS_ARM64_SYSCONFIG_PLATFORM = re.compile(
+    r"^macosx-[0-9]+(?:\.[0-9]+)*-arm64$"
 )
 
 
@@ -974,7 +974,7 @@ def verify_release_build_toolchain_inputs(
         or not re.fullmatch(r"3\.12\.[0-9]+", python["full_version"])
         or python.get("machine") != "arm64"
         or not isinstance(python.get("sysconfig_platform"), str)
-        or _MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
+        or _MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
         is None
         or not _valid_digest(python.get("executable_sha256"))
     ):
@@ -1379,7 +1379,7 @@ def capture_release_build_toolchain_identity(
         or not re.fullmatch(r"3\.12\.[0-9]+", python["full_version"])
         or python.get("machine") != "arm64"
         or not isinstance(python.get("sysconfig_platform"), str)
-        or _MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
+        or _MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
         is None
         or not _valid_digest(python.get("executable_sha256"))
     ):
@@ -2069,7 +2069,7 @@ def verify_release_build_toolchain_inputs_metadata_only(
         or not re.fullmatch(r"3\.12\.[0-9]+", python["full_version"])
         or python.get("machine") != "arm64"
         or not isinstance(python.get("sysconfig_platform"), str)
-        or _MACOS_14_OR_LATER_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
+        or _MACOS_ARM64_SYSCONFIG_PLATFORM.fullmatch(python["sysconfig_platform"])
         is None
         or not _valid_digest(python.get("executable_sha256"))
     ):
