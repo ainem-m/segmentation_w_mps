@@ -657,108 +657,105 @@
       font-weight: 700;
     }
 
-    .windows-release-section {
-      border-bottom: 1px solid #c9d9e7;
-      background:
-        radial-gradient(circle at 8% 12%, rgba(65, 111, 161, 0.14), transparent 28%),
-        linear-gradient(145deg, #f7fbff, var(--blue-soft));
-    }
-
-    .windows-release-grid {
+    .windows-announcement {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 20px;
-    }
-
-    .windows-release-card {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: center;
+      margin-top: 28px;
       border: 1px solid #c7d9e8;
       border-radius: 22px;
       padding: 28px;
-      background: rgba(255, 255, 255, 0.94);
+      background:
+        radial-gradient(circle at 8% 12%, rgba(65, 111, 161, 0.12), transparent 30%),
+        rgba(255, 255, 255, 0.94);
       box-shadow: 0 14px 38px rgba(37, 78, 117, 0.08);
     }
 
-    .windows-release-card h3 {
-      margin: 0;
-      font-size: 22px;
+    .windows-announcement-badge {
+      display: inline-flex;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      padding: 6px 11px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
-    .windows-release-card > p {
+    .windows-announcement h3 {
+      margin: 0;
+      font-size: clamp(25px, 3vw, 34px);
+    }
+
+    .windows-announcement p {
+      max-width: 760px;
+      margin: 10px 0 0;
+      color: #40585c;
+    }
+
+    .windows-announcement .windows-limitation {
+      color: #6c3b16;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .windows-download-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.48fr);
+      gap: 34px;
+      align-items: center;
+      margin-top: 24px;
+      border: 1px solid #c7d9e8;
+      border-radius: 24px;
+      padding: 34px;
+      background: linear-gradient(145deg, #f8fbff, var(--blue-soft));
+    }
+
+    .windows-download-card h2 {
+      margin: 0;
+    }
+
+    .windows-download-card p {
       margin: 13px 0 0;
       color: #40585c;
     }
 
-    .windows-release-card strong {
-      color: #183f68;
-    }
-
-    .windows-release-card .actions {
+    .windows-download-card .actions {
       margin-top: 24px;
     }
 
-    .release-facts {
-      display: grid;
-      gap: 12px;
-      margin: 24px 0 0;
-    }
-
-    .release-facts div {
-      display: grid;
-      gap: 3px;
-      border-top: 1px solid #dce7f0;
-      padding-top: 12px;
-    }
-
-    .release-facts dt {
-      color: var(--muted);
+    .windows-download-meta {
+      border-radius: 16px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      color: #254b70;
       font-size: 12px;
-      font-weight: 800;
+      font-weight: 700;
     }
 
-    .release-facts dd {
+    .windows-download-meta p {
       margin: 0;
-      color: #193f63;
-      font-size: 14px;
-      font-weight: 800;
+      color: inherit;
     }
 
-    .release-facts code {
+    .windows-download-meta p + p {
+      margin-top: 13px;
+      border-top: 1px solid #dce7f0;
+      padding-top: 13px;
+    }
+
+    .windows-download-meta strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .windows-download-meta code {
       overflow-wrap: anywhere;
-      font-size: 12px;
-    }
-
-    .windows-release-list {
-      display: grid;
-      gap: 10px;
-      margin: 20px 0 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .windows-release-list li {
-      position: relative;
-      padding-left: 24px;
-      color: #40585c;
-      font-size: 14px;
-    }
-
-    .windows-release-list li::before {
-      position: absolute;
-      left: 0;
-      color: var(--blue);
-      content: "✓";
-      font-weight: 900;
-    }
-
-    .windows-first-use-note {
-      margin: 22px 0 0;
-      border-left: 4px solid var(--orange);
-      border-radius: 0 14px 14px 0;
-      padding: 15px 18px;
-      background: var(--orange-soft);
-      color: #6c3b16;
-      font-size: 14px;
-      font-weight: 750;
     }
 
     .section.alt {
@@ -1583,7 +1580,8 @@
       .benchmark-layout,
       .dicom-grid,
       .update-hero,
-      .windows-release-grid,
+      .windows-announcement,
+      .windows-download-card,
       .feature-detail-grid,
       .feature-detail-grid.visual-first {
         grid-template-columns: 1fr;
@@ -1786,7 +1784,7 @@
         <a href="#setup">機能</a>
         <a href="#gpu">処理時間</a>
         <a href="#why">開発した理由</a>
-        <a href="#windows-download">Windows版</a>
+        <a href="#windows-release">Windows版</a>
         <a href="#support">サポート</a>
         <a class="nav-download" href="/download">ダウンロード</a>
       </nav>
@@ -1821,7 +1819,7 @@
             <p class="hero-action-label">ダウンロード・サポート</p>
             <div class="actions">
               <a class="button primary" href="/download">ダウンロード</a>
-              <a class="button subtle" href="#windows-download">Windows版</a>
+              <a class="button subtle" href="#windows-release">Windows版</a>
               <a class="button subtle" href="#support">開発を応援</a>
               <a class="button subtle" href="https://forms.gle/QFPwF1Pi5C8bmSuw6" target="_blank" rel="noopener">読み込めないDICOMを報告</a>
             </div>
@@ -1951,72 +1949,22 @@
           <a href="https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby" target="_blank" rel="noopener">指定の配布ページ</a>からご自身で取得し、
           配布元が示す利用条件をご確認ください。ライセンス条件は本アプリでは未確認です。
         </p>
-      </div>
-    </section>
 
-    <section class="section windows-release-section" id="windows-download" aria-labelledby="windows-title">
-      <div class="wrap">
-        <div class="section-heading">
-          <p class="kicker">Windows public alpha</p>
-          <h2 id="windows-title">Windows 軽量オンデマンド版</h2>
-          <p class="section-intro">
-            NVIDIA GPUを使うWindows x64 portable版です。ZIPを展開し、
-            <code>START_HERE_TotalSegmentatorWrapperForWin.exe</code>から起動します。
-          </p>
-        </div>
-
-        <div class="windows-release-grid">
-          <article class="windows-release-card">
-            <h3>約466 MBのZIPをダウンロード</h3>
+        <aside class="windows-announcement" id="windows-release" aria-labelledby="windows-release-title">
+          <div>
+            <span class="windows-announcement-badge">Windows public alpha</span>
+            <h3 id="windows-release-title">Windows版を公開しました</h3>
             <p>
-              PyTorch/CUDA本体とTotalSegmentatorモデルを同梱しないことで、
-              配布ZIPを1 GB未満にしたオンデマンド版です。
+              Windows x64／NVIDIA GPU（CUDA）向けの公開Alpha版をリリースしました。
+              CT/CBCTから3Dデータを作成するWindowsアプリとしてダウンロードできます。
             </p>
-            <div class="actions">
-              <a
-                class="button primary"
-                href="https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/download/v0.4.0.0-ondemand/TSW-Alpha-0.4.0.0-ondemand-win-x64.zip"
-              >Windows版 ZIPをダウンロード</a>
-              <a
-                class="button"
-                href="https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/tag/v0.4.0.0-ondemand"
-              >リリース詳細</a>
-            </div>
-            <dl class="release-facts">
-              <div>
-                <dt>ファイル</dt>
-                <dd>TSW-Alpha-0.4.0.0-ondemand-win-x64.zip</dd>
-              </div>
-              <div>
-                <dt>サイズ</dt>
-                <dd>466,326,227 bytes（約466 MB）</dd>
-              </div>
-              <div>
-                <dt>SHA-256</dt>
-                <dd><code>9fcf1719c6db0f3e9d87fc79a7be31630d34324ae0336c5d9109525ebda0c644</code></dd>
-              </div>
-            </dl>
-          </article>
-
-          <article class="windows-release-card">
-            <h3>初回の「モデルを取得して準備」</h3>
-            <p>
-              初回だけ、公式PyTorch CUDA 12.6（<strong>torch 2.11.0+cu126</strong>）と
-              公式TotalSegmentatorモデルを取得し、SHA-256を検証します。
+            <p class="windows-limitation">
+              <strong>Mac版と同等の機能ではありません。</strong>
+              Windows版には、Mac版で案内している口腔内スキャン（PLY／STL）の歯別セグメンテーション機能は含まれません。
             </p>
-            <ul class="windows-release-list">
-              <li><strong>NVIDIA GPU（CUDA）が必要</strong></li>
-              <li>初回は数GBの通信量と空き容量が必要</li>
-              <li>取得後は同じユーザー領域を再利用</li>
-              <li>chinokeisuke DICOMのTotalSegmentator E2Eを<code>cuda:0</code>で検証済み</li>
-              <li>CPUフォールバックなし、3方向プレビュー生成に成功</li>
-            </ul>
-            <p class="windows-first-use-note">
-              ZIPが約466 MBと小さいことと、初回準備のダウンロード量が小さいことは別です。
-              初回準備には数GBの通信量・空き容量を見込んでください。
-            </p>
-          </article>
-        </div>
+          </div>
+          <a class="button" href="#windows-download">Windows版のダウンロードへ</a>
+        </aside>
       </div>
     </section>
 
@@ -2306,6 +2254,37 @@
           <p class="release-meta">
             TotalSegmentator Wrapper for Mac 0.3.0／Developer ID署名・Apple公証済み
           </p>
+        </div>
+
+        <div class="windows-download-card" id="windows-download" aria-labelledby="windows-download-title">
+          <div>
+            <p class="kicker">Windows public alpha</p>
+            <h2 id="windows-download-title">TotalSegmentator Wrapper for Windowsをダウンロード</h2>
+            <p>
+              Windows x64 portable版です。NVIDIA GPU（CUDA）が必要です。
+              Mac版とは対応機能が異なり、口腔内スキャンの歯別セグメンテーション機能は含まれません。
+            </p>
+            <div class="actions">
+              <a
+                class="button primary"
+                href="https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/download/v0.4.0.0-ondemand/TSW-Alpha-0.4.0.0-ondemand-win-x64.zip"
+              >Windows版 ZIPをダウンロード</a>
+              <a
+                class="button"
+                href="https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/tag/v0.4.0.0-ondemand"
+              >リリース詳細</a>
+            </div>
+          </div>
+          <div class="windows-download-meta">
+            <p>
+              <strong>ファイル</strong>
+              TSW-Alpha-0.4.0.0-ondemand-win-x64.zip（約466 MB）
+            </p>
+            <p>
+              <strong>SHA-256</strong>
+              <code>9fcf1719c6db0f3e9d87fc79a7be31630d34324ae0336c5d9109525ebda0c644</code>
+            </p>
+          </div>
         </div>
       </div>
     </section>

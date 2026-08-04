@@ -761,28 +761,46 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertIn('id="dicom"', index)
         self.assertIn('id="support"', index)
         self.assertIn('id="update-0-4-0"', index)
+        self.assertIn('id="windows-release"', index)
         self.assertIn('id="windows-download"', index)
-        self.assertIn("Windows 軽量オンデマンド版", index)
+        self.assertIn("Windows版を公開しました", index)
+        self.assertIn("Mac版と同等の機能ではありません", index)
+        self.assertIn(
+            "口腔内スキャン（PLY／STL）の歯別セグメンテーション機能は含まれません",
+            index,
+        )
+        self.assertIn("TotalSegmentator Wrapper for Windowsをダウンロード", index)
         self.assertIn("TSW-Alpha-0.4.0.0-ondemand-win-x64.zip", index)
-        self.assertIn("466,326,227 bytes（約466 MB）", index)
         self.assertIn(
             "9fcf1719c6db0f3e9d87fc79a7be31630d34324ae0336c5d9109525ebda0c644",
             index,
         )
-        self.assertIn("torch 2.11.0+cu126", index)
-        self.assertIn("NVIDIA GPU（CUDA）が必要", index)
-        self.assertIn("初回は数GBの通信量と空き容量が必要", index)
-        self.assertIn(
-            "ZIPが約466 MBと小さいことと、初回準備のダウンロード量が小さいことは別",
-            index,
-        )
-        self.assertIn("CPUフォールバックなし、3方向プレビュー生成に成功", index)
+        self.assertNotIn("Windows 軽量オンデマンド版", index)
+        self.assertNotIn("初回の「モデルを取得して準備」", index)
+        self.assertNotIn("初回準備には数GB", index)
+        self.assertNotIn("PyTorch/CUDA本体とTotalSegmentatorモデルを同梱しない", index)
+        self.assertNotIn("配布ZIPを1 GB未満", index)
         self.assertIn(
             "https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/download/"
             "v0.4.0.0-ondemand/TSW-Alpha-0.4.0.0-ondemand-win-x64.zip",
             index,
         )
-        self.assertIn('<a class="button subtle" href="#windows-download">Windows版</a>', index)
+        self.assertIn('<a class="button subtle" href="#windows-release">Windows版</a>', index)
+        update_section = index.split('id="update-0-4-0"', maxsplit=1)[1].split(
+            "</section>", maxsplit=1
+        )[0]
+        self.assertIn('id="windows-release"', update_section)
+        self.assertNotIn('id="windows-download"', update_section)
+        download_section = index.split(
+            "TotalSegmentator Wrapper for Macを<br>ダウンロード", maxsplit=1
+        )[1].split("</section>", maxsplit=1)[0]
+        self.assertIn('id="windows-download"', download_section)
+        self.assertLess(index.index('id="update-0-4-0"'), index.index('id="windows-release"'))
+        self.assertLess(
+            index.index("TotalSegmentator Wrapper for Macを<br>ダウンロード"),
+            index.index('id="windows-download"'),
+        )
+        self.assertLess(index.index('id="windows-download"'), index.index('id="support"'))
         self.assertIn("<strong>開発中の更新</strong>", index)
         self.assertIn("公開版 0.3.0", index)
         self.assertIn(
@@ -1009,6 +1027,21 @@ class CloudflareDistributionTests(unittest.TestCase):
             )
 
             self.assertEqual(page, launch)
+            self.assertIn('id="windows-release"', page)
+            self.assertIn("Windows版を公開しました", page)
+            self.assertIn("Mac版と同等の機能ではありません", page)
+            self.assertIn(
+                "口腔内スキャン（PLY／STL）の歯別セグメンテーション機能は含まれません",
+                page,
+            )
+            self.assertIn('id="windows-download"', page)
+            self.assertIn(
+                "https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/download/"
+                "v0.4.0.0-ondemand/TSW-Alpha-0.4.0.0-ondemand-win-x64.zip",
+                page,
+            )
+            self.assertNotIn("Windows 軽量オンデマンド版", page)
+            self.assertNotIn("初回の「モデルを取得して準備」", page)
             self.assertIn(
                 f"バージョン{TARGET_VERSION}・Apple Silicon搭載のMac・macOS 14以降",
                 page,
