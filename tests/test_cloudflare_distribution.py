@@ -749,9 +749,10 @@ class CloudflareDistributionTests(unittest.TestCase):
 
         self.assertEqual(index, launch)
         self.assertIn('rel="canonical" href="https://totalsegmentator.lacramy.com/"', index)
-        self.assertEqual(index.count('href="/download"'), 3)
+        self.assertEqual(index.count('href="/download"'), 4)
+        self.assertEqual(index.count('href="/download-beta"'), 3)
         self.assertIn("/preview/dentalsegmentator-0.3.0.html", index)
-        self.assertIn("バージョン0.3.0・Apple Silicon搭載のMac・macOS 13以降", index)
+        self.assertIn("0.4.1 beta・Apple Silicon搭載のMac・macOS 14以降", index)
         self.assertNotIn("0.4.0をダウンロード", index)
         self.assertIn("研究・教育・検証目的に限ってご利用ください", index)
         self.assertIn('id="setup"', index)
@@ -760,7 +761,7 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertIn('id="models"', index)
         self.assertIn('id="dicom"', index)
         self.assertIn('id="support"', index)
-        self.assertIn('id="update-0-4-0"', index)
+        self.assertIn('id="update-0-4-1"', index)
         self.assertIn('id="windows-release"', index)
         self.assertIn('id="windows-download"', index)
         self.assertIn("Windows版を公開しました", index)
@@ -786,7 +787,7 @@ class CloudflareDistributionTests(unittest.TestCase):
             index,
         )
         self.assertIn('<a class="button subtle" href="#windows-release">Windows版</a>', index)
-        update_section = index.split('id="update-0-4-0"', maxsplit=1)[1].split(
+        update_section = index.split('id="update-0-4-1"', maxsplit=1)[1].split(
             "</section>", maxsplit=1
         )[0]
         self.assertIn('id="windows-release"', update_section)
@@ -795,20 +796,24 @@ class CloudflareDistributionTests(unittest.TestCase):
             "TotalSegmentator Wrapper for Macを<br>ダウンロード", maxsplit=1
         )[1].split("</section>", maxsplit=1)[0]
         self.assertIn('id="windows-download"', download_section)
-        self.assertLess(index.index('id="update-0-4-0"'), index.index('id="windows-release"'))
+        self.assertLess(index.index('id="update-0-4-1"'), index.index('id="windows-release"'))
         self.assertLess(
             index.index("TotalSegmentator Wrapper for Macを<br>ダウンロード"),
             index.index('id="windows-download"'),
         )
         self.assertLess(index.index('id="windows-download"'), index.index('id="support"'))
-        self.assertIn("<strong>開発中の更新</strong>", index)
-        self.assertIn("公開版 0.3.0", index)
+        self.assertIn("<strong>ベータ版</strong>", index)
+        self.assertIn("Version 0.4.1 beta", index)
+        self.assertIn('href="/download-beta">0.4.1 betaをダウンロード</a>', index)
+        self.assertIn("安定版0.3.0も引き続きダウンロードできます", index)
+        self.assertNotIn("Version 0.4.1（公開前）", index)
+        self.assertNotIn("<strong>開発中の更新</strong>", index)
         self.assertIn(
             "/assets/totalsegmentator-ios-tooth-segmentation.webp",
             index,
         )
         self.assertIn("口腔内スキャン → 歯別STL", index)
-        self.assertIn("口腔内スキャンを読み込み", index)
+        self.assertIn("口腔内スキャンからの歯別STL作成", index)
         self.assertIn("歯ごとのSTLと結果JSONを保存", index)
         self.assertNotIn("上顎・下顎に対応", index)
         self.assertIn(
@@ -833,9 +838,25 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertTrue(
             (PAGES_ROOT / "assets" / "totalsegmentator-ios-tooth-segmentation.webp").is_file()
         )
-        self.assertIn("TotalSegmentator Wrapper for Mac 0.3.0／Developer ID署名・Apple公証済み", index)
+        self.assertIn(
+            "0.4.1 beta／macOS 14以降、0.3.0安定版／macOS 13以降。"
+            "どちらもDeveloper ID署名・Apple公証済みです。",
+            index,
+        )
         update = stable_update_manifest()
         release = release_metadata(update["latest_version"])
+        self.assertIn(
+            "/download-beta "
+            "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.4.1/"
+            "TotalSegmentator%20Wrapper%20for%20Mac-0.4.1-20260804-release3-arm64.dmg 302",
+            redirects,
+        )
+        self.assertIn(
+            "/release-notes-beta "
+            "https://downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/0.4.1/"
+            "RELEASE_NOTES.txt 302",
+            redirects,
+        )
         self.assertIn(f"downloads.lacramy.com/totalsegmentator-wrapper-mac/releases/{update['latest_version']}/", redirects)
         self.assertIn(release["file_name"].replace(" ", "%20"), redirects)
         self.assertNotIn("downloads.lacramy.com", index)

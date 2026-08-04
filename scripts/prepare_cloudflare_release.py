@@ -1463,33 +1463,49 @@ def _replace_once(text: str, old: str, new: str, label: str) -> str:
 def _promote_app_page(text: str, *, version: str) -> str:
     replacements = (
         (
-            "バージョン0.3.0・Apple Silicon搭載のMac・macOS 13以降",
+            f"{version} beta・Apple Silicon搭載のMac・macOS 14以降",
             f"バージョン{version}・Apple Silicon搭載のMac・macOS 14以降",
             "hero version and platform",
         ),
-        ('id="update-0-4-0"', f'id="update-{version.replace(".", "-")}"', "release section anchor"),
-        ("<strong>開発中の更新</strong>", "<strong>最新バージョン</strong>", "release status"),
-        (f"Version {version}（公開前）", f"Version {version}", "release version"),
+        ("<strong>ベータ版</strong>", "<strong>最新バージョン</strong>", "release status"),
         (
-            """              現在の公開版 0.3.0 はCT/CBCTの3Dプレビューを提供しています。
-              口腔内スキャンを読み込み歯別STLを作成する機能、詳細なエラー報告、単一.dcm対応は次期版での提供に向けて検証中です。
-              0.4.0は公開停止済みです。""",
+            f"              Version {version} beta\n",
+            f"              Version {version}\n",
+            "release version",
+        ),
+        (
+            f"""              Version {version} betaでは、CT/CBCTの3Dプレビューに加え、
+              口腔内スキャンからの歯別STL作成、詳細なエラー報告、単一.dcm対応を試せます。
+              安定版0.3.0も引き続きダウンロードできます。""",
             f"""              Version {version}では、CT/CBCTの3Dプレビューに加え、
               口腔内スキャンからの歯別STL作成、詳細なエラー報告、単一.dcm対応を提供します。""",
             "release lead",
         ),
         (
-            '<a class="button primary" href="/download?from=public-0-3-0">公開版 0.3.0をダウンロード</a>',
-            f'<a class="button primary" href="/download">Version {version}をダウンロード</a>',
+            f"""              <a class="button primary" href="/download-beta">{version} betaをダウンロード</a>
+              <a class="button subtle" href="/download">安定版0.3.0</a>""",
+            f'              <a class="button primary" href="/download">Version {version}をダウンロード</a>',
+            "hero download call to action",
+        ),
+        (
+            f"""              <a class="button primary" href="/download-beta">{version} betaをダウンロード</a>
+              <a class="button" href="/download">安定版0.3.0をダウンロード</a>
+              <a class="button" href="#update-details">更新内容を見る</a>""",
+            f"""              <a class="button primary" href="/download">Version {version}をダウンロード</a>
+              <a class="button" href="#update-details">更新内容を見る</a>""",
             "release download call to action",
         ),
         (
-            '<a class="button" href="#update-details">開発中の機能を見る</a>',
-            '<a class="button" href="#update-details">更新内容を見る</a>',
-            "release details call to action",
+            f"""            <a class="button primary" href="/download-beta">{version} betaをダウンロード</a>
+            <a class="button" href="/release-notes-beta">{version} betaのリリースノート</a>
+            <a class="button" href="/download">安定版0.3.0をダウンロード</a>
+            <a class="button" href="/release-notes">安定版0.3.0のリリースノート</a>""",
+            f"""            <a class="button primary" href="/download">Version {version}をダウンロード</a>
+            <a class="button" href="/release-notes">リリースノート</a>""",
+            "footer download call to action",
         ),
         (
-            "TotalSegmentator Wrapper for Mac 0.3.0／Developer ID署名・Apple公証済み",
+            f"{version} beta／macOS 14以降、0.3.0安定版／macOS 13以降。どちらもDeveloper ID署名・Apple公証済みです。",
             f"TotalSegmentator Wrapper for Mac {version}／Developer ID署名・Apple公証済み",
             "release footer",
         ),
@@ -1553,6 +1569,9 @@ def _validate_promoted_pages(staging_root: Path, identity: dict) -> None:
     forbidden_page = (
         "公開前",
         "開発中",
+        "/download-beta",
+        "/release-notes-beta",
+        "ベータ版",
         "public-0-3-0",
         "現在の公開版 0.3.0",
         "0.4.0は公開停止済み",
