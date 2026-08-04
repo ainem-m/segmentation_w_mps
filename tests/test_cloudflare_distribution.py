@@ -761,6 +761,28 @@ class CloudflareDistributionTests(unittest.TestCase):
         self.assertIn('id="dicom"', index)
         self.assertIn('id="support"', index)
         self.assertIn('id="update-0-4-0"', index)
+        self.assertIn('id="windows-download"', index)
+        self.assertIn("Windows 軽量オンデマンド版", index)
+        self.assertIn("TSW-Alpha-0.4.0.0-ondemand-win-x64.zip", index)
+        self.assertIn("466,326,227 bytes（約466 MB）", index)
+        self.assertIn(
+            "9fcf1719c6db0f3e9d87fc79a7be31630d34324ae0336c5d9109525ebda0c644",
+            index,
+        )
+        self.assertIn("torch 2.11.0+cu126", index)
+        self.assertIn("NVIDIA GPU（CUDA）が必要", index)
+        self.assertIn("初回は数GBの通信量と空き容量が必要", index)
+        self.assertIn(
+            "ZIPが約466 MBと小さいことと、初回準備のダウンロード量が小さいことは別",
+            index,
+        )
+        self.assertIn("CPUフォールバックなし、3方向プレビュー生成に成功", index)
+        self.assertIn(
+            "https://github.com/ainem-m/TotalSegmentatorWrapperForWin/releases/download/"
+            "v0.4.0.0-ondemand/TSW-Alpha-0.4.0.0-ondemand-win-x64.zip",
+            index,
+        )
+        self.assertIn('<a class="button subtle" href="#windows-download">Windows版</a>', index)
         self.assertIn("<strong>開発中の更新</strong>", index)
         self.assertIn("公開版 0.3.0", index)
         self.assertIn(
